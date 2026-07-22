@@ -79,6 +79,26 @@ go run ./cmd/servidor -porta :7799
 # abrir http://localhost:7799 no navegador, preencher e acompanhar
 ```
 
+## Refinamento futuro — ajuste editorial do corte pelo operador
+
+Registrado a partir de teste real (short_01 do sermão `mg83gcM4ctw`): a Fase 3 produz um
+`end` VÁLIDO (fim de frase, dentro de 30–58 s), mas o ponto de corte IDEAL é uma decisão
+editorial que depende de ouvir. Ex.: a Fase 3 terminou o trecho em "...Isto é a graça que
+levanta o incapaz" (36 s, válido e temático), mas o operador, ouvindo, preferiu terminar
+uma frase antes, em "...para nos dar uma nova vida" (30 s, mais punchy). Nenhum é "errado"
+— é gosto editorial. O código chega a um fim válido; o acabamento fino é humano.
+
+Por isso, quando esta interface for além do básico, deve oferecer ao operador, para cada
+Short, um **ajuste fino do início/fim**: ele ouve o trecho e apara o ponto de corte (ex.:
+um controle de "encurtar fim / ajustar para [tempo]"). Ao confirmar, o servidor Go chama
+o ffmpeg para re-cortar apenas aquele Short, sem refazer o pipeline. É rápido (recortar
+~40 s leva segundos). Isto complementa a margem automática (spec-10): a margem resolve o
+vazamento de frações de segundo por atraso de legenda; o ajuste manual resolve a escolha
+editorial de qual frase é a última. Um é da máquina, o outro é do humano.
+
+Não é escopo do MVP desta spec (que é: subir o servidor, aceitar o pedido, processar,
+listar os Shorts). É um refinamento a implementar quando o fluxo básico estiver de pé.
+
 ## Fora de escopo / próximos passos
 
 spec-06 — retenção do bruto e limpeza de disco.
