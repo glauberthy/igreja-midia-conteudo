@@ -91,8 +91,9 @@ Deus está conduzindo o mundo e a história a seu termo final. Em cumprimento à
 
 ## Regras de seleção
 
-- **Duração:** alvo de 58 s. LIMITE ABSOLUTO de 60 s — `end` menos `start` NUNCA pode passar de 60 segundos; se passar, encurte o trecho. Pode ser menor que 50 s se o trecho já expressar uma mensagem completa e fiel.
-- **Pensamento completo:** comece e termine em limites naturais de fala; nunca corte frase, raciocínio, aplicação ou citação no meio.
+- **Duração:** cada trecho deve ter entre **30 e 58 segundos** (`end` menos `start`). LIMITE ABSOLUTO de 60 s; nunca menos de 30 s. Um trecho curto (uma única frase de efeito solta) NÃO serve como Short — não dá tempo de ensinar nada. Se a ideia se resolve em poucos segundos, ESTENDA o trecho para incluir o raciocínio completo em volta dela (a introdução da ideia e/ou o seu desdobramento), até atingir pelo menos 30 s de conteúdo coerente. Se nem assim chegar a 30 s sem quebrar o sentido, descarte esse trecho e escolha outro.
+- **Bloco de ensino, não frase solta:** selecione uma UNIDADE DE SENTIDO completa — normalmente VÁRIAS frases que juntas desenvolvem uma ideia: onde o pregador a introduz, desenvolve e conclui. O `hook` é a primeira frase, mas o trecho continua até o pensamento se fechar. Pense em "qual bloco ensina uma ideia inteira", não "qual frase é bonita".
+- **Pensamento completo:** comece e termine em limites naturais de fala; nunca corte frase, raciocínio, aplicação ou citação no meio. O `end` deve cair no fim de uma frase completa — o último som do trecho é o fim de uma ideia, não uma palavra solta no meio de uma oração. Confira: se alguém parar o vídeo no `end`, a última frase tem que ter terminado.
 - **Início de frase completa:** o `start` deve cair no PRIMEIRO horário de uma frase inteira, nunca no meio dela nem colado no fim da frase anterior. Antes de fixar o `start`, verifique se o sujeito e o começo da ideia estão dentro do trecho (ex.: comece em "Deus nos criou pessoas diferentes...", não em "pessoas diferentes..."). O `hook` deve ser exatamente as primeiras palavras faladas a partir do `start`.
 - **Compreensão isolada:** o trecho precisa ser entendido por quem não assistiu ao resto do sermão.
 - **Abertura:** os primeiros segundos devem despertar interesse SEM sensacionalismo e SEM distorcer a intenção.
