@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"srtclean/internal/validacao"
 )
 
 // Estado é o ponto do ciclo de vida em que o pedido está. Os estados de vídeo
@@ -30,15 +28,18 @@ const nomeArquivo = "pedido.json"
 
 // Pedido é a unidade de trabalho do pipeline. É serializável em JSON e serve de
 // contrato entre as etapas e as specs seguintes.
+//
+// O pedido NÃO carrega candidatos (spec-09): a fonte única de verdade dos candidatos
+// é o arquivo de seleção validado (candidatos.corrigido.json), lido pelo cmd/render.
+// Guardar candidatos aqui criava uma segunda fonte que sombreava a validada.
 type Pedido struct {
-	ID         string                `json:"id"`
-	YouTubeURL string                `json:"youtube_url"`
-	Inicio     string                `json:"inicio"` // HH:MM:SS (opcional)
-	Fim        string                `json:"fim"`    // HH:MM:SS (opcional)
-	Status     Estado                `json:"status"`
-	CriadoEm   time.Time             `json:"criado_em"`
-	Erro       string                `json:"erro,omitempty"`
-	Candidatos []validacao.Candidato `json:"candidatos,omitempty"`
+	ID         string    `json:"id"`
+	YouTubeURL string    `json:"youtube_url"`
+	Inicio     string    `json:"inicio"` // HH:MM:SS (opcional)
+	Fim        string    `json:"fim"`    // HH:MM:SS (opcional)
+	Status     Estado    `json:"status"`
+	CriadoEm   time.Time `json:"criado_em"`
+	Erro       string    `json:"erro,omitempty"`
 }
 
 // NovoPedido cria um pedido no estado inicial. O horário é injetado para manter

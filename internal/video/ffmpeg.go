@@ -86,10 +86,12 @@ func (r *Renderizador) outDir() string {
 	return r.OutDir
 }
 
-// Renderizar gera um Short por candidato do pedido, em ordem de score (maior
-// primeiro), e devolve os caminhos gerados. Em falha, seta Status=erro e Erro.
-func (r *Renderizador) Renderizar(ctx context.Context, ped *pipeline.Pedido) ([]string, error) {
-	paths, err := r.renderizar(ctx, ped)
+// Renderizar gera um Short por candidato, em ordem de score (maior primeiro), e
+// devolve os caminhos gerados. Em falha, seta Status=erro e Erro. Os candidatos vêm
+// SEMPRE de fora (spec-09: fonte única = arquivo de seleção validado); o pedido não
+// os carrega mais.
+func (r *Renderizador) Renderizar(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato) ([]string, error) {
+	paths, err := r.renderizar(ctx, ped, candidatos)
 	if err != nil {
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = err.Error()
@@ -98,9 +100,9 @@ func (r *Renderizador) Renderizar(ctx context.Context, ped *pipeline.Pedido) ([]
 	return paths, nil
 }
 
-func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido) ([]string, error) {
-	if len(ped.Candidatos) == 0 {
-		return nil, fmt.Errorf("pedido sem candidatos para renderizar")
+func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato) ([]string, error) {
+	if len(candidatos) == 0 {
+		return nil, fmt.Errorf("nenhum candidato para renderizar")
 	}
 	inicioMs, ok := transcricao.HmsToMs(ped.Inicio)
 	if !ok {
@@ -123,8 +125,8 @@ func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido) ([]
 	}
 
 	// Ordena por score (maior primeiro), mantendo a ordem original nos empates.
-	ordenados := make([]validacao.Candidato, len(ped.Candidatos))
-	copy(ordenados, ped.Candidatos)
+	ordenados := make([]validacao.Candidato, len(candidatos))
+	copy(ordenados, candidatos)
 	sort.SliceStable(ordenados, func(a, b int) bool {
 		return ordenados[a].Score > ordenados[b].Score
 	})

@@ -3,8 +3,6 @@ package pipeline
 import (
 	"testing"
 	"time"
-
-	"srtclean/internal/validacao"
 )
 
 func TestPedidoSalvarCarregar(t *testing.T) {
@@ -13,9 +11,6 @@ func TestPedidoSalvarCarregar(t *testing.T) {
 
 	p := NovoPedido("abc123", "https://youtu.be/xyz", "00:05:00", "00:40:00", criado)
 	p.Status = EstadoConcluido
-	p.Candidatos = []validacao.Candidato{
-		{Start: "00:00:11.000", End: "00:00:30.000", DurationSeconds: 19, Score: 100, Hook: "de verdade eu vos digo"},
-	}
 
 	if err := p.Salvar(base); err != nil {
 		t.Fatalf("Salvar: %v", err)
@@ -34,9 +29,6 @@ func TestPedidoSalvarCarregar(t *testing.T) {
 	}
 	if !got.CriadoEm.Equal(criado) {
 		t.Errorf("CriadoEm = %v, queria %v", got.CriadoEm, criado)
-	}
-	if len(got.Candidatos) != 1 || got.Candidatos[0].Hook != "de verdade eu vos digo" {
-		t.Errorf("candidatos não preservados: %+v", got.Candidatos)
 	}
 }
 

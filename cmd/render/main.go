@@ -1,6 +1,12 @@
 // Comando render: gera os Shorts de um pedido já baixado (spec-03) e selecionado
-// (spec-02). Lê o pedido em trabalho/<id>/pedido.json e os candidatos corrigidos
-// (padrão: trabalho/<id>/candidatos.corrigido.json), e produz finalizados/<id>/short_NN.mp4.
+// (spec-07). Lê o pedido em trabalho/<id>/pedido.json (apenas metadados: id, url,
+// início, fim, status) e os candidatos VALIDADOS do arquivo de seleção, e produz
+// finalizados/<id>/short_NN.mp4.
+//
+// Fonte única de verdade dos candidatos (spec-09): o arquivo de seleção validado
+// (candidatos.corrigido.json), NUNCA uma cópia embutida no pedido. A flag -cand
+// explícita sempre vence; sem candidato validado, erro claro (não renderiza material
+// não-validado — regra inviolável nº 3).
 //
 // Requer o ffmpeg instalado (ver README). Uso:
 //
@@ -42,24 +48,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Se o pedido ainda não traz os candidatos, carrega do arquivo da seleção.
-	if len(ped.Candidatos) == 0 {
-		candPath := *cand
-		if candPath == "" {
-			candPath = filepath.Join(*base, *id, "candidatos.corrigido.json")
-		}
-		cs, err := carregarCandidatos(candPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "erro: não carreguei os candidatos (%s): %v\n", candPath, err)
-			os.Exit(1)
-		}
-		ped.Candidatos = cs
+	// Fonte ÚNICA de verdade dos candidatos (spec-09): o arquivo de seleção validado.
+	// Precedência: -cand explícito sempre vence; senão, o padrão da pasta do pedido.
+	// Sem candidato validado: erro claro, nunca fallback para material não-validado.
+	candPath := caminhoCandidatos(*base, *id, *cand)
+	cands, err := carregarCandidatos(candPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "erro: nenhum candidato validado encontrado em %s; rode a seleção antes (%v)\n", candPath, err)
+		os.Exit(1)
 	}
+	fmt.Fprintf(os.Stderr, "render: lendo %s, %d candidato(s)\n", candPath, len(cands))
 
 	r := &video.Renderizador{Exec: video.ExecutorReal{}, Bin: *bin, BaseDir: *base, OutDir: *out}
-	paths, err := r.Renderizar(context.Background(), ped)
+	paths, err := r.Renderizar(context.Background(), ped, cands)
 
-	// Persiste o estado do pedido (inclusive erro).
+	// Persiste apenas o ESTADO do pedido (o pedido não carrega candidatos — spec-09).
 	if ped.Status != pipeline.EstadoErro {
 		ped.Status = pipeline.EstadoConcluido
 	}
@@ -78,7 +81,17 @@ func main() {
 	}
 }
 
-// carregarCandidatos lê um arquivo {"candidatos": [...]} e devolve a lista.
+// caminhoCandidatos resolve de onde ler os candidatos validados (spec-09): a flag
+// -cand explícita SEMPRE vence; se vazia, o padrão <base>/<id>/candidatos.corrigido.json.
+func caminhoCandidatos(base, id, candFlag string) string {
+	if candFlag != "" {
+		return candFlag
+	}
+	return filepath.Join(base, id, "candidatos.corrigido.json")
+}
+
+// carregarCandidatos lê um arquivo {"candidatos": [...]} e devolve a lista. Arquivo
+// ausente ou sem candidatos é erro (nunca fallback para material não-validado).
 func carregarCandidatos(path string) ([]validacao.Candidato, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {

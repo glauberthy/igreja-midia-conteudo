@@ -118,7 +118,7 @@ func (f *fakeExec) Rodar(ctx context.Context, nome string, args ...string) ([]by
 	return nil, nil, nil
 }
 
-func prepararPedido(t *testing.T, base string) *pipeline.Pedido {
+func prepararPedido(t *testing.T, base string) (*pipeline.Pedido, []validacao.Candidato) {
 	t.Helper()
 	id := "teste"
 	dir := filepath.Join(base, id)
@@ -132,23 +132,24 @@ func prepararPedido(t *testing.T, base string) *pipeline.Pedido {
 		t.Fatal(err)
 	}
 	ped := pipeline.NovoPedido(id, "url", "01:29:38", "02:05:11", time.Unix(0, 0).UTC())
-	// Dois candidatos com scores diferentes, para checar a ordenação.
-	ped.Candidatos = []validacao.Candidato{
+	// Dois candidatos com scores diferentes, para checar a ordenação. Vêm de fora do
+	// pedido (spec-09): o render os recebe do arquivo validado, não do pedido.json.
+	cands := []validacao.Candidato{
 		{Start: "01:31:00.000", End: "01:31:30.000", Score: 85, Hook: "menor score"},
 		{Start: "01:30:10.000", End: "01:30:40.000", Score: 97, Hook: "maior score"},
 	}
-	return ped
+	return ped, cands
 }
 
 func TestRenderizarGeraPorScore(t *testing.T) {
 	base := t.TempDir()
 	outBase := filepath.Join(base, "final")
-	ped := prepararPedido(t, base)
+	ped, cands := prepararPedido(t, base)
 
 	fx := &fakeExec{}
 	r := &Renderizador{Exec: fx, Bin: "ffmpeg", BaseDir: base, OutDir: outBase}
 
-	paths, err := r.Renderizar(context.Background(), ped)
+	paths, err := r.Renderizar(context.Background(), ped, cands)
 	if err != nil {
 		t.Fatalf("Renderizar: %v", err)
 	}
@@ -173,10 +174,10 @@ func TestRenderizarGeraPorScore(t *testing.T) {
 
 func TestRenderizarErroFfmpeg(t *testing.T) {
 	base := t.TempDir()
-	ped := prepararPedido(t, base)
+	ped, cands := prepararPedido(t, base)
 	r := &Renderizador{Exec: &fakeExec{falhar: true}, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final")}
 
-	_, err := r.Renderizar(context.Background(), ped)
+	_, err := r.Renderizar(context.Background(), ped, cands)
 	if err == nil {
 		t.Fatal("esperava erro do ffmpeg")
 	}
@@ -187,10 +188,9 @@ func TestRenderizarErroFfmpeg(t *testing.T) {
 
 func TestRenderizarSemCandidatos(t *testing.T) {
 	base := t.TempDir()
-	ped := prepararPedido(t, base)
-	ped.Candidatos = nil
+	ped, _ := prepararPedido(t, base)
 	r := &Renderizador{Exec: &fakeExec{}, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final")}
-	if _, err := r.Renderizar(context.Background(), ped); err == nil {
-		t.Error("esperava erro para pedido sem candidatos")
+	if _, err := r.Renderizar(context.Background(), ped, nil); err == nil {
+		t.Error("esperava erro para render sem candidatos")
 	}
 }
