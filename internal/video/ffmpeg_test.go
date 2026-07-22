@@ -118,6 +118,35 @@ func (f *fakeExec) Rodar(ctx context.Context, nome string, args ...string) ([]by
 	return nil, nil, nil
 }
 
+func TestDuracaoComMargem(t *testing.T) {
+	// Sem margem: duração = end - start (corte no end original).
+	if d, err := duracaoComMargem(0, 34000, 0); err != nil || d != 34000 {
+		t.Errorf("sem margem: d=%d err=%v; queria 34000,nil", d, err)
+	}
+	// Com margem default (400 ms): recua o fim → 33600 ms.
+	if d, err := duracaoComMargem(0, 34000, 400); err != nil || d != 33600 {
+		t.Errorf("margem 400ms: d=%d err=%v; queria 33600,nil", d, err)
+	}
+	// A margem apara exatamente `margem` do fim, independentemente do start absoluto.
+	if d, err := duracaoComMargem(90000, 124000, 400); err != nil || d != 33600 {
+		t.Errorf("start deslocado: d=%d err=%v; queria 33600,nil", d, err)
+	}
+}
+
+func TestDuracaoComMargemGuard(t *testing.T) {
+	// Guard: margem >= duração inverteria/zeraria o trecho → erro, não corte.
+	if _, err := duracaoComMargem(0, 400, 400); err == nil {
+		t.Error("margem igual à duração deveria dar erro (recuo zeraria o trecho)")
+	}
+	if _, err := duracaoComMargem(0, 300, 400); err == nil {
+		t.Error("margem maior que a duração deveria dar erro (recuo inverteria o trecho)")
+	}
+	// Trecho já vazio/invertido também é erro.
+	if _, err := duracaoComMargem(1000, 1000, 0); err == nil {
+		t.Error("trecho de duração zero deveria dar erro")
+	}
+}
+
 func prepararPedido(t *testing.T, base string) (*pipeline.Pedido, []validacao.Candidato) {
 	t.Helper()
 	id := "teste"
@@ -169,6 +198,26 @@ func TestRenderizarGeraPorScore(t *testing.T) {
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("arquivo de saída não criado: %s", p)
 		}
+	}
+}
+
+func TestRenderizarAplicaMargemNoCorte(t *testing.T) {
+	base := t.TempDir()
+	ped, cands := prepararPedido(t, base) // candidatos de 30 s (01:30:10→01:30:40 etc.)
+
+	fx := &fakeExec{}
+	// Margem de 400 ms: o -t (duração do corte) deve virar 30s - 0,4s = 29.600.
+	r := &Renderizador{Exec: fx, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final"), MargemFimMs: 400}
+
+	if _, err := r.Renderizar(context.Background(), ped, cands); err != nil {
+		t.Fatalf("Renderizar: %v", err)
+	}
+	joined := strings.Join(fx.chamadas[0], " ")
+	if !strings.Contains(joined, "-t 29.600") {
+		t.Errorf("esperava corte de 29.600s (30s - margem 0,4s): %s", joined)
+	}
+	if strings.Contains(joined, "-t 30.000") {
+		t.Errorf("margem não foi aplicada (ainda 30.000s): %s", joined)
 	}
 }
 

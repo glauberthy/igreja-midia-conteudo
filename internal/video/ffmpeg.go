@@ -55,11 +55,17 @@ func (ExecutorReal) Rodar(ctx context.Context, nome string, args ...string) ([]b
 
 // Renderizador orquestra a geração dos Shorts. BaseDir é a raiz de trabalho
 // (video.mp4/legenda.srt); OutDir é onde ficam os finais; Bin é o ffmpeg.
+//
+// MargemFimMs é a margem de recuo no fim do corte (spec-10): cada Short termina em
+// (end - margem) em vez de exatamente no `end`, para não capturar o começo da fala
+// seguinte (a legenda automática do YouTube atrasa em relação ao áudio). O `end`
+// calculado pela Fase 3 NÃO muda — o recuo é só no corte. 0 = sem margem.
 type Renderizador struct {
-	Exec    Executor
-	Bin     string
-	BaseDir string
-	OutDir  string
+	Exec        Executor
+	Bin         string
+	BaseDir     string
+	OutDir      string
+	MargemFimMs int
 }
 
 // NovoRenderizador cria um Renderizador com o executor real e os padrões.
@@ -135,7 +141,7 @@ func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, can
 	for i, cand := range ordenados {
 		startMs, ok1 := transcricao.HmsToMs(cand.Start)
 		endMs, ok2 := transcricao.HmsToMs(cand.End)
-		if !ok1 || !ok2 || endMs <= startMs {
+		if !ok1 || !ok2 {
 			return nil, fmt.Errorf("candidato %d com tempos inválidos: start=%q end=%q", i+1, cand.Start, cand.End)
 		}
 
@@ -144,7 +150,12 @@ func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, can
 		if cutStartMs < 0 {
 			cutStartMs = 0
 		}
-		durMs := endMs - startMs
+		// Duração do corte com o recuo de margem no fim (spec-10). O `end` original é
+		// preservado na legenda; só o corte de vídeo termina em (end - margem).
+		durMs, err := duracaoComMargem(startMs, endMs, r.MargemFimMs)
+		if err != nil {
+			return nil, fmt.Errorf("candidato %d: %w", i+1, err)
+		}
 
 		// Legenda do trecho, recortada e rebaseada a zero.
 		trechoCues := RecortarLegenda(cues, startMs, endMs)
@@ -163,6 +174,25 @@ func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, can
 	}
 
 	return paths, nil
+}
+
+// duracaoComMargem devolve a duração do corte (ms) recuando `margemMs` do fim do trecho
+// (spec-10), para o Short não capturar o começo da fala seguinte. O `end` original (fim
+// de frase, marcado pela Fase 3) é preservado — só o corte apara a margem. Guarda contra
+// margem que zere ou inverta o trecho: se (end - margem) <= start, é erro claro, não corte.
+func duracaoComMargem(startMs, endMs, margemMs int) (int, error) {
+	dur := endMs - startMs
+	if dur <= 0 {
+		return 0, fmt.Errorf("trecho vazio ou invertido: start=%dms end=%dms", startMs, endMs)
+	}
+	if margemMs <= 0 {
+		return dur, nil // sem margem: corte termina no end original
+	}
+	ajustado := dur - margemMs
+	if ajustado <= 0 {
+		return 0, fmt.Errorf("margem de fim (%dms) >= duração do trecho (%dms): o recuo inverteria o trecho", margemMs, dur)
+	}
+	return ajustado, nil
 }
 
 // ArgsFFmpeg monta os argumentos do ffmpeg para: cortar [cutStartMs, +durMs],

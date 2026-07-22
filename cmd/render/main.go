@@ -20,6 +20,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -34,11 +35,16 @@ func main() {
 	out := flag.String("out", "finalizados", "pasta raiz dos Shorts finais")
 	cand := flag.String("cand", "", "arquivo de candidatos corrigidos (padrão: <base>/<id>/candidatos.corrigido.json)")
 	bin := flag.String("bin", "ffmpeg", "binário do ffmpeg")
+	margemFim := flag.Float64("margem-fim", 0.4, "margem de recuo no fim do corte, em segundos (evita capturar a fala seguinte)")
 	flag.Parse()
 
 	if *id == "" {
-		fmt.Fprintln(os.Stderr, "uso: render -id ID [-base trabalho] [-out finalizados] [-cand arquivo.json] [-bin ffmpeg]")
+		fmt.Fprintln(os.Stderr, "uso: render -id ID [-base trabalho] [-out finalizados] [-cand arquivo.json] [-bin ffmpeg] [-margem-fim 0.4]")
 		flag.PrintDefaults()
+		os.Exit(2)
+	}
+	if *margemFim < 0 {
+		fmt.Fprintln(os.Stderr, "erro: -margem-fim não pode ser negativo")
 		os.Exit(2)
 	}
 
@@ -59,7 +65,10 @@ func main() {
 	}
 	fmt.Fprintf(os.Stderr, "render: lendo %s, %d candidato(s)\n", candPath, len(cands))
 
-	r := &video.Renderizador{Exec: video.ExecutorReal{}, Bin: *bin, BaseDir: *base, OutDir: *out}
+	margemFimMs := int(math.Round(*margemFim * 1000))
+	fmt.Fprintf(os.Stderr, "render: margem de recuo no fim = %.3fs (corte termina em end - margem)\n", *margemFim)
+
+	r := &video.Renderizador{Exec: video.ExecutorReal{}, Bin: *bin, BaseDir: *base, OutDir: *out, MargemFimMs: margemFimMs}
 	paths, err := r.Renderizar(context.Background(), ped, cands)
 
 	// Persiste apenas o ESTADO do pedido (o pedido não carrega candidatos — spec-09).
