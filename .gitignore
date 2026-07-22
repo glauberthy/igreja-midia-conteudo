@@ -1,0 +1,42 @@
+# Saída das rodadas (não versionar)
+resultados/
+
+# Pastas de trabalho do pipeline por pedido (spec-02+)
+trabalho/
+finalizados/
+
+# Artefatos corrigidos gerados pelo validador
+*.corrigido.json
+
+# Segredos — nunca versionar chaves de API
+*.key
+openrouter.txt
+.env
+.env.*
+
+# Artefatos soltos de execução/diagnóstico
+payload.json
+resp.json
+
+# Binários compilados dos comandos Go
+/srtclean
+/validar
+/selecionar
+/baixar
+/render
+cmd/srtclean/srtclean
+cmd/validar/validar
+cmd/selecionar/selecionar
+cmd/baixar/baixar
+cmd/render/render
+
+# Mídia bruta/temporária que possa escapar das pastas de trabalho
+*.mp4
+*.part
+*.part-Frag*
+invalido_*.txt
+
+# Arquivos de sistema/editor
+.DS_Store
+*.swp
+*~

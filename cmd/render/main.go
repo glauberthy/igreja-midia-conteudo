@@ -1,0 +1,97 @@
+// Comando render: gera os Shorts de um pedido já baixado (spec-03) e selecionado
+// (spec-02). Lê o pedido em trabalho/<id>/pedido.json e os candidatos corrigidos
+// (padrão: trabalho/<id>/candidatos.corrigido.json), e produz finalizados/<id>/short_NN.mp4.
+//
+// Requer o ffmpeg instalado (ver README). Uso:
+//
+//	go run . -id teste
+//	go run . -id teste -cand trabalho/teste/candidatos.corrigido.json
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"srtclean/internal/pipeline"
+	"srtclean/internal/validacao"
+	"srtclean/internal/video"
+)
+
+func main() {
+	id := flag.String("id", "", "identificador do pedido (obrigatório)")
+	base := flag.String("base", "trabalho", "pasta raiz de trabalho")
+	out := flag.String("out", "finalizados", "pasta raiz dos Shorts finais")
+	cand := flag.String("cand", "", "arquivo de candidatos corrigidos (padrão: <base>/<id>/candidatos.corrigido.json)")
+	bin := flag.String("bin", "ffmpeg", "binário do ffmpeg")
+	flag.Parse()
+
+	if *id == "" {
+		fmt.Fprintln(os.Stderr, "uso: render -id ID [-base trabalho] [-out finalizados] [-cand arquivo.json] [-bin ffmpeg]")
+		flag.PrintDefaults()
+		os.Exit(2)
+	}
+
+	ped, err := pipeline.Carregar(*base, *id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "erro: não carreguei o pedido %q: %v\n", *id, err)
+		os.Exit(1)
+	}
+
+	// Se o pedido ainda não traz os candidatos, carrega do arquivo da seleção.
+	if len(ped.Candidatos) == 0 {
+		candPath := *cand
+		if candPath == "" {
+			candPath = filepath.Join(*base, *id, "candidatos.corrigido.json")
+		}
+		cs, err := carregarCandidatos(candPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "erro: não carreguei os candidatos (%s): %v\n", candPath, err)
+			os.Exit(1)
+		}
+		ped.Candidatos = cs
+	}
+
+	r := &video.Renderizador{Exec: video.ExecutorReal{}, Bin: *bin, BaseDir: *base, OutDir: *out}
+	paths, err := r.Renderizar(context.Background(), ped)
+
+	// Persiste o estado do pedido (inclusive erro).
+	if ped.Status != pipeline.EstadoErro {
+		ped.Status = pipeline.EstadoConcluido
+	}
+	if salvarErr := ped.Salvar(*base); salvarErr != nil {
+		fmt.Fprintf(os.Stderr, "aviso: não salvei o pedido: %v\n", salvarErr)
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "erro na renderização: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "ok: %d Short(s) gerado(s) em %s/%s/\n", len(paths), *out, *id)
+	for _, p := range paths {
+		fmt.Println(p)
+	}
+}
+
+// carregarCandidatos lê um arquivo {"candidatos": [...]} e devolve a lista.
+func carregarCandidatos(path string) ([]validacao.Candidato, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var doc struct {
+		Candidatos []validacao.Candidato `json:"candidatos"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return nil, err
+	}
+	if len(doc.Candidatos) == 0 {
+		return nil, errors.New("arquivo sem candidatos")
+	}
+	return doc.Candidatos, nil
+}

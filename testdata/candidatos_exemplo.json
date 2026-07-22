@@ -1,0 +1,76 @@
+{
+  "mapa_sermao": {
+    "tema": "A suficiência da graça de Deus",
+    "texto_base": "Salmo 23; 2 Coríntios 12"
+  },
+  "candidatos": [
+    {
+      "start": "00:00:01.000",
+      "end": "00:00:11.000",
+      "duration_seconds": 10,
+      "score": 100,
+      "hook": "A graça de Deus é suficiente",
+      "reason": "Abertura forte e fiel ao texto-base.",
+      "complete_thought": true,
+      "requer_revisao_reforcada": false,
+      "criteria": {
+        "context_fidelity": 30,
+        "pastoral_value": 30,
+        "completeness": 20,
+        "opening_strength": 10,
+        "format_fit": 10
+      }
+    },
+    {
+      "start": "00:00:14.000",
+      "end": "00:00:30.000",
+      "duration_seconds": 16,
+      "score": 93,
+      "hook": "De verdade eu vos digo",
+      "reason": "Trecho pastoral, mas o start está deslizado.",
+      "complete_thought": true,
+      "requer_revisao_reforcada": false,
+      "criteria": {
+        "context_fidelity": 28,
+        "pastoral_value": 29,
+        "completeness": 18,
+        "opening_strength": 9,
+        "format_fit": 9
+      }
+    },
+    {
+      "start": "00:00:20.000",
+      "end": "00:00:40.000",
+      "duration_seconds": 20,
+      "score": 88,
+      "hook": "isto jamais foi dito pelo pregador",
+      "reason": "Hook inventado, não existe na transcrição.",
+      "complete_thought": true,
+      "requer_revisao_reforcada": false,
+      "criteria": {
+        "context_fidelity": 26,
+        "pastoral_value": 26,
+        "completeness": 18,
+        "opening_strength": 9,
+        "format_fit": 9
+      }
+    },
+    {
+      "start": "00:00:30.000",
+      "end": "00:00:45.000",
+      "duration_seconds": 15,
+      "score": 80,
+      "hook": "e nada me faltará",
+      "reason": "Encerramento; o score não bate com a soma dos critérios.",
+      "complete_thought": true,
+      "requer_revisao_reforcada": false,
+      "criteria": {
+        "context_fidelity": 30,
+        "pastoral_value": 30,
+        "completeness": 20,
+        "opening_strength": 10,
+        "format_fit": 10
+      }
+    }
+  ]
+}
