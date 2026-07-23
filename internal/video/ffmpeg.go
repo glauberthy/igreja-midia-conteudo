@@ -60,14 +60,13 @@ const (
 // BRANCO da logo seja legível mesmo sobre fundo claro (o rodapé deste vídeo é claro) e,
 // de quebra, reforça a legenda. Tudo calibrável (flag/constante).
 const (
-	logoPathPadrao        = "assets/ibi_assinatura_shorts.png"
-	logoLarguraPadrao     = 560 // largura da logo no vídeo (px), aspecto preservado
-	logoMargemBaixoPadrao = 64  // px do fundo até a base da logo
+	logoPathPadrao    = "assets/ibi_assinatura_shorts.png"
+	logoLarguraPadrao = 550 // largura da logo no vídeo (px), aspecto preservado
 	// Faixa escura do rodapé como GRADIENTE (transparente em cima → escuro embaixo),
 	// suave como na arte de referência (não uma caixa de borda dura). A opacidade sobe com
 	// uma curva (pow) para o começo ser IMPERCEPTÍVEL — sem linha visível no topo.
-	rodapeAlphaPadrao  = 0.92 // opacidade máxima do gradiente (na base); 0 = sem gradiente
-	rodapeAlturaPadrao = 900  // altura do gradiente (px), de baixo para cima
+	rodapeAlphaPadrao  = 1.00 // opacidade máxima do gradiente (na base); 0 = sem gradiente
+	rodapeAlturaPadrao = 1200 // altura do gradiente (px), de baixo para cima
 	easeGradiente      = 2.2  // expoente da curva de opacidade (>1 = começa mais suave)
 )
 
@@ -108,11 +107,11 @@ type Renderizador struct {
 	CharsPorLinha int    // largura da linha (ritmo de troca dos blocos)
 
 	// Logo e rodapé (spec-13); zero/"" usa os defaults acima.
-	LogoPath        string  // PNG da logo; se o arquivo não existir, renderiza sem logo
-	LogoLargura     int     // largura da logo no vídeo (px)
-	LogoMargemBaixo int     // px do fundo até a base da logo
-	RodapeAlpha     float64 // opacidade do gradiente escuro na base (0 = sem gradiente)
-	RodapeAltura    int     // altura do gradiente escuro (px)
+	LogoPath     string  // PNG da logo; se o arquivo não existir, renderiza sem logo
+	LogoLargura  int     // largura da logo no vídeo (px)
+	LogoAjusteY  int     // ajuste vertical da logo a partir do centro da faixa (px; + desce)
+	RodapeAlpha  float64 // opacidade do gradiente escuro na base (0 = sem gradiente)
+	RodapeAltura int     // altura do gradiente escuro (px)
 }
 
 // NovoRenderizador cria um Renderizador com o executor real e os padrões.
@@ -167,12 +166,6 @@ func (r *Renderizador) logoLargura() int {
 		return logoLarguraPadrao
 	}
 	return r.LogoLargura
-}
-func (r *Renderizador) logoMargemBaixo() int {
-	if r.LogoMargemBaixo <= 0 {
-		return logoMargemBaixoPadrao
-	}
-	return r.LogoMargemBaixo
 }
 func (r *Renderizador) rodapeAltura() int {
 	if r.RodapeAltura <= 0 {
@@ -237,7 +230,7 @@ func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, can
 	} else {
 		fmt.Fprintf(os.Stderr, "aviso: logo não encontrada em %s; renderizando sem logo\n", logoPath)
 	}
-	logo := LogoConfig{Path: logoPath, LarguraPx: r.logoLargura(), MargemBaixo: r.logoMargemBaixo()}
+	logo := LogoConfig{Path: logoPath, LarguraPx: r.logoLargura(), AjusteY: r.LogoAjusteY}
 
 	outDir := filepath.Join(r.outDir(), ped.ID)
 	if err := os.MkdirAll(outDir, 0755); err != nil {
@@ -365,9 +358,9 @@ type EstiloLegenda struct {
 
 // LogoConfig são os parâmetros da logo sobreposta no rodapé (spec-13).
 type LogoConfig struct {
-	Path        string // PNG com alpha
-	LarguraPx   int    // largura no vídeo (aspecto preservado)
-	MargemBaixo int    // px do fundo até a base da logo
+	Path      string // PNG com alpha
+	LarguraPx int    // largura no vídeo (aspecto preservado)
+	AjusteY   int    // ajuste vertical a partir do centro da faixa (px; + desce, - sobe)
 }
 
 // GradConfig é o gradiente escuro do rodapé (spec-13): transparente em cima → escuro
@@ -438,8 +431,11 @@ func montarFiltro(blocos []BlocoLegenda, textfiles []string, est EstiloLegenda, 
 		label = "vt"
 	}
 	if comLogo {
+		// Logo CENTRALIZADA (horizontal e vertical) na faixa reservada — o espaço entre a
+		// linha da legenda (topo da faixa, em H-faixa) e o fim do vídeo (spec-13). Centro
+		// da faixa = H - faixa/2; topo da logo = centro - h/2. AjusteY desce (+) ou sobe (-).
 		segs = append(segs, fmt.Sprintf("[1:v]scale=%d:-2[logo]", logo.LarguraPx))
-		segs = append(segs, fmt.Sprintf("[%s][logo]overlay=x=(W-w)/2:y=H-%d-h[vout]", label, logo.MargemBaixo))
+		segs = append(segs, fmt.Sprintf("[%s][logo]overlay=x=(W-w)/2:y=H-%d/2-h/2+%d[vout]", label, est.FaixaLogoPx, logo.AjusteY))
 		label = "vout"
 	}
 	if label != "vout" { // garante o rótulo de saída esperado pelo -map

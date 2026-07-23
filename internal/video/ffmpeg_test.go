@@ -89,7 +89,7 @@ func TestMontarFiltroSimplesSemLogoNemGradiente(t *testing.T) {
 func TestMontarFiltroComGradienteELogo(t *testing.T) {
 	blocos := []BlocoLegenda{{InicioMs: 0, FimMs: 2000, Texto: "primeira\nsegunda"}}
 	tfs := []string{"trabalho/x/short_01.sub001.txt"}
-	logo := LogoConfig{Path: "assets/ibi_assinatura_shorts.png", LarguraPx: 560, MargemBaixo: 64}
+	logo := LogoConfig{Path: "assets/ibi_assinatura_shorts.png", LarguraPx: 560, AjusteY: 0}
 	grad := GradConfig{Altura: 720, Alpha: 0.90}
 
 	f, complexo := montarFiltro(blocos, tfs, estiloTeste(), true, logo, grad)
@@ -111,8 +111,9 @@ func TestMontarFiltroComGradienteELogo(t *testing.T) {
 	if !strings.Contains(f, "[1:v]scale=560:-2[logo]") {
 		t.Errorf("logo não escalada: %s", f)
 	}
-	if !strings.Contains(f, "overlay=x=(W-w)/2:y=H-64-h[vout]") {
-		t.Errorf("logo não centralizada/ancorada na base com saída [vout]: %s", f)
+	// logo centralizada na faixa (H - faixa/2 - h/2), ajuste 0
+	if !strings.Contains(f, "overlay=x=(W-w)/2:y=H-240/2-h/2+0[vout]") {
+		t.Errorf("logo não centralizada na faixa com saída [vout]: %s", f)
 	}
 }
 

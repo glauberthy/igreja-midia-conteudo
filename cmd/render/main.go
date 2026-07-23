@@ -41,8 +41,8 @@ func main() {
 	legendaCPL := flag.Int("legenda-cpl", 0, "caracteres por linha da legenda; governa o ritmo de troca (0 = default)")
 	logo := flag.String("logo", "", "caminho do PNG da logo do rodapé (spec-13; vazio = assets/logo_ibi_gsf.png)")
 	logoLarg := flag.Int("logo-larg", 0, "largura da logo no vídeo em px (0 = default)")
-	logoBaixo := flag.Int("logo-baixo", 0, "margem do fundo até a base da logo em px (0 = default)")
-	rodapeAlpha := flag.Float64("rodape-escuro", 0.90, "opacidade do gradiente escuro no rodapé (0 = sem gradiente; ajuda a logo/legenda em fundo claro)")
+	logoBaixo := flag.Int("logo-ajuste-y", 0, "ajuste vertical da logo a partir do centro da faixa (px; + desce, - sobe)")
+	rodapeAlpha := flag.Float64("rodape-escuro", 1.00, "opacidade do gradiente escuro no rodapé (0 = sem gradiente; ajuda a logo/legenda em fundo claro)")
 	rodapeAltura := flag.Int("rodape-altura", 0, "altura do gradiente escuro do rodapé em px (0 = default)")
 	flag.Parse()
 
@@ -78,15 +78,15 @@ func main() {
 
 	r := &video.Renderizador{
 		Exec: video.ExecutorReal{}, Bin: *bin, BaseDir: *base, OutDir: *out,
-		MargemFimMs:     margemFimMs,
-		FontePath:       *fonte,
-		TamanhoFonte:    *fonteTam,
-		CharsPorLinha:   *legendaCPL,
-		LogoPath:        *logo,
-		LogoLargura:     *logoLarg,
-		LogoMargemBaixo: *logoBaixo,
-		RodapeAlpha:     *rodapeAlpha,
-		RodapeAltura:    *rodapeAltura,
+		MargemFimMs:   margemFimMs,
+		FontePath:     *fonte,
+		TamanhoFonte:  *fonteTam,
+		CharsPorLinha: *legendaCPL,
+		LogoPath:      *logo,
+		LogoLargura:   *logoLarg,
+		LogoAjusteY:   *logoBaixo,
+		RodapeAlpha:   *rodapeAlpha,
+		RodapeAltura:  *rodapeAltura,
 	}
 	paths, err := r.Renderizar(context.Background(), ped, cands)
 
