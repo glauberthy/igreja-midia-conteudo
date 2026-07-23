@@ -6,7 +6,7 @@ Como rodar o pipeline completo à mão, do link do YouTube até os Shorts em
 Visão geral das etapas:
 
 1. **baixar** — legenda automática pt + vídeo do trecho da pregação (`cmd/baixar`, usa `yt-dlp`).
-2. **selecionar** — o modelo escolhe os trechos e o validador corrige/descarta (`cmd/selecionar`, usa o `llama-server`). A validação já roda embutida.
+2. **selecionar** — harness multifase (`cmd/selecionar`, usa o `llama-server`): o modelo mapeia o sermão, escolhe candidatos e os avalia; o código delimita o tempo (30–58 s) e valida. A validação e a rede de retry já rodam embutidas.
 3. **renderizar** — corta, reenquadra 9:16 e queima a legenda de cada candidato (`cmd/render`, usa `ffmpeg`).
 
 ---
@@ -74,14 +74,18 @@ go run ./cmd/baixar \
   -bin ~/.local/bin/yt-dlp -sublang pt-orig \
   -format "bv*[height<=1080]+ba/b[height<=1080]/b"
 
-# (2) SELECIONAR (validação embutida) — modelo escolhe; validador corrige/descarta.
+# (2) SELECIONAR — harness multifase (Fases 1→5); validação embutida.
+# O modelo mapeia, escolhe candidatos e avalia; o código delimita tempo e valida.
+# O endpoint tem default http://localhost:8080/v1/chat/completions (só passe -endpoint
+# se mudar a porta). É normal ver "tentativa N falhou … refazendo" no log (rede de retry).
 go run ./cmd/selecionar \
   -transc trabalho/sermao/transcricao.txt \
   -out    trabalho/sermao/candidatos.corrigido.json \
-  -endpoint http://127.0.0.1:8080/v1/chat/completions \
-  -prompt prompts/selecao_shorts_v0_1.md
+  -prompt-dir prompts/
 
 # (3) RENDERIZAR — corta, reenquadra 9:16 e queima a legenda de cada candidato.
+# Aplica margem de recuo de 0,4s no fim do corte (spec-10), para não vazar a fala
+# seguinte. Se algum Short cortar a última sílaba, rode com -margem-fim 0.3.
 go run ./cmd/render -id sermao
 
 # resultado (em ordem de score):
