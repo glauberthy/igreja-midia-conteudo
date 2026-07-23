@@ -13,78 +13,17 @@ import (
 	"srtclean/internal/validacao"
 )
 
-const legendaSRT = `1
-00:01:30,000 --> 00:01:33,000
-<i>A graça</i> de Deus
-
-2
-00:01:33,000 --> 00:01:36,000
-é suficiente para você
-
-3
-00:01:36,000 --> 00:01:39,000
-[Música]
-
-4
-00:01:39,000 --> 00:01:42,000
-de verdade eu vos digo
+// Transcrição limpa ([HH:MM:SS] texto), a mesma fonte que a legenda usa (spec-12).
+// Cobre a janela dos candidatos de prepararPedido (~01:30:10 a 01:31:30).
+const transcricaoFixture = `[01:30:10] Deus nos criou para viver em comunhão com ele todos os dias.
+[01:30:22] Ele nunca abandona quem confia de coração no seu cuidado.
+[01:30:40] A graça de Cristo alcança o pecador perdido e oferece vida nova.
+[01:31:00] O amor de Deus transforma por dentro o coração humano.
+[01:31:16] Por isso descansa e confia no Senhor em toda a tua jornada.
 `
 
-func TestParseSRT(t *testing.T) {
-	cues := ParseSRT(legendaSRT)
-	// O bloco [Música] vira vazio e é descartado.
-	if len(cues) != 3 {
-		t.Fatalf("esperava 3 cues, veio %d: %+v", len(cues), cues)
-	}
-	if cues[0].InicioMs != 90000 || cues[0].FimMs != 93000 {
-		t.Errorf("tempos do cue 0 inesperados: %+v", cues[0])
-	}
-	if cues[0].Texto != "A graça de Deus" { // tag <i> removida, palavras intactas
-		t.Errorf("texto do cue 0 inesperado: %q", cues[0].Texto)
-	}
-}
-
-func TestRecortarLegendaRebaseiaAzero(t *testing.T) {
-	cues := ParseSRT(legendaSRT)
-	// Trecho [00:01:32, 00:01:40] (92s a 100s).
-	rec := RecortarLegenda(cues, 92000, 100000)
-
-	if len(rec) != 3 {
-		t.Fatalf("esperava 3 cues no trecho, veio %d: %+v", len(rec), rec)
-	}
-	// O primeiro cue começava em 90s mas o trecho começa em 92s: recorta e rebaseia a 0.
-	if rec[0].InicioMs != 0 {
-		t.Errorf("cue 0 não foi rebaseado a zero: %d", rec[0].InicioMs)
-	}
-	if rec[0].FimMs != 1000 { // 93s - 92s
-		t.Errorf("cue 0 fim inesperado: %d", rec[0].FimMs)
-	}
-	// O último cue (39s..42s abs = 129s..132s? não) -> 00:01:39 = 99000..102000, trecho até 100000:
-	last := rec[len(rec)-1]
-	if last.InicioMs != 7000 { // 99000 - 92000
-		t.Errorf("último cue início inesperado: %d", last.InicioMs)
-	}
-	if last.FimMs != 8000 { // clamp em 100000 -> 100000-92000
-		t.Errorf("último cue fim não foi cortado na borda: %d", last.FimMs)
-	}
-}
-
-func TestRecortarLegendaSemSobreposicao(t *testing.T) {
-	cues := ParseSRT(legendaSRT)
-	if rec := RecortarLegenda(cues, 200000, 210000); len(rec) != 0 {
-		t.Errorf("esperava 0 cues fora do intervalo, veio %d", len(rec))
-	}
-}
-
-func TestFormatarSRT(t *testing.T) {
-	s := FormatarSRT([]Cue{{InicioMs: 0, FimMs: 1500, Texto: "olá"}})
-	if !strings.Contains(s, "00:00:00,000 --> 00:00:01,500") || !strings.Contains(s, "olá") {
-		t.Errorf("SRT formatado inesperado:\n%s", s)
-	}
-}
-
-func TestArgsFFmpeg9x16(t *testing.T) {
-	args := ArgsFFmpeg("trabalho/x/video.mp4", "trabalho/x/short_01.srt", "finalizados/x/short_01.mp4", 65000, 30000)
+func TestArgsFFmpegSemLogoUsaVf(t *testing.T) {
+	args := ArgsFFmpeg("trabalho/x/video.mp4", "", "finalizados/x/short_01.mp4", 65000, 30000, "crop=ih*9/16:ih,scale=1080:1920", false)
 	joined := strings.Join(args, " ")
 
 	if !strings.Contains(joined, "-ss 65.000") {
@@ -93,11 +32,101 @@ func TestArgsFFmpeg9x16(t *testing.T) {
 	if !strings.Contains(joined, "-t 30.000") {
 		t.Errorf("duração do corte ausente: %s", joined)
 	}
-	if !strings.Contains(joined, "crop=ih*9/16:ih") || !strings.Contains(joined, "scale=1080:1920") {
-		t.Errorf("reenquadramento 9:16 ausente: %s", joined)
+	if !strings.Contains(joined, "-vf crop=ih*9/16:ih,scale=1080:1920") {
+		t.Errorf("sem logo/gradiente deveria usar -vf: %s", joined)
 	}
-	if !strings.Contains(joined, "subtitles=") {
-		t.Errorf("queima de legenda ausente: %s", joined)
+	if strings.Contains(joined, "filter_complex") {
+		t.Errorf("modo simples não deveria usar filter_complex: %s", joined)
+	}
+}
+
+func TestArgsFFmpegComplexoComLogo(t *testing.T) {
+	args := ArgsFFmpeg("trabalho/x/video.mp4", "assets/ibi_assinatura_shorts.png", "out.mp4", 65000, 30000, "[0:v]crop[v0];[v0][logo]overlay[vout]", true)
+	joined := strings.Join(args, " ")
+
+	if !strings.Contains(joined, "-i assets/ibi_assinatura_shorts.png") {
+		t.Errorf("logo não entrou como 2º input: %s", joined)
+	}
+	if !strings.Contains(joined, "-filter_complex") || !strings.Contains(joined, "[vout]") {
+		t.Errorf("deveria usar filter_complex com saída [vout]: %s", joined)
+	}
+	if !strings.Contains(joined, "-map [vout]") || !strings.Contains(joined, "-map 0:a?") {
+		t.Errorf("mapeamento de vídeo/áudio ausente: %s", joined)
+	}
+}
+
+func TestArgsFFmpegComplexoSemLogo(t *testing.T) {
+	// Gradiente sem logo: filter_complex mas SEM 2º input.
+	args := ArgsFFmpeg("trabalho/x/video.mp4", "", "out.mp4", 0, 30000, "[0:v]crop[v0];[v0][grad]overlay[vout]", true)
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "-i out.mp4") || strings.Count(joined, "-i ") != 1 {
+		t.Errorf("sem logo não deveria ter 2º input: %s", joined)
+	}
+	if !strings.Contains(joined, "-filter_complex") || !strings.Contains(joined, "-map [vout]") {
+		t.Errorf("deveria usar filter_complex com map [vout]: %s", joined)
+	}
+}
+
+func estiloTeste() EstiloLegenda {
+	return EstiloLegenda{FontePath: "assets/fontes/static/GoogleSansFlex_72pt-Bold.ttf", Tamanho: 54, Contorno: 4, Sombra: 2, EspacoLinhas: 10, FaixaLogoPx: 240}
+}
+
+func TestMontarFiltroSimplesSemLogoNemGradiente(t *testing.T) {
+	blocos := []BlocoLegenda{{InicioMs: 0, FimMs: 2000, Texto: "olá\nmundo"}}
+	tfs := []string{"trabalho/x/short_01.sub001.txt"}
+	f, complexo := montarFiltro(blocos, tfs, estiloTeste(), false, LogoConfig{}, GradConfig{})
+	if complexo {
+		t.Error("sem logo nem gradiente deveria ser -vf simples")
+	}
+	if !strings.HasPrefix(f, "crop=ih*9/16:ih,scale=1080:1920,setsar=1,drawtext=") {
+		t.Errorf("cadeia -vf inesperada: %s", f)
+	}
+	if !strings.Contains(f, "y=h-240-text_h") || !strings.Contains(f, "text_align=C") {
+		t.Errorf("legenda não ancorada na base/centralizada: %s", f)
+	}
+}
+
+func TestMontarFiltroComGradienteELogo(t *testing.T) {
+	blocos := []BlocoLegenda{{InicioMs: 0, FimMs: 2000, Texto: "primeira\nsegunda"}}
+	tfs := []string{"trabalho/x/short_01.sub001.txt"}
+	logo := LogoConfig{Path: "assets/ibi_assinatura_shorts.png", LarguraPx: 560, MargemBaixo: 64}
+	grad := GradConfig{Altura: 720, Alpha: 0.90}
+
+	f, complexo := montarFiltro(blocos, tfs, estiloTeste(), true, logo, grad)
+	if !complexo {
+		t.Fatal("com logo/gradiente deveria ser filter_complex")
+	}
+	// gradiente do rodapé (preto com alpha em rampa suave), overlay na base
+	if !strings.Contains(f, "color=c=black:s=1080x720") || !strings.Contains(f, "geq=r=0:g=0:b=0:a='0.90*255*pow(Y/H") {
+		t.Errorf("gradiente do rodapé ausente/errado: %s", f)
+	}
+	if !strings.Contains(f, "[grad]overlay=0:H-h[vg]") {
+		t.Errorf("gradiente não sobreposto na base: %s", f)
+	}
+	// legenda sobre o gradiente
+	if !strings.Contains(f, "[vg]drawtext=") {
+		t.Errorf("legenda não desenhada sobre o gradiente: %s", f)
+	}
+	// logo por cima de tudo, centralizada e ancorada na base, saída [vout]
+	if !strings.Contains(f, "[1:v]scale=560:-2[logo]") {
+		t.Errorf("logo não escalada: %s", f)
+	}
+	if !strings.Contains(f, "overlay=x=(W-w)/2:y=H-64-h[vout]") {
+		t.Errorf("logo não centralizada/ancorada na base com saída [vout]: %s", f)
+	}
+}
+
+func TestMontarFiltroGradienteSemLogoFechaEmVout(t *testing.T) {
+	// Só gradiente (sem logo): ainda filter_complex e a saída precisa ser [vout].
+	f, complexo := montarFiltro(nil, nil, estiloTeste(), false, LogoConfig{}, GradConfig{Altura: 720, Alpha: 0.9})
+	if !complexo {
+		t.Fatal("gradiente ativo deveria exigir filter_complex")
+	}
+	if !strings.HasSuffix(f, "[vout]") {
+		t.Errorf("filter_complex deve terminar em [vout]: %s", f)
+	}
+	if strings.Contains(f, "[1:v]") {
+		t.Errorf("sem logo não deveria referenciar [1:v]: %s", f)
 	}
 }
 
@@ -157,7 +186,8 @@ func prepararPedido(t *testing.T, base string) (*pipeline.Pedido, []validacao.Ca
 	if err := os.WriteFile(filepath.Join(dir, "video.mp4"), []byte("v"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "legenda.srt"), []byte(legendaSRT), 0644); err != nil {
+	// Legenda vem do texto LIMPO da transcrição (spec-12), não mais do SRT bruto.
+	if err := os.WriteFile(filepath.Join(dir, "transcricao.txt"), []byte(transcricaoFixture), 0644); err != nil {
 		t.Fatal(err)
 	}
 	ped := pipeline.NovoPedido(id, "url", "01:29:38", "02:05:11", time.Unix(0, 0).UTC())

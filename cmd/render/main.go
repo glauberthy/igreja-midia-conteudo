@@ -35,11 +35,19 @@ func main() {
 	out := flag.String("out", "finalizados", "pasta raiz dos Shorts finais")
 	cand := flag.String("cand", "", "arquivo de candidatos corrigidos (padrão: <base>/<id>/candidatos.corrigido.json)")
 	bin := flag.String("bin", "ffmpeg", "binário do ffmpeg")
-	margemFim := flag.Float64("margem-fim", 0.4, "margem de recuo no fim do corte, em segundos (evita capturar a fala seguinte)")
+	margemFim := flag.Float64("margem-fim", 0.0, "margem de recuo no fim do corte, em segundos (0 = corta no end cheio; ver spec-10)")
+	fonte := flag.String("fonte", "", "caminho do .ttf da legenda (spec-12; vazio = Google Sans Flex Bold em assets/)")
+	fonteTam := flag.Int("fonte-tam", 0, "tamanho da fonte da legenda em px (0 = default)")
+	legendaCPL := flag.Int("legenda-cpl", 0, "caracteres por linha da legenda; governa o ritmo de troca (0 = default)")
+	logo := flag.String("logo", "", "caminho do PNG da logo do rodapé (spec-13; vazio = assets/logo_ibi_gsf.png)")
+	logoLarg := flag.Int("logo-larg", 0, "largura da logo no vídeo em px (0 = default)")
+	logoBaixo := flag.Int("logo-baixo", 0, "margem do fundo até a base da logo em px (0 = default)")
+	rodapeAlpha := flag.Float64("rodape-escuro", 0.90, "opacidade do gradiente escuro no rodapé (0 = sem gradiente; ajuda a logo/legenda em fundo claro)")
+	rodapeAltura := flag.Int("rodape-altura", 0, "altura do gradiente escuro do rodapé em px (0 = default)")
 	flag.Parse()
 
 	if *id == "" {
-		fmt.Fprintln(os.Stderr, "uso: render -id ID [-base trabalho] [-out finalizados] [-cand arquivo.json] [-bin ffmpeg] [-margem-fim 0.4]")
+		fmt.Fprintln(os.Stderr, "uso: render -id ID [-base trabalho] [-out finalizados] [-cand arquivo.json] [-bin ffmpeg] [-margem-fim 0] [-fonte ...ttf] [-fonte-tam N] [-legenda-cpl N]")
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
@@ -68,7 +76,18 @@ func main() {
 	margemFimMs := int(math.Round(*margemFim * 1000))
 	fmt.Fprintf(os.Stderr, "render: margem de recuo no fim = %.3fs (corte termina em end - margem)\n", *margemFim)
 
-	r := &video.Renderizador{Exec: video.ExecutorReal{}, Bin: *bin, BaseDir: *base, OutDir: *out, MargemFimMs: margemFimMs}
+	r := &video.Renderizador{
+		Exec: video.ExecutorReal{}, Bin: *bin, BaseDir: *base, OutDir: *out,
+		MargemFimMs:     margemFimMs,
+		FontePath:       *fonte,
+		TamanhoFonte:    *fonteTam,
+		CharsPorLinha:   *legendaCPL,
+		LogoPath:        *logo,
+		LogoLargura:     *logoLarg,
+		LogoMargemBaixo: *logoBaixo,
+		RodapeAlpha:     *rodapeAlpha,
+		RodapeAltura:    *rodapeAltura,
+	}
 	paths, err := r.Renderizar(context.Background(), ped, cands)
 
 	// Persiste apenas o ESTADO do pedido (o pedido não carrega candidatos — spec-09).

@@ -94,8 +94,8 @@ go run ./cmd/selecionar \
   -prompt-dir prompts/
 
 # (3) RENDERIZAR — corta, reenquadra 9:16 e queima a legenda de cada candidato.
-# Aplica margem de recuo de 0,4s no fim do corte (spec-10), para não vazar a fala
-# seguinte. Se algum Short cortar a última sílaba, rode com -margem-fim 0.3.
+# Corta no end cheio por padrão (spec-10: -margem-fim default 0). Se, com o end
+# preciso, houver vazamento da fala seguinte, aplique recuo: -margem-fim 0.3.
 go run ./cmd/render -id "$ID"
 
 # resultado (em ordem de score):

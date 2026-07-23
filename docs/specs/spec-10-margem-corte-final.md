@@ -1,5 +1,22 @@
 # Spec 10 — Margem de recuo no corte final (evitar vazamento de áudio)
 
+## Atualização (revisão do default para 0)
+
+**O default da flag `-margem-fim` passou de 0,4 s para 0 s.** A investigação posterior
+(ver spec do timestamp da legenda rolling) mostrou que a causa real de o Short terminar no
+meio da frase NÃO é o vazamento que esta margem tratava, e sim o **timestamp adiantado da
+legenda rolling**: o `srtclean` carimba cada linha com o *início* da cue, e nas legendas
+de 2 linhas do YouTube a palavra final (linha de baixo) é falada só ao longo da cue —
+então o `end` calculado fica 1–3 s ANTES do áudio real da última palavra. Nesse cenário, a
+margem de 0,4 s **agrava** o corte (retira ainda mais do fim), em vez de ajudar.
+
+Por isso o padrão passa a ser **não recuar** (corta no `end` cheio). A margem continua
+existindo e configurável — é útil quando o `end` estiver preciso e realmente houver
+vazamento da fala seguinte —, mas deixa de ser aplicada por omissão. A correção da causa
+raiz (o timestamp adiantado) é tratada em spec própria; esta flag não é o lugar dela.
+
+O restante do texto abaixo é o registro original da spec (mantido como histórico).
+
 ## Objetivo
 
 Evitar que o Short capture o começo da fala seguinte no fim. Hoje, o corte termina no
@@ -32,7 +49,8 @@ Isto é a camada AUTOMÁTICA (resolve a maioria dos casos, barato). O ajuste fin
 
 Dentro:
 - `cmd/render` / `internal/video`: ao cortar cada Short, terminar em `end - margem`, com
-  `margem` configurável (flag, ex.: `-margem-fim`, default sugerido 0,4 s).
+  `margem` configurável (flag `-margem-fim`). **Default 0** (corta no `end` cheio) — ver a
+  atualização no topo; historicamente foi 0,4 s.
 - A margem nunca pode inverter o trecho (se `end - margem <= start`, não aplicar / erro
   claro — não deve acontecer com trechos de 30–58 s, mas guardar contra isso).
 - Log deixando claro que a margem foi aplicada e qual valor.
@@ -50,7 +68,8 @@ para calibrar esse equilíbrio.
 
 ## Critérios de aceite
 
-- [ ] Corte termina em `end - margem`; `margem` configurável por flag, default 0,4 s.
+- [ ] Corte termina em `end - margem`; `margem` configurável por flag, **default 0**
+      (sem recuo por omissão — ver atualização no topo).
 - [ ] Nos 4 Shorts do sermão de referência, o áudio da fala seguinte não é mais audível
       no fim (verificação do operador, ouvindo).
 - [ ] A última frase do trecho continua completa (a margem não corta sílaba final —
@@ -63,9 +82,8 @@ para calibrar esse equilíbrio.
 ```bash
 go test ./...
 rm -f finalizados/sermao/short_*.mp4
-go run ./cmd/render -id sermao            # com a margem default
-# operador ouve o fim de cada Short: a fala seguinte não deve mais aparecer.
-# se algum cortar a última sílaba, testar margem menor:
+go run ./cmd/render -id sermao               # default 0: corta no end cheio (durações inteiras)
+# se, com o end preciso, ainda houver vazamento da fala seguinte, aplicar margem:
 go run ./cmd/render -id sermao -margem-fim 0.3
 ```
 
