@@ -86,6 +86,30 @@ func TestMontarFiltroSimplesSemLogoNemGradiente(t *testing.T) {
 	}
 }
 
+// spec-12 (bug legenda duplicada): a janela do drawtext usa limite superior EXCLUSIVO,
+// para dois blocos vizinhos (que compartilham a fronteira) nunca ficarem ativos juntos.
+func TestDrawtextFiltrosJanelaSemiaberta(t *testing.T) {
+	blocos := []BlocoLegenda{
+		{InicioMs: 0, FimMs: 5000, Texto: "um"},
+		{InicioMs: 5000, FimMs: 7000, Texto: "dois"},
+	}
+	tfs := []string{"a.txt", "b.txt"}
+	f := drawtextFiltros(blocos, tfs, estiloTeste())
+
+	if strings.Contains(f, "between(") {
+		t.Errorf("não deveria usar between (inclusivo nos dois extremos): %s", f)
+	}
+	// bloco 0: [0, 5000)  -> gte(t,0.000)*lt(t,5.000)
+	if !strings.Contains(f, "enable='gte(t,0.000)*lt(t,5.000)'") {
+		t.Errorf("bloco 0 sem janela semiaberta: %s", f)
+	}
+	// bloco 1: [5000, 7000) -> gte(t,5.000)*lt(t,7.000)
+	if !strings.Contains(f, "enable='gte(t,5.000)*lt(t,7.000)'") {
+		t.Errorf("bloco 1 sem janela semiaberta: %s", f)
+	}
+	// Na fronteira t=5.000: bloco0 lt(5.000)=falso, bloco1 gte(5.000)=verdadeiro → só um.
+}
+
 func TestMontarFiltroComGradienteELogo(t *testing.T) {
 	blocos := []BlocoLegenda{{InicioMs: 0, FimMs: 2000, Texto: "primeira\nsegunda"}}
 	tfs := []string{"trabalho/x/short_01.sub001.txt"}

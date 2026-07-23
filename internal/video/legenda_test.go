@@ -81,3 +81,30 @@ func TestBlocosLegendaForaDoTrecho(t *testing.T) {
 		t.Errorf("frase fora de [start,end] não deveria virar bloco: %+v", b)
 	}
 }
+
+// spec-12 (bug legenda duplicada): com a janela semiaberta [ini, fim), blocos
+// consecutivos (que se tocam na fronteira) nunca têm um instante em comum. Este teste
+// garante o invariante nos dados: nenhum par de blocos se sobrepõe em meia-abertura.
+func TestBlocosLegendaSemSobreposicao(t *testing.T) {
+	transc := strings.Join([]string{
+		"[00:00:00] Ele era pastor da igreja quadrangular naquela cidade.",
+		"[00:00:05] E ele disse para mim uma coisa que eu nunca esqueci.",
+		"[00:00:10] Deixei tudo para trás e fui morar bem longe dali.",
+		"[00:00:16] E o que aconteceu depois foi realmente surpreendente.",
+	}, "\n")
+	frases := harness.Frasear(transc)
+	blocos := BlocosLegenda(frases, 0, 20000, 32, 2)
+	if len(blocos) < 3 {
+		t.Fatalf("esperava vários blocos para o teste, veio %d", len(blocos))
+	}
+	// Meia-abertura [ini, fim): dois blocos têm instante comum sse ini_a<fim_b && ini_b<fim_a.
+	for i := 0; i < len(blocos); i++ {
+		for j := i + 1; j < len(blocos); j++ {
+			a, b := blocos[i], blocos[j]
+			if a.InicioMs < b.FimMs && b.InicioMs < a.FimMs {
+				t.Errorf("blocos #%d [%d,%d) e #%d [%d,%d) têm instante comum",
+					i, a.InicioMs, a.FimMs, j, b.InicioMs, b.FimMs)
+			}
+		}
+	}
+}

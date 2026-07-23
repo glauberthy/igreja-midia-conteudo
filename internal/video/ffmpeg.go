@@ -381,6 +381,12 @@ func filtroBase() string {
 // juntada por vírgula, sem vírgula inicial (vazio se não há blocos). Cada drawtext carrega
 // a fonte direto do .ttf, branca com contorno/sombra, centralizada, ancorada na BASE acima
 // da faixa da logo, visível só na janela do bloco. Texto vem de arquivo (sem escaping).
+//
+// A janela usa limite superior EXCLUSIVO — `gte(t,a)*lt(t,b)` em vez de between(t,a,b),
+// que é inclusivo nos dois extremos (spec-12). Como blocos vizinhos compartilham a
+// fronteira (fim de um = início do outro), o between fazia os dois aparecerem no frame
+// exato da fronteira (legenda duplicada/borrada). Com lt(t,b), no instante `b` só o bloco
+// seguinte (gte) fica ativo — nunca os dois.
 func drawtextFiltros(blocos []BlocoLegenda, textfiles []string, est EstiloLegenda) string {
 	var fs []string
 	for i, bl := range blocos {
@@ -388,7 +394,7 @@ func drawtextFiltros(blocos []BlocoLegenda, textfiles []string, est EstiloLegend
 			"drawtext=fontfile=%s:textfile=%s:expansion=none"+
 				":fontsize=%d:fontcolor=white:borderw=%d:bordercolor=black"+
 				":shadowcolor=black@0.55:shadowx=%d:shadowy=%d:line_spacing=%d:text_align=C"+
-				":x=(w-text_w)/2:y=h-%d-text_h:enable='between(t,%s,%s)'",
+				":x=(w-text_w)/2:y=h-%d-text_h:enable='gte(t,%s)*lt(t,%s)'",
 			escaparFiltro(est.FontePath), escaparFiltro(textfiles[i]),
 			est.Tamanho, est.Contorno, est.Sombra, est.Sombra, est.EspacoLinhas,
 			est.FaixaLogoPx, segundos(bl.InicioMs), segundos(bl.FimMs),
