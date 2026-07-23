@@ -154,9 +154,12 @@ func (b *Baixador) executar(ctx context.Context, ped *pipeline.Pedido) error {
 }
 
 // argsLegenda monta o yt-dlp para baixar SÓ a legenda automática (idioma subLangs), em .srt.
+// --force-overwrites garante que uma legenda pré-existente (de um download anterior) seja
+// substituída, nunca reaproveitada — a legenda tem que corresponder à URL desta chamada.
 func argsLegenda(url, dir, subLangs string) []string {
 	return []string{
 		"--no-playlist",
+		"--force-overwrites",
 		"--skip-download",
 		"--write-auto-subs",
 		"--sub-langs", subLangs,
@@ -173,6 +176,11 @@ func argsLegenda(url, dir, subLangs string) []string {
 func argsVideo(url, inicio, fim, dir, formato string) []string {
 	args := []string{
 		"--no-playlist",
+		// --force-overwrites é CRÍTICO: sem ele, o yt-dlp pula o download quando já existe
+		// um video.mp4 na pasta ("has already been downloaded"), o que reaproveitaria
+		// silenciosamente o vídeo de um pedido anterior. Com ele, o vídeo baixado sempre
+		// corresponde à URL desta chamada.
+		"--force-overwrites",
 		"--download-sections", "*" + inicio + "-" + fim,
 		"--force-keyframes-at-cuts",
 		"--downloader-args", "ffmpeg_i:-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 30 -rw_timeout 30000000",

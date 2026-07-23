@@ -179,9 +179,17 @@ func TestArgsContemParametrosEssenciais(t *testing.T) {
 	if !contem(leg, "--skip-download") || !contem(leg, "--write-auto-subs") || !contem(leg, "pt") {
 		t.Errorf("args de legenda incompletos: %v", leg)
 	}
+	if !contem(leg, "--force-overwrites") {
+		t.Errorf("legenda deve usar --force-overwrites (não reaproveitar arquivo antigo): %v", leg)
+	}
 	vid := argsVideo("URL", "00:05:30", "00:38:10", "trabalho/x", "")
 	if !contem(vid, "--download-sections") || !contem(vid, "*00:05:30-00:38:10") {
 		t.Errorf("args de vídeo não recortam o intervalo: %v", vid)
+	}
+	// --force-overwrites impede o yt-dlp de pular um video.mp4 pré-existente (a causa
+	// raiz de reaproveitar o vídeo de outro pedido).
+	if !contem(vid, "--force-overwrites") {
+		t.Errorf("vídeo deve usar --force-overwrites (não pular video.mp4 existente): %v", vid)
 	}
 	// Com formato vazio, não passa -f (deixa o yt-dlp escolher o melhor).
 	if contem(vid, "-f") {

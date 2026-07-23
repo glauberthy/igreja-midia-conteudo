@@ -61,16 +61,20 @@ Notas de infra (validado numa RTX 4000 Ada, 20 GB VRAM):
 
 ## 2. Pipeline (por sermão)
 
-Substitua `-url`, `-inicio`, `-fim` e o `-id` para cada pregação. Cada `id` fica
-isolado em `trabalho/<id>/` e `finalizados/<id>/`.
+Substitua `-url`, `-inicio`, `-fim` e o `-id` para cada pregação. **Use um `-id`
+próprio por sermão** (ex.: `-id sermao-<slug>`): cada `id` fica isolado em
+`trabalho/<id>/` e `finalizados/<id>/`. Se você reutilizar um `id` que já aponta para
+OUTRO vídeo/janela, o `baixar` **recusa** com um aviso (para nunca misturar o vídeo de
+um pedido com a transcrição de outro) — passe `-force` para substituir de propósito
+(apaga os artefatos daquele id e rebaixa do zero).
 
 ```bash
 cd ~/Desktop/shorts_igreja
 
 # (1) BAIXAR — legenda original pt + vídeo do trecho da pregação, em 1080p.
 go run ./cmd/baixar \
-  -url "https://www.youtube.com/watch?v=mg83gcM4ctw" \
-  -inicio 01:29:38 -fim 02:05:11 -id sermao \
+  -url "https://www.youtube.com/watch?v=xZNTJcehAV0" \
+  -inicio 00:49:15 -fim 01:24:30 -id sermao \
   -bin ~/.local/bin/yt-dlp -sublang pt-orig \
   -format "bv*[height<=1080]+ba/b[height<=1080]/b"
 
