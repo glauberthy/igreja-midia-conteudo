@@ -68,13 +68,19 @@ OUTRO vídeo/janela, o `baixar` **recusa** com um aviso (para nunca misturar o v
 um pedido com a transcrição de outro) — passe `-force` para substituir de propósito
 (apaga os artefatos daquele id e rebaixa do zero).
 
+Defina o `id` uma vez numa variável de shell e reaproveite nos três comandos — assim
+você não repete (nem erra) o id em cada linha:
+
 ```bash
 cd ~/Desktop/shorts_igreja
+
+# Um id por sermão (troque a cada pregação):
+ID=culto-noite-19-07-26
 
 # (1) BAIXAR — legenda original pt + vídeo do trecho da pregação, em 1080p.
 go run ./cmd/baixar \
   -url "https://www.youtube.com/watch?v=xZNTJcehAV0" \
-  -inicio 00:49:15 -fim 01:24:30 -id sermao \
+  -inicio 00:49:15 -fim 01:24:30 -id "$ID" \
   -bin ~/.local/bin/yt-dlp -sublang pt-orig \
   -format "bv*[height<=1080]+ba/b[height<=1080]/b"
 
@@ -83,32 +89,37 @@ go run ./cmd/baixar \
 # O endpoint tem default http://localhost:8080/v1/chat/completions (só passe -endpoint
 # se mudar a porta). É normal ver "tentativa N falhou … refazendo" no log (rede de retry).
 go run ./cmd/selecionar \
-  -transc trabalho/sermao/transcricao.txt \
-  -out    trabalho/sermao/candidatos.corrigido.json \
+  -transc "trabalho/$ID/transcricao.txt" \
+  -out    "trabalho/$ID/candidatos.corrigido.json" \
   -prompt-dir prompts/
 
 # (3) RENDERIZAR — corta, reenquadra 9:16 e queima a legenda de cada candidato.
 # Aplica margem de recuo de 0,4s no fim do corte (spec-10), para não vazar a fala
 # seguinte. Se algum Short cortar a última sílaba, rode com -margem-fim 0.3.
-go run ./cmd/render -id sermao
+go run ./cmd/render -id "$ID"
 
 # resultado (em ordem de score):
-ls -lh finalizados/sermao/          # short_01.mp4 ... short_NN.mp4
+ls -lh "finalizados/$ID/"            # short_01.mp4 ... short_NN.mp4
 ```
+
+O `-prompt-dir prompts/` não muda entre sermões (os prompts são compartilhados). Só o
+`id` (e os caminhos que o contêm) varia.
 
 ---
 
 ## 3. Conferência (opcional)
 
 ```bash
+# (reutiliza o mesmo $ID definido na seção 2)
+
 # validador standalone sobre o corrigido (deve reportar "nenhum problema"):
-go run ./cmd/validar -json trabalho/sermao/candidatos.corrigido.json -transc trabalho/sermao/transcricao.txt
+go run ./cmd/validar -json "trabalho/$ID/candidatos.corrigido.json" -transc "trabalho/$ID/transcricao.txt"
 
 # hooks e scores, do maior para o menor:
-python3 -c 'import json;[print(c["score"],c["start"],c["hook"]) for c in sorted(json.load(open("trabalho/sermao/candidatos.corrigido.json"))["candidatos"],key=lambda x:-x["score"])]'
+python3 -c 'import json,os;p=f"trabalho/{os.environ[\"ID\"]}/candidatos.corrigido.json";[print(c["score"],c["start"],c["hook"]) for c in sorted(json.load(open(p))["candidatos"],key=lambda x:-x["score"])]'
 
 # dimensões (devem ser 1080x1920) e duração de cada short:
-for f in finalizados/sermao/short_*.mp4; do
+for f in "finalizados/$ID"/short_*.mp4; do
   ffprobe -v error -select_streams v -show_entries stream=width,height -of csv=p=0 "$f"
 done
 ```
@@ -121,12 +132,12 @@ Short mostra a fala certa:
 
 ```bash
 # duração do video.mp4 deve ser ~ (fim - inicio); start_time ~ 0
-ffprobe -v error -show_entries format=start_time,duration -of default=noprint_wrappers=1 trabalho/sermao/video.mp4
+ffprobe -v error -show_entries format=start_time,duration -of default=noprint_wrappers=1 "trabalho/$ID/video.mp4"
 
 # frame do short no início vs. frame do video.mp4 no ponto absoluto do hook:
 # (ex.: hook em 01:37:05, inicio 01:29:38 -> 447s no video.mp4)
-ffmpeg -y -ss 447 -i trabalho/sermao/video.mp4 -frames:v 1 /tmp/checa_video.png
-ffmpeg -y -ss 2   -i finalizados/sermao/short_01.mp4 -frames:v 1 /tmp/checa_short.png
+ffmpeg -y -ss 447 -i "trabalho/$ID/video.mp4" -frames:v 1 /tmp/checa_video.png
+ffmpeg -y -ss 2   -i "finalizados/$ID/short_01.mp4" -frames:v 1 /tmp/checa_short.png
 # abra as duas imagens: devem ser a mesma cena (o short é o crop 9:16 dela).
 ```
 
