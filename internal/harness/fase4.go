@@ -13,15 +13,17 @@ import (
 // trecho já recortado (com as regras + a Declaração Doutrinária no prompt de sistema).
 // Feita 2x por candidato; o código combina as duas rodadas (nada de conta no modelo).
 //
-// Decisões (spec-07):
-//   - score final = a MENOR das duas somas (mais conservador).
-//   - requer_revisao_reforcada se a fidelidade diverge > 8 pontos OU os vereditos de
-//     veto discordam (uma rodada aprova, outra veta).
-//   - vetado (reprovado) se QUALQUER rodada dá fidelidade abaixo do limiar de veto.
+// Decisões:
+//   - score final = a MENOR das duas somas (mais conservador) (spec-07).
+//   - fidelidade baixa NÃO descarta (spec-11): o modelo não é confiável para VETAR
+//     fidelidade (chegou a vetar citação direta da Bíblia). Em vez de vetar, MARCA o
+//     trecho `requer_revisao_reforcada = true` com um motivo legível e o mantém — quem
+//     decide fidelidade é o humano. O modelo levanta suspeita; não descarta.
+//   - também marca revisão quando a fidelidade diverge muito entre as duas rodadas.
 const (
-	maxTokensAvaliacao    = 900
-	vetoFidelidadeMin     = 18 // context_fidelity (0–30) abaixo disto = veto por fidelidade
-	divergenciaFidelidade = 8  // diferença de fidelidade entre rodadas que exige revisão
+	maxTokensAvaliacao      = 900
+	limiarRevisaoFidelidade = 18 // context_fidelity (0–30) abaixo disto = marca revisão (não veta)
+	divergenciaFidelidade   = 8  // diferença de fidelidade entre rodadas que exige revisão
 )
 
 // Avaliacao é a saída de UMA rodada de avaliação do modelo.
@@ -30,13 +32,14 @@ type Avaliacao struct {
 	Observacoes string             `json:"observacoes"`
 }
 
-// ResultadoAvaliacao é a combinação determinística das duas rodadas.
+// ResultadoAvaliacao é a combinação determinística das duas rodadas. Não há mais
+// "vetado" (spec-11): fidelidade baixa vira marcação de revisão, não descarte.
 type ResultadoAvaliacao struct {
 	Score         int                // = menor das duas somas
 	Criteria      validacao.Criteria // do round mais conservador (menor soma)
 	Observacoes   string
 	RequerRevisao bool
-	Vetado        bool
+	MotivoRevisao string // motivo legível quando RequerRevisao (para o operador)
 }
 
 // Fase4Avaliar faz UMA rodada de avaliação do trecho. promptSistema traz as regras de
@@ -105,15 +108,24 @@ func CombinarAvaliacoes(a, b Avaliacao) ResultadoAvaliacao {
 		r.Score, r.Criteria, r.Observacoes = somaB, b.Criteria, b.Observacoes
 	}
 
-	vetA := a.Criteria.ContextFidelity < vetoFidelidadeMin
-	vetB := b.Criteria.ContextFidelity < vetoFidelidadeMin
-	r.Vetado = vetA || vetB
+	// Fidelidade baixa em QUALQUER rodada não veta mais (spec-11): marca revisão.
+	fidBaixa := a.Criteria.ContextFidelity < limiarRevisaoFidelidade ||
+		b.Criteria.ContextFidelity < limiarRevisaoFidelidade
 
+	// Divergência grande de fidelidade entre as rodadas também pede revisão (spec-07).
 	difFid := a.Criteria.ContextFidelity - b.Criteria.ContextFidelity
 	if difFid < 0 {
 		difFid = -difFid
 	}
-	r.RequerRevisao = difFid > divergenciaFidelidade || (vetA != vetB)
+	divergente := difFid > divergenciaFidelidade
+
+	r.RequerRevisao = fidBaixa || divergente
+	switch { // o motivo de fidelidade tem prioridade (é o alerta mais importante)
+	case fidBaixa:
+		r.MotivoRevisao = "possível problema de fidelidade — revisar"
+	case divergente:
+		r.MotivoRevisao = "avaliações divergentes de fidelidade — revisar"
+	}
 
 	return r
 }

@@ -87,9 +87,7 @@ func Selecionar(ctx context.Context, transcricaoPath string, cfg Config) ([]vali
 			continue
 		}
 		r := CombinarAvaliacoes(a1, a2)
-		if r.Vetado {
-			continue // reprovado por fidelidade
-		}
+		// Fidelidade baixa não descarta mais (spec-11): entra marcado para revisão.
 		avaliados = append(avaliados, validacao.Candidato{
 			Start:                  d.Start,
 			End:                    d.End,
@@ -99,6 +97,7 @@ func Selecionar(ctx context.Context, transcricaoPath string, cfg Config) ([]vali
 			Reason:                 r.Observacoes,
 			CompleteThought:        true,
 			RequerRevisaoReforcada: r.RequerRevisao,
+			MotivoRevisao:          r.MotivoRevisao,
 			Criteria:               r.Criteria,
 		})
 	}

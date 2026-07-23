@@ -61,6 +61,7 @@ type Candidato struct {
 	Reason                 string   `json:"reason,omitempty"`
 	CompleteThought        bool     `json:"complete_thought"`
 	RequerRevisaoReforcada bool     `json:"requer_revisao_reforcada"`
+	MotivoRevisao          string   `json:"motivo_revisao,omitempty"`
 	Criteria               Criteria `json:"criteria"`
 }
 

@@ -20,11 +20,11 @@ func TestCombinarConcordante(t *testing.T) {
 	a := Avaliacao{Criteria: crit(28, 28, 18, 9, 9)} // soma 92
 	b := Avaliacao{Criteria: crit(27, 29, 18, 9, 9)} // soma 92, fidelidade difere 1
 	r := CombinarAvaliacoes(a, b)
-	if r.Vetado {
-		t.Error("não deveria vetar (fidelidade alta nas duas)")
-	}
 	if r.RequerRevisao {
-		t.Error("não deveria marcar revisão (fidelidade próxima, mesmo veredito)")
+		t.Error("não deveria marcar revisão (fidelidade alta e próxima nas duas)")
+	}
+	if r.MotivoRevisao != "" {
+		t.Errorf("sem revisão, motivo deveria ser vazio: %q", r.MotivoRevisao)
 	}
 	if r.Score != 92 {
 		t.Errorf("score = %d, queria 92 (menor soma)", r.Score)
@@ -50,32 +50,38 @@ func TestCombinarDivergenciaFidelidadeMarcaRevisao(t *testing.T) {
 	if !r.RequerRevisao {
 		t.Error("fidelidade divergindo > 8 deveria marcar requer_revisao_reforcada")
 	}
-	if r.Vetado {
-		t.Error("ambas acima do veto (>=18): não deveria vetar")
+	if r.MotivoRevisao == "" {
+		t.Error("revisão por divergência deveria ter motivo legível")
 	}
 }
 
-func TestCombinarVetoDiscordanteMarcaRevisaoEVeta(t *testing.T) {
-	a := Avaliacao{Criteria: crit(24, 28, 18, 9, 9)} // aprova (>=18)
-	b := Avaliacao{Criteria: crit(12, 28, 18, 9, 9)} // veta (<18)
+// spec-11: fidelidade baixa em UMA rodada NÃO veta mais — marca revisão e mantém.
+func TestCombinarFidelidadeBaixaMarcaRevisaoNaoVeta(t *testing.T) {
+	a := Avaliacao{Criteria: crit(24, 28, 18, 9, 9)} // ok (>=18)
+	b := Avaliacao{Criteria: crit(12, 28, 18, 9, 9)} // fidelidade baixa (<18)
 	r := CombinarAvaliacoes(a, b)
-	if !r.Vetado {
-		t.Error("uma rodada abaixo do veto deveria vetar")
-	}
 	if !r.RequerRevisao {
-		t.Error("vereditos de veto discordantes deveriam marcar revisão")
+		t.Error("fidelidade baixa deveria marcar requer_revisao_reforcada")
+	}
+	if r.MotivoRevisao != "possível problema de fidelidade — revisar" {
+		t.Errorf("motivo de fidelidade inesperado: %q", r.MotivoRevisao)
+	}
+	// O score é calculado normalmente; o trecho NÃO é descartado (não há mais veto).
+	if r.Score != a.Criteria.Soma() && r.Score != b.Criteria.Soma() {
+		t.Errorf("score deveria ser a menor soma, veio %d", r.Score)
 	}
 }
 
-func TestCombinarAmbosVetamSemRevisao(t *testing.T) {
+// spec-11: fidelidade baixa nas DUAS rodadas também só marca (antes vetava e descartava).
+func TestCombinarAmbasFidelidadeBaixaMarcaRevisao(t *testing.T) {
 	a := Avaliacao{Criteria: crit(10, 20, 10, 5, 5)}
-	b := Avaliacao{Criteria: crit(12, 22, 12, 6, 6)} // ambas < 18 (concordam no veto)
+	b := Avaliacao{Criteria: crit(12, 22, 12, 6, 6)} // ambas < 18
 	r := CombinarAvaliacoes(a, b)
-	if !r.Vetado {
-		t.Error("ambas abaixo do veto deveria vetar")
+	if !r.RequerRevisao {
+		t.Error("fidelidade baixa nas duas rodadas deveria marcar revisão (não vetar)")
 	}
-	if r.RequerRevisao {
-		t.Error("ambas vetam (concordam): não deveria marcar revisão por discordância")
+	if r.MotivoRevisao != "possível problema de fidelidade — revisar" {
+		t.Errorf("motivo de fidelidade inesperado: %q", r.MotivoRevisao)
 	}
 }
 
@@ -215,7 +221,8 @@ func TestSelecionarPontaAPonta5Fases(t *testing.T) {
 	}
 }
 
-func TestSelecionarVetaBaixaFidelidade(t *testing.T) {
+// spec-11: baixa fidelidade não descarta mais — o candidato chega ao final MARCADO.
+func TestSelecionarBaixaFidelidadeMantemMarcado(t *testing.T) {
 	dir := t.TempDir()
 	for _, nome := range []string{"fase1_mapa.md", "fase2_candidatos.md", "fase4_avaliacao.md"} {
 		os.WriteFile(filepath.Join(dir, nome), []byte("p"), 0644)
@@ -229,7 +236,7 @@ func TestSelecionarVetaBaixaFidelidade(t *testing.T) {
 	transcPath := filepath.Join(dir, "transc.txt")
 	os.WriteFile(transcPath, []byte(transc), 0644)
 
-	// Fidelidade abaixo do veto nas duas rodadas -> reprovado -> nenhum final.
+	// Fidelidade abaixo do limiar nas duas rodadas -> NÃO descarta -> chega marcado.
 	fake := fakeMulti{
 		mapa:  `{"tema_central":"graça","estrutura":["intro"],"blocos":[{"assunto":"graça","inicio_aprox":"00:00:00","fim_aprox":"00:01:00"}]}`,
 		cands: `{"candidatos":[{"bloco":"graça","frase_ancora":"A graça de Deus é suficiente"}]}`,
@@ -239,7 +246,13 @@ func TestSelecionarVetaBaixaFidelidade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(finais) != 0 {
-		t.Errorf("candidato de baixa fidelidade deveria ser vetado; veio %d final(is)", len(finais))
+	if len(finais) != 1 {
+		t.Fatalf("candidato de baixa fidelidade deveria ser MANTIDO (marcado), não descartado; veio %d final(is)", len(finais))
+	}
+	if !finais[0].RequerRevisaoReforcada {
+		t.Error("candidato de baixa fidelidade deveria vir com requer_revisao_reforcada=true")
+	}
+	if finais[0].MotivoRevisao == "" {
+		t.Error("candidato marcado deveria ter motivo_revisao legível")
 	}
 }

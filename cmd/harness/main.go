@@ -111,19 +111,16 @@ func main() {
 			continue
 		}
 		r := harness.CombinarAvaliacoes(a1, a2)
+		// Fidelidade baixa não descarta mais (spec-11): entra marcado para revisão.
 		marca := ""
 		if r.RequerRevisao {
-			marca = " [requer_revisao_reforcada]"
-		}
-		if r.Vetado {
-			fmt.Fprintf(os.Stderr, "  VETADO (fidelidade) %q\n", resumo(d.Hook))
-			continue
+			marca = " [requer_revisao_reforcada: " + r.MotivoRevisao + "]"
 		}
 		fmt.Fprintf(os.Stderr, "  score=%d%s %q\n", r.Score, marca, resumo(d.Hook))
 		avaliados = append(avaliados, validacao.Candidato{
 			Start: d.Start, End: d.End, DurationSeconds: d.DuracaoSegundos, Score: r.Score,
 			Hook: d.Hook, Reason: r.Observacoes, CompleteThought: true,
-			RequerRevisaoReforcada: r.RequerRevisao, Criteria: r.Criteria,
+			RequerRevisaoReforcada: r.RequerRevisao, MotivoRevisao: r.MotivoRevisao, Criteria: r.Criteria,
 		})
 	}
 
