@@ -115,8 +115,8 @@ O `-prompt-dir prompts/` não muda entre sermões (os prompts são compartilhado
 # validador standalone sobre o corrigido (deve reportar "nenhum problema"):
 go run ./cmd/validar -json "trabalho/$ID/candidatos.corrigido.json" -transc "trabalho/$ID/transcricao.txt"
 
-# hooks e scores, do maior para o menor:
-python3 -c 'import json,os;p=f"trabalho/{os.environ[\"ID\"]}/candidatos.corrigido.json";[print(c["score"],c["start"],c["hook"]) for c in sorted(json.load(open(p))["candidatos"],key=lambda x:-x["score"])]'
+# hooks e scores, do maior para o menor (aspas duplas: o shell expande $ID):
+python3 -c "import json;p='trabalho/$ID/candidatos.corrigido.json';[print(c['score'],c['start'],c['hook']) for c in sorted(json.load(open(p))['candidatos'],key=lambda x:-x['score'])]"
 
 # dimensões (devem ser 1080x1920) e duração de cada short:
 for f in "finalizados/$ID"/short_*.mp4; do
