@@ -119,5 +119,11 @@ func (c *ClienteLLM) Completar(ctx context.Context, sistema, usuario string, max
 	if conteudo == "" {
 		return "", fmt.Errorf("modelo devolveu conteúdo vazio (finish_reason=%q)", rc.Choices[0].FinishReason)
 	}
+	// Truncada por max_tokens: o JSON vem cortado no meio (o parse acusaria "unexpected
+	// end of JSON input"). Sinaliza um erro claro e RETRYÁVEL (spec-08) — a próxima
+	// tentativa costuma sair completa; se persistir, o operador sabe que é o limite.
+	if rc.Choices[0].FinishReason == "length" {
+		return "", fmt.Errorf("resposta truncada em max_tokens=%d (finish_reason=length)", maxTokens)
+	}
 	return conteudo, nil
 }

@@ -9,11 +9,14 @@ import (
 	"strings"
 )
 
-// max_tokens por fase. Qualidade > tempo (spec-07): a fase de mapa precisa de mais
-// fôlego (lista de blocos); a de candidatos, um pouco menos.
+// max_tokens por fase. Qualidade > tempo (spec-07): a fase de mapa precisa de fôlego
+// (lista de blocos) e a de candidatos também (bloco + frase-âncora + motivo por
+// candidato). Uma resposta típica da Fase 2 tem ~700 tokens; a folga maior é margem
+// contra respostas longas/repetição de modelos quantizados (ex.: Qwen Q3), que
+// truncavam o JSON no limite antigo. O contexto do servidor (n_ctx ~40k) comporta.
 const (
-	maxTokensMapa       = 3500
-	maxTokensCandidatos = 2500
+	maxTokensMapa       = 4096
+	maxTokensCandidatos = 4096
 )
 
 // BlocoEnsino é uma ideia/assunto delimitado no sermão, com bordas APROXIMADAS

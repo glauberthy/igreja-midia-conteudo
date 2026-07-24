@@ -183,10 +183,12 @@ func TestFase2SemCandidatos(t *testing.T) {
 
 // --- Cliente HTTP real contra um llama-server fake (httptest) ---
 
-func envelopa(content string) string {
+func envelopa(content string) string { return envelopaComRazao(content, "stop") }
+
+func envelopaComRazao(content, finishReason string) string {
 	env := map[string]any{
 		"choices": []map[string]any{
-			{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": content}},
+			{"finish_reason": finishReason, "message": map[string]any{"role": "assistant", "content": content}},
 		},
 	}
 	b, _ := json.Marshal(env)
@@ -236,6 +238,22 @@ func TestClienteLLMConteudoVazio(t *testing.T) {
 
 	if _, err := NovoClienteLLM(srv.URL).Completar(context.Background(), "s", "u", 10); err == nil || !strings.Contains(err.Error(), "vazio") {
 		t.Errorf("esperava erro de conteúdo vazio, veio: %v", err)
+	}
+}
+
+// Truncamento por max_tokens (finish_reason=length): mesmo com conteúdo não-vazio, é
+// erro claro e retryável — nunca deixa passar JSON cortado como se fosse válido.
+func TestClienteLLMTruncada(t *testing.T) {
+	// JSON cortado no meio + finish_reason=length (o que o Qwen Q3 fazia).
+	cortado := `{"candidatos":[{"bloco":"a","frase_ancora":"a graça`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, envelopaComRazao(cortado, "length"))
+	}))
+	defer srv.Close()
+
+	_, err := NovoClienteLLM(srv.URL).Completar(context.Background(), "s", "u", 10)
+	if err == nil || !strings.Contains(err.Error(), "truncada") {
+		t.Errorf("esperava erro de resposta truncada, veio: %v", err)
 	}
 }
 
