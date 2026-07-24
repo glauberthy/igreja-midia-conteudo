@@ -87,9 +87,8 @@ func (b *Baixador) baseDir() string {
 // Baixar executa o fluxo completo para o pedido. Em qualquer falha, preenche
 // ped.Status = erro e ped.Erro com a mensagem, e devolve o erro nomeado.
 //
-// Ordem: valida tempos → baixa a legenda (barato, --skip-download) → se não houver
-// legenda, PARA antes de baixar o vídeo → baixa o vídeo do intervalo → gera a
-// transcrição via srtclean.
+// Ordem: fase leve (legenda + transcrição; ver BaixarLegenda) → baixa o vídeo do
+// intervalo. É o caminho do cmd/baixar (CLI), que baixa tudo de uma vez.
 func (b *Baixador) Baixar(ctx context.Context, ped *pipeline.Pedido) error {
 	if err := b.executar(ctx, ped); err != nil {
 		ped.Status = pipeline.EstadoErro
@@ -99,7 +98,30 @@ func (b *Baixador) Baixar(ctx context.Context, ped *pipeline.Pedido) error {
 	return nil
 }
 
+// BaixarLegenda executa SÓ a fase leve: baixa a legenda automática (sem o vídeo) e
+// gera a transcrição limpa recortada à janela [inicio, fim]. É a entrada do fluxo
+// invertido do servidor web (spec-05): selecionar antes de baixar o vídeo pesado.
+// Se não houver legenda automática (DP-001), devolve ErrSemLegenda e nada de vídeo
+// é baixado. Em qualquer falha, preenche ped.Status = erro e ped.Erro.
+func (b *Baixador) BaixarLegenda(ctx context.Context, ped *pipeline.Pedido) error {
+	if err := b.baixarLegenda(ctx, ped); err != nil {
+		ped.Status = pipeline.EstadoErro
+		ped.Erro = err.Error()
+		return err
+	}
+	return nil
+}
+
 func (b *Baixador) executar(ctx context.Context, ped *pipeline.Pedido) error {
+	if err := b.baixarLegenda(ctx, ped); err != nil {
+		return err
+	}
+	return b.baixarVideo(ctx, ped)
+}
+
+// baixarLegenda valida os tempos, baixa a legenda automática pt (sem vídeo) e gera a
+// transcrição limpa da janela. Não mexe em ped.Status (quem chama decide).
+func (b *Baixador) baixarLegenda(ctx context.Context, ped *pipeline.Pedido) error {
 	if !tempoValido(ped.Inicio, ped.Fim) {
 		return ErrTempoInvalido
 	}
@@ -109,7 +131,7 @@ func (b *Baixador) executar(ctx context.Context, ped *pipeline.Pedido) error {
 		return fmt.Errorf("criando pasta de trabalho: %w", err)
 	}
 
-	// 1) Legenda automática pt (sem baixar o vídeo ainda).
+	// Legenda automática pt (sem baixar o vídeo ainda).
 	_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsLegenda(ped.YouTubeURL, dir, b.subLangs())...)
 	if err != nil {
 		if indisponivel(stderr) {
@@ -129,20 +151,11 @@ func (b *Baixador) executar(ctx context.Context, ped *pipeline.Pedido) error {
 		}
 	}
 
-	// 2) Vídeo do intervalo da pregação.
-	_, stderr, err = b.Exec.Rodar(ctx, b.bin(), argsVideo(ped.YouTubeURL, ped.Inicio, ped.Fim, dir, b.Formato)...)
-	if err != nil {
-		if indisponivel(stderr) {
-			return ErrVideoIndisponivel
-		}
-		return fmt.Errorf("baixando vídeo: %w", err)
-	}
-
-	// 3) Transcrição limpa (srtclean), recortada à janela da pregação [inicio, fim]
-	//    MAS mantendo os tempos ABSOLUTOS — para o corte do vídeo (spec-04) bater
-	//    (video.mp4 rebaseado a zero; corte em start-inicio). A legenda automática
-	//    é baixada inteira; aqui a transcrição da SELEÇÃO fica só com a pregação, para
-	//    o modelo não escolher trechos de louvor/avisos fora da janela.
+	// Transcrição limpa (srtclean), recortada à janela da pregação [inicio, fim]
+	// MAS mantendo os tempos ABSOLUTOS — para o corte do vídeo (spec-04) bater
+	// (video.mp4 rebaseado a zero; corte em start-inicio). A legenda automática
+	// é baixada inteira; aqui a transcrição da SELEÇÃO fica só com a pregação, para
+	// o modelo não escolher trechos de louvor/avisos fora da janela.
 	inicioMs, _ := transcricao.HmsToMs(ped.Inicio)
 	fimMs, _ := transcricao.HmsToMs(ped.Fim)
 	transc := filepath.Join(dir, "transcricao.txt")
@@ -150,6 +163,20 @@ func (b *Baixador) executar(ctx context.Context, ped *pipeline.Pedido) error {
 		return fmt.Errorf("limpando legenda: %w", err)
 	}
 
+	return nil
+}
+
+// baixarVideo baixa o trecho [inicio, fim] do vídeo. Pressupõe a pasta já criada
+// pela fase leve. Não mexe em ped.Status (quem chama decide).
+func (b *Baixador) baixarVideo(ctx context.Context, ped *pipeline.Pedido) error {
+	dir := filepath.Join(b.baseDir(), ped.ID)
+	_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsVideo(ped.YouTubeURL, ped.Inicio, ped.Fim, dir, b.Formato)...)
+	if err != nil {
+		if indisponivel(stderr) {
+			return ErrVideoIndisponivel
+		}
+		return fmt.Errorf("baixando vídeo: %w", err)
+	}
 	return nil
 }
 
