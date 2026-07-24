@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -25,12 +26,24 @@ const (
 	EnvAPIKey      = "LLM_API_KEY"
 )
 
-// Parâmetros fechados no spike (docs/aprendizados-do-spike.md) — não reabrir.
+// Parâmetros de sampling. Os padrões vêm do spike (docs/aprendizados-do-spike.md);
+// são sobreponíveis por variável de ambiente para calibrar por máquina/modelo SEM
+// recompilar (HARNESS_TEMP, HARNESS_REPEAT_PENALTY) — ver docs/otimizacao-modelo-local.md.
 // max_tokens é dimensionado POR FASE (ver fases.go).
-const (
-	temperatura   = 0.2
-	repeatPenalty = 1.1
+var (
+	temperatura   = envFloat("HARNESS_TEMP", 0.2)
+	repeatPenalty = envFloat("HARNESS_REPEAT_PENALTY", 1.1)
 )
+
+// envFloat lê um float da variável de ambiente `nome`; usa `padrao` se ausente/inválida.
+func envFloat(nome string, padrao float64) float64 {
+	if v := os.Getenv(nome); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return padrao
+}
 
 // ModeloLLM é a costura mockável para o modelo: uma tarefa focada por chamada.
 // Devolve o conteúdo (que as fases esperam ser um JSON) já como string.
