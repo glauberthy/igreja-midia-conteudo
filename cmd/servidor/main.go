@@ -38,6 +38,7 @@ func (s selecionadorHarness) Selecionar(ctx context.Context, transcricaoPath str
 func main() {
 	porta := flag.Int("porta", 7799, "porta TCP local do servidor (padrão 7799; evite 80/8080/8000)")
 	base := flag.String("base", "trabalho", "pasta raiz de trabalho")
+	logRodadas := flag.String("log", "resultados/rodadas.md", "arquivo de log das rodadas (avaliação de variância)")
 	bin := flag.String("bin", "yt-dlp", "binário do yt-dlp")
 	sublang := flag.String("sublang", "pt", "idioma da legenda automática (ex.: pt, pt-orig)")
 	endpoint := flag.String("endpoint", harness.EndpointPadrao, "endpoint do modelo (llama-server; URL completa /v1/chat/completions)")
@@ -55,9 +56,10 @@ func main() {
 	}}
 
 	s := servidor.Novo(servidor.Opcoes{
-		Baixador:     baixador,
-		Selecionador: sel,
-		BaseDir:      *base,
+		Baixador:       baixador,
+		Selecionador:   sel,
+		BaseDir:        *base,
+		LogRodadasPath: *logRodadas,
 	})
 
 	addr := fmt.Sprintf(":%d", *porta)

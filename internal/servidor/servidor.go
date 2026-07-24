@@ -60,16 +60,19 @@ type registro struct {
 
 // Servidor guarda as dependências e o registro em memória dos pedidos.
 type Servidor struct {
-	baixador     BaixadorLegenda
-	selecionador Selecionador
-	baseDir      string
-	agora        func() time.Time
-	gerarID      func() string
-	mux          *http.ServeMux
+	baixador       BaixadorLegenda
+	selecionador   Selecionador
+	baseDir        string
+	logRodadasPath string
+	agora          func() time.Time
+	gerarID        func() string
+	mux            *http.ServeMux
 
 	mu      sync.Mutex
 	pedidos map[string]*registro
 	seq     int
+
+	logMu sync.Mutex // serializa a escrita do log de rodadas
 }
 
 // Opcoes configura o Servidor. Campos zero recebem padrões (agora=time.Now,
@@ -78,23 +81,30 @@ type Opcoes struct {
 	Baixador     BaixadorLegenda
 	Selecionador Selecionador
 	BaseDir      string
-	Agora        func() time.Time // injetável para testes
-	GerarID      func() string    // injetável para testes
+	// LogRodadasPath é onde cada seleção é registrada como uma "rodada" (avaliação de
+	// variância). Vazio usa o padrão "resultados/rodadas.md".
+	LogRodadasPath string
+	Agora          func() time.Time // injetável para testes
+	GerarID        func() string    // injetável para testes
 }
 
 // Novo cria o servidor e registra as rotas.
 func Novo(o Opcoes) *Servidor {
 	s := &Servidor{
-		baixador:     o.Baixador,
-		selecionador: o.Selecionador,
-		baseDir:      o.BaseDir,
-		agora:        o.Agora,
-		gerarID:      o.GerarID,
-		pedidos:      make(map[string]*registro),
-		mux:          http.NewServeMux(),
+		baixador:       o.Baixador,
+		selecionador:   o.Selecionador,
+		baseDir:        o.BaseDir,
+		logRodadasPath: o.LogRodadasPath,
+		agora:          o.Agora,
+		gerarID:        o.GerarID,
+		pedidos:        make(map[string]*registro),
+		mux:            http.NewServeMux(),
 	}
 	if s.baseDir == "" {
 		s.baseDir = "trabalho"
+	}
+	if s.logRodadasPath == "" {
+		s.logRodadasPath = filepath.Join("resultados", "rodadas.md")
 	}
 	if s.agora == nil {
 		s.agora = time.Now
@@ -336,6 +346,10 @@ func (s *Servidor) faseLeve(reg *registro) {
 		s.setErro(reg, "falha ao gravar os candidatos: "+err.Error())
 		return
 	}
+
+	// Registra a rodada em disco (avaliação de variância) antes de expor ao operador.
+	// Falha de log não interrompe a seleção — é auxiliar.
+	s.registrarRodada(reg.ped, cands)
 
 	s.mu.Lock()
 	reg.cands = cands

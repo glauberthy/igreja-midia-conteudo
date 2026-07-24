@@ -72,11 +72,12 @@ func servidorTeste(t *testing.T, b BaixadorLegenda, sel Selecionador) *Servidor 
 	}
 	n := 0
 	return Novo(Opcoes{
-		Baixador:     b,
-		Selecionador: sel,
-		BaseDir:      base,
-		Agora:        func() time.Time { return time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC) },
-		GerarID:      func() string { n++; return "teste-1" },
+		Baixador:       b,
+		Selecionador:   sel,
+		BaseDir:        base,
+		LogRodadasPath: filepath.Join(base, "rodadas.md"), // isola o log no TempDir
+		Agora:          func() time.Time { return time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC) },
+		GerarID:        func() string { n++; return "teste-1" },
 	})
 }
 
