@@ -31,7 +31,9 @@ func (s *Servidor) registrarRodada(ped *pipeline.Pedido, cands []validacao.Candi
 			return
 		}
 	}
-	n := proximaRodada(s.logRodadasPath)
+	// Lê o conteúdo atual uma vez: a numeração conta os cabeçalhos já presentes.
+	atual, _ := os.ReadFile(s.logRodadasPath) // nil se não existe
+	n := contarRodadas(atual) + 1
 
 	// Ordena uma CÓPIA por score desc — a ordem original de `cands` é a que os índices
 	// de aprovação usam, então não pode ser mexida.
@@ -40,6 +42,11 @@ func (s *Servidor) registrarRodada(ped *pipeline.Pedido, cands []validacao.Candi
 	sort.SliceStable(ord, func(i, j int) bool { return ord[i].Score > ord[j].Score })
 
 	texto := formatarRodada(n, s.agora(), ped, ord)
+	// Se o arquivo não termina em quebra de linha (ex.: editado à mão), prefixa uma
+	// para a nova rodada não colar no fim da anterior.
+	if len(atual) > 0 && atual[len(atual)-1] != '\n' {
+		texto = "\n" + texto
+	}
 
 	f, err := os.OpenFile(s.logRodadasPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
@@ -79,21 +86,18 @@ func formatarRodada(n int, agora time.Time, ped *pipeline.Pedido, ord []validaca
 	return b.String()
 }
 
-// proximaRodada devolve o número da próxima rodada, contando os cabeçalhos "## Rodada "
-// já presentes no arquivo (1 se o arquivo não existe). Assim a numeração é contínua
-// mesmo entre reinícios do servidor.
-func proximaRodada(path string) int {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return 1
-	}
+// contarRodadas conta os cabeçalhos "## Rodada " no conteúdo do log. A numeração da
+// próxima rodada é contarRodadas(conteúdo)+1, o que a mantém contínua mesmo entre
+// reinícios do servidor. (Editar o arquivo à mão pode desalinhar a contagem — é o
+// custo de um log legível e simples.)
+func contarRodadas(conteudo []byte) int {
 	n := 0
-	for _, l := range strings.Split(string(b), "\n") {
+	for _, l := range strings.Split(string(conteudo), "\n") {
 		if strings.HasPrefix(l, "## Rodada ") {
 			n++
 		}
 	}
-	return n + 1
+	return n
 }
 
 // celula deixa um texto seguro para uma célula de tabela markdown (sem quebras nem "|").

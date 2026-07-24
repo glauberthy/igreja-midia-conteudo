@@ -121,6 +121,27 @@ func TestRegistrarRodadaIncrementaNumero(t *testing.T) {
 	}
 }
 
+// Robustez: se o arquivo foi editado à mão e ficou SEM quebra de linha no fim, a nova
+// rodada não pode colar no fim da anterior (o cabeçalho tem que ficar em linha própria).
+func TestRegistrarRodadaSeparaMesmoSemQuebraFinal(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "rodadas.md")
+	// Simula um log editado à mão terminando sem "\n".
+	if err := os.WriteFile(log, []byte("## Rodada 1 — x\n\n- Pedido: a\n| ... | crê. |"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	s := servidorComLog(t, log)
+	ped := pipeline.NovoPedido("s", "u", "00:00:00", "00:10:00", s.agora())
+	s.registrarRodada(ped, []validacao.Candidato{{Hook: "h", Score: 80}})
+
+	out, _ := os.ReadFile(log)
+	if strings.Contains(string(out), "crê. |## Rodada") {
+		t.Errorf("cabeçalho colou no fim da rodada anterior:\n%s", out)
+	}
+	if !strings.Contains(string(out), "\n## Rodada 2") {
+		t.Errorf("nova rodada deveria começar em linha própria:\n%s", out)
+	}
+}
+
 // A numeração é contínua mesmo entre "reinícios" (novo Servidor sobre o mesmo arquivo).
 func TestRegistrarRodadaContinuaAposReinicio(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "rodadas.md")
