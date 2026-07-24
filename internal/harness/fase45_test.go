@@ -123,6 +123,63 @@ func TestFase5MantemValido(t *testing.T) {
 	}
 }
 
+// Regressão (bug real, sermão web-20260724-174206-3 ~00:56): o hook começa no FIM de
+// uma linha rolling ("... Salvação não") e só aparece CONTÍGUO na linha duplicada
+// seguinte (3s depois). Validando sobre o texto BRUTO, o corretor achava o hook "3s à
+// frente" e reescrevia o start para frente — clipando as palavras de abertura do corte.
+// A Fase 5 tem que validar sobre a MESMA verdade textual da Fase 3 (desduplicada), em
+// que o hook casa exatamente no start.
+func TestFase5NaoDeslizaStartComRolling(t *testing.T) {
+	tr := strings.Join([]string{
+		"[00:00:07] A palavra nos diz que a salvação é pela fé, é um ato. Salvação não",
+		"[00:00:10] é pela fé, é um ato. Salvação não",
+		"[00:00:10] é pela fé, é um ato. Salvação não é um processo. Salvação você não",
+		"[00:00:13] é um processo. Salvação você não",
+		"[00:00:13] é um processo. Salvação você não constrói sozinho jamais. A santificação",
+		"[00:00:17] constrói sozinho jamais. A santificação",
+		"[00:00:17] constrói sozinho jamais. A santificação é um processo contínuo e diário.",
+		"[00:00:45] Amém, igreja.",
+	}, "\n")
+	// Na desduplicada, a frase-hook "Salvação não é um processo." começa em 00:00:07
+	// (onde "Salvação" aparece pela 1ª vez) — é o start que a Fase 3 gera.
+	c := candValido()
+	c.Start = "00:00:07.000"
+	c.End = "00:00:45.000"
+	c.DurationSeconds = 38
+	c.Hook = "Salvação não é um processo."
+
+	oks, descs := Fase5Validar([]validacao.Candidato{c}, tr)
+	if len(oks) != 1 {
+		t.Fatalf("esperava 1 aprovado, veio %d (descartes %+v)", len(oks), descs)
+	}
+	if oks[0].Start != "00:00:07.000" {
+		t.Errorf("start deslizado pela validação (rolling): %q, queria 00:00:07.000", oks[0].Start)
+	}
+}
+
+// A rede de segurança continua valendo: um start REALMENTE errado (longe do hook na
+// própria transcrição desduplicada) segue sendo corrigido para o horário do hook.
+func TestFase5AindaCorrigeStartErrado(t *testing.T) {
+	tr := strings.Join([]string{
+		"[00:00:00] Introdução do culto com avisos e leitura.",
+		"[00:00:10] A graça de Deus é suficiente para você hoje e sempre.",
+		"[00:00:45] Amém, igreja.",
+	}, "\n")
+	c := candValido()
+	c.Start = "00:00:00.000" // errado: o hook fala às 00:00:10
+	c.End = "00:00:45.000"
+	c.DurationSeconds = 45
+	c.Hook = "A graça de Deus é suficiente para você hoje e sempre."
+
+	oks, _ := Fase5Validar([]validacao.Candidato{c}, tr)
+	if len(oks) != 1 {
+		t.Fatalf("esperava 1 aprovado")
+	}
+	if oks[0].Start != "00:00:10.000" {
+		t.Errorf("start errado não foi corrigido para o hook: %q", oks[0].Start)
+	}
+}
+
 func TestFase5DescartaScoreZero(t *testing.T) {
 	c := candValido()
 	c.Score = 0

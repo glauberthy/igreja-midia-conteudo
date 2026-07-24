@@ -20,7 +20,13 @@ func Fase5Validar(cands []validacao.Candidato, transcricao string) ([]validacao.
 	if len(cands) == 0 {
 		return nil, nil
 	}
-	palavras := validacao.LerTranscricao(transcricao)
+	// Valida sobre a transcrição DESDUPLICADA — a MESMA verdade textual da Fase 3, que
+	// gerou start/hook. No texto bruto (rolling), o hook pode nunca aparecer contíguo no
+	// seu início real (a frase atravessa a fronteira de linha e a linha seguinte repete
+	// texto anterior); o corretor então achava o hook só na linha duplicada, segundos à
+	// frente, e "corrigia" o start para lá — clipando a abertura do corte. Na forma
+	// linear, cada frase é uma linha no seu tempo de início: hook casa exatamente no start.
+	palavras := validacao.LerTranscricao(TranscricaoLinear(transcricao))
 
 	brutos, _ := json.Marshal(cands)
 	doc := map[string]json.RawMessage{"candidatos": brutos}
