@@ -173,6 +173,63 @@ func TestFrasearDeduplicaRolling(t *testing.T) {
 	}
 }
 
+// TranscricaoLinear: desduplica a transcrição rolling numa linha por frase, preservando
+// as palavras e o formato "[HH:MM:SS] texto", para alimentar as Fases 1 e 2 com menos
+// tokens (a Fase 3 continua na bruta).
+func TestTranscricaoLinearDesduplicaEPreserva(t *testing.T) {
+	fr := Frasear(trechoReal)
+	linear := TranscricaoLinear(trechoReal)
+	linhas := strings.Split(strings.TrimRight(linear, "\n"), "\n")
+
+	if len(linhas) != len(fr) {
+		t.Fatalf("esperava 1 linha por frase (%d), veio %d", len(fr), len(linhas))
+	}
+	for i, l := range linhas {
+		m := reLinhaTransc.FindStringSubmatch(l)
+		if m == nil {
+			t.Fatalf("linha fora do formato [HH:MM:SS] texto: %q", l)
+		}
+		// Timestamp e texto batem com a frase correspondente (palavras preservadas).
+		if m[1] != validacao.MsParaHms(fr[i].InicioMs) {
+			t.Errorf("linha %d: timestamp %q, queria %q", i, m[1], validacao.MsParaHms(fr[i].InicioMs))
+		}
+		if m[2] != fr[i].Texto {
+			t.Errorf("linha %d: texto %q, queria %q", i, m[2], fr[i].Texto)
+		}
+	}
+
+	// Sem duplicação de rolagem: "possível." (repetido em várias linhas rolling do bruto)
+	// aparece uma única vez no texto linear.
+	if n := strings.Count(linear, "possível"); n != 1 {
+		t.Errorf("dedup falhou: 'possível' aparece %d vezes no texto linear", n)
+	}
+	// E é bem menor que o bruto (o ganho de tokens que motivou a mudança).
+	if len(linear) >= len(trechoReal) {
+		t.Errorf("linear (%d) não ficou menor que o bruto (%d)", len(linear), len(trechoReal))
+	}
+}
+
+// Invariante crucial da mudança: a frase-âncora que a Fase 2 escolhe do texto LINEAR
+// tem que casar na Fase 3, que roda sobre a transcrição BRUTA (com timestamps por
+// palavra). São as mesmas frases, então deve delimitar normalmente.
+func TestTranscricaoLinearAncoraCasaNaFase3Bruta(t *testing.T) {
+	frasesLinear := Frasear(TranscricaoLinear(trechoReal))
+	if len(frasesLinear) == 0 {
+		t.Fatal("texto linear não produziu frases")
+	}
+	ancora := frasesLinear[0].Texto // âncora como a Fase 2 a veria (do texto linear)
+
+	mapa := Mapa{Blocos: []BlocoEnsino{
+		{Assunto: "resgate", InicioAprox: "01:35:40", FimAprox: "01:37:00"},
+	}}
+	cands := []CandidatoBruto{{Bloco: "resgate", FraseAncora: ancora}}
+
+	oks, descs := Fase3Delimitar(cands, mapa, trechoReal) // Fase 3 sobre a BRUTA
+	if len(oks) != 1 {
+		t.Fatalf("âncora vinda do texto linear deveria casar na Fase 3 bruta; veio %d ok, descartes: %+v", len(oks), descs)
+	}
+}
+
 func TestAcharAncora(t *testing.T) {
 	fs := Frasear("[00:00:00] A graça de Deus é suficiente.\n[00:00:10] O Senhor é o pastor.")
 	if i, ok := AcharAncora(fs, "a graça de Deus é suficiente"); !ok || i != 0 {

@@ -62,17 +62,22 @@ func Selecionar(ctx context.Context, transcricaoPath string, cfg Config) ([]vali
 
 	modelo := cfg.modelo()
 
+	// Transcrição DESDUPLICADA para as fases de modelo (1 e 2): ~metade dos tokens e
+	// sem repetição de rolagem, que inflava o input e induzia loop/truncamento. A Fase 3
+	// usa a BRUTA (precisa dos timestamps por palavra). Ver TranscricaoLinear.
+	transcLinear := TranscricaoLinear(transc)
+
 	// Fase 1 — Mapa.
-	mapa, err := Fase1Mapa(ctx, modelo, string(promptMapa), transc)
+	mapa, err := Fase1Mapa(ctx, modelo, string(promptMapa), transcLinear)
 	if err != nil {
 		return nil, err
 	}
 	// Fase 2 — Candidatos (bloco + frase-âncora, sem tempo).
-	brutos, err := Fase2Candidatos(ctx, modelo, string(promptCand), mapa, transc)
+	brutos, err := Fase2Candidatos(ctx, modelo, string(promptCand), mapa, transcLinear)
 	if err != nil {
 		return nil, err
 	}
-	// Fase 3 — Delimitação de tempo (código).
+	// Fase 3 — Delimitação de tempo (código) — sobre a transcrição BRUTA.
 	delim, _ := Fase3Delimitar(brutos, mapa, transc)
 
 	// Fase 4 — Avaliação em duplicata por candidato.

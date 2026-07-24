@@ -255,6 +255,29 @@ func distancia(ms, ini, fim int) int {
 	return 0
 }
 
+// TranscricaoLinear devolve a transcrição DESDUPLICADA: uma linha por frase, no formato
+// "[HH:MM:SS] texto", reusando Frasear (que remove a duplicação das legendas "rolling").
+//
+// É o que alimenta as fases de MODELO (1 e 2): mesmo conteúdo, ~metade dos tokens, sem o
+// texto repetido que inflava o input e induzia modelos (ex.: Qwen Q3) a repetir/loopar a
+// saída até estourar o max_tokens. A Fase 3 continua sobre a transcrição BRUTA: ela
+// precisa dos timestamps por palavra (numa frase longa cada palavra tem seu segundo, o
+// que dá FimMs > InicioMs); na forma linear a frase inteira carrega um só timestamp.
+//
+// Regra inviolável nº 2 preservada: nenhuma palavra do pregador é alterada — Frasear só
+// remove a repetição de rolagem e reconstrói o fluxo linear; o texto das frases é o mesmo.
+func TranscricaoLinear(transcricao string) string {
+	var b strings.Builder
+	for _, f := range Frasear(transcricao) {
+		b.WriteString("[")
+		b.WriteString(validacao.MsParaHms(f.InicioMs))
+		b.WriteString("] ")
+		b.WriteString(f.Texto)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // Frasear converte a transcrição "[HH:MM:SS] texto" em frases com tempo. Faz também
 // a desduplicação das legendas "rolling" do YouTube (linhas que repetem o texto que
 // continua na tela), reconstruindo um fluxo linear de palavras antes de dividir em

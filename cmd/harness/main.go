@@ -52,9 +52,13 @@ func main() {
 	modelo := harness.NovoClienteLLM(*endpoint)
 	ctx := context.Background()
 
+	// Fases 1 e 2 recebem a transcrição DESDUPLICADA (menos tokens, sem repetição de
+	// rolagem); a Fase 3 usa a BRUTA (timestamps por palavra). Espelha o Selecionar.
+	transcLinear := harness.TranscricaoLinear(string(transcricao))
+
 	// --- Fase 1: Mapa ---
 	fmt.Fprintln(os.Stderr, "Fase 1 (mapa do sermão)…")
-	mapa, err := harness.Fase1Mapa(ctx, modelo, promptMapa, string(transcricao))
+	mapa, err := harness.Fase1Mapa(ctx, modelo, promptMapa, transcLinear)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "erro: %v\n", err)
 		os.Exit(1)
@@ -69,7 +73,7 @@ func main() {
 
 	// --- Fase 2: Candidatos (bloco + frase-âncora, sem tempo) ---
 	fmt.Fprintln(os.Stderr, "Fase 2 (identificação de candidatos)…")
-	cands, err := harness.Fase2Candidatos(ctx, modelo, promptCand, mapa, string(transcricao))
+	cands, err := harness.Fase2Candidatos(ctx, modelo, promptCand, mapa, transcLinear)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "erro: %v\n", err)
 		os.Exit(1)
