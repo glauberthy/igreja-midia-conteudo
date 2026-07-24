@@ -1,104 +1,129 @@
-# Spec 05 — Servidor HTTP e página do operador
+# Spec 05 — Interface web do operador (fluxo invertido: selecionar antes de baixar)
 
 ## Objetivo
 
-Subir um servidor HTTP em Go, numa porta dedicada, que serve uma página simples com
-três campos ({link, início, fim}). O operador preenche e clica; o servidor processa o
-pedido inteiro em segundo plano (spec-02 a spec-04) e a página mostra o progresso e,
-ao final, a lista dos Shorts prontos em `finalizados/`. Sem autenticação.
+Uma interface web local para o operador leigo (pastor/auxiliar) gerar os Shorts sem usar
+o terminal. O fluxo é **invertido** em relação ao pipeline de linha de comando: primeiro
+seleciona (usando só a legenda, leve), o operador **pré-visualiza e aprova** os trechos
+dentro da própria página (player do YouTube embutido), e **só então** o vídeo é baixado e
+os trechos aprovados são cortados. Economiza banda/tempo e põe a revisão humana no ponto
+certo, antes do processamento pesado.
 
-## Contexto
+## Contexto e decisões de produto
 
-O operador não é técnico e não usa terminal. Ele já sabe navegar: abre o navegador na
-porta X, cai direto na página, preenche o link e os tempos da pregação, e acompanha.
-Ao terminar, ele mesmo pega os arquivos de `finalizados/` e envia pelo WhatsApp Web
-(o sistema NÃO integra WhatsApp). Ver as decisões de entrada/entrega desta conversa.
+- O operador não usa terminal. Abre o navegador numa porta local, cola o link do YouTube
+  e os tempos da pregação, acompanha, revisa e aprova. Pega os arquivos de finalizados/
+  e envia pelo WhatsApp Web manualmente (sem integração de mensageria).
+- **Fluxo invertido** (decidido em ideias-futuras.md): a seleção é 100% texto (legenda),
+  então é barato selecionar antes de baixar o vídeo inteiro. Só o aprovado é baixado.
+- **Uma tela** conduzindo todas as etapas (decisão do dono): cola link+tempos -> processa
+  -> lista trechos com player para revisar -> aprova/reprova -> baixa e corta os aprovados.
+- **v1 = aprovar/reprovar SEM ajuste fino de corte** (decisao do dono). O ajuste fino
+  (marcar inicio/fim ouvindo, via IFrame API) fica para a v2 -- ver "Futuro (v2)".
+- Um pedido por vez, fila simples (2 operadores, uso esporadico).
+- Sem autenticacao (uso local, rede confiavel). Porta dedicada, padrao :7799 (nunca
+  80/8080/8000), configuravel.
+
+- **Stack de front: HTMX + JavaScript vanilla (so para o player YouTube).** O servidor Go
+  gera HTML (via embed) e o HTMX faz as atualizacoes assincronas por atributos
+  (hx-get/hx-post/hx-trigger), sem framework, sem build, sem npm. Combina com o backend Go
+  (logica no servidor, HTML pronto na resposta). O unico JS vanilla e o do player YouTube
+  (IFrame API: onYouTubeIframeAPIReady, criar player, seekTo), que convive com o HTMX sem
+  conflito. Evita over-engineering (React/Vue seria demais para uma tela local esporadica).
+  Na v1, o polling de status usa hx-trigger="every 2s"; no FUTURO, trocar o polling por um
+  endpoint SSE no servidor Go (HTMX como cliente do SSE) -- ver pendencias.
+
+## Fluxo (uma tela, etapas)
+
+1. **Entrada**: operador informa {youtube_url, inicio, fim} da pregacao e envia.
+2. **Fase leve (baixar-legenda + selecionar)**: o sistema baixa APENAS a legenda/
+   transcricao (yt-dlp, sem o video) e roda o harness (selecao). A pagina faz polling do
+   status (baixando-legenda, selecionando, validando).
+   - Se nao houver legenda automatica (DP-001): a pagina informa e para, sem baixar video.
+3. **Revisao**: a pagina lista os trechos candidatos. Para cada um:
+   - um **player do YouTube embutido** (IFrame Player API) que toca o trecho de start a
+     end (via seekTo + parar no fim), para o operador assistir/ouvir dentro da pagina;
+   - o hook, a duracao e o score;
+   - se requer_revisao_reforcada = true (ex.: fidelidade marcada), um **alerta visivel**
+     (ex.: "revisar fidelidade") -- o operador julga;
+   - botoes **Aprovar** / **Reprovar**.
+4. **Confirmacao**: operador confirma o conjunto aprovado.
+5. **Fase pesada (baixar-video + cortar)**: so agora o sistema baixa o video (idealmente
+   so os trechos aprovados, via --download-sections do yt-dlp, se viavel; senao o video
+   inteiro) e renderiza (corte + 9:16 + legenda + logo). Status: baixando-video,
+   renderizando, concluido.
+6. **Entrega**: a pagina lista os Shorts de finalizados/<id>/ para baixar. O operador
+   envia por WhatsApp Web (fora do sistema).
 
 ## Escopo
 
 Dentro:
-- Servidor HTTP (biblioteca padrão) numa porta dedicada configurável (padrão `:7799`,
-  não usar 80/8080/8000).
-- Página única servida pelo Go: três campos + botão; sem framework, HTML/CSS/JS mínimos.
-- Processamento assíncrono: aceitar o pedido, responder na hora com um `id`, e rodar
-  o pipeline (download → seleção → validação → render) numa goroutine.
-- Endpoint de status para a página consultar o progresso do pedido.
-- Ao concluir, a página lista os Shorts de `finalizados/<id>/` com link para baixar.
-- Sem autenticação (uso local, rede confiável).
+- cmd/servidor (HTTP, porta configuravel, sem auth) + pagina unica servida via embed.
+- Orquestracao em duas fases separadas por aprovacao humana:
+  - fase leve: baixar-legenda -> Selecionar (harness);
+  - (pausa: aprovacao do operador);
+  - fase pesada: baixar-video (so aprovados, se viavel) -> Renderizar.
+- Player YouTube embutido (IFrame Player API) por trecho, tocando de start a end.
+- Maquina de estados do pedido cobrindo as duas fases + o estado de espera por aprovacao.
+- Rotas: GET / (pagina), POST /pedidos (cria; dispara fase leve), GET /pedidos/{id}
+  (status + candidatos quando prontos), POST /pedidos/{id}/aprovar (recebe a lista de
+  trechos aprovados; dispara fase pesada), GET /finalizados/{id}/{arquivo} (baixar).
+- Alinhamento de tempo: o start/end mostrado no player (YouTube) e usado no corte
+  (arquivo baixado) devem referir-se ao MESMO instante do video. Garantir e testar.
 
-Fora (spec futura):
-- Retenção/limpeza de disco (spec-06).
+Fora:
+- Ajuste fino de corte pelo operador (marcar inicio/fim) -- e a v2 (abaixo).
+- Integracao de mensageria (WhatsApp) -- sempre manual.
+- Retencao/limpeza de disco -- spec-06.
 
-## Decisões já tomadas (não reabrir)
+## Contratos
 
-- Porta dedicada, nunca 80/8080/8000. Configurável por flag/env, padrão `:7799`.
-- Sem autenticação.
-- Processamento é longo (minutos): a requisição de criação NÃO espera terminar; ela
-  retorna um `id` e o trabalho segue em background. A página faz polling do status.
-- O sistema termina no arquivo em `finalizados/`; a entrega ao pastor é manual, fora
-  do sistema (WhatsApp Web pelo operador). Nada de integração de mensageria.
-- Um pedido por vez é aceitável (2 operadores, uso esporádico); fila simples serve.
+- POST /pedidos {youtube_url, inicio, fim} -> {id}, dispara a fase leve.
+- GET /pedidos/{id} -> {id, status, erro, candidatos:[{indice, hook, start, end,
+  duration_seconds, score, requer_revisao_reforcada, motivo_revisao}], shorts:[nomes]}.
+- POST /pedidos/{id}/aprovar {aprovados:[indices]} -> dispara a fase pesada.
+- Estados: baixando-legenda, selecionando, validando, aguardando-aprovacao,
+  baixando-video, renderizando, concluido, erro (com mensagem clara).
 
-## Passos de implementação
+## Ponto de atencao -- player YouTube vs arquivo baixado
 
-1. `cmd/servidor/main.go`: sobe o HTTP na porta configurável; registra as rotas.
-2. Rotas: `GET /` (página), `POST /pedidos` (cria, valida entrada, retorna `id`),
-   `GET /pedidos/{id}` (status em JSON), `GET /finalizados/{id}/{arquivo}` (baixar).
-3. Executor de pedidos em background (goroutine) que chama, em ordem, `Baixar`
-   (spec-03), `Selecionar` (spec-02) e `Renderizar` (spec-04), atualizando `Status`.
-4. Estados visíveis ao operador: `baixando`, `transcrevendo`, `selecionando`,
-   `validando`, `renderizando`, `concluido`, `erro` (com mensagem clara em `erro`).
-5. Página: formulário simples, validação básica no cliente (formato dos tempos), e
-   uma área que faz polling em `GET /pedidos/{id}` e mostra progresso + lista final.
-6. Testes: as rotas com `httptest`; validação de entrada; a máquina de estados do
-   pedido (com download/seleção/render mockados). Sem subir o pipeline real nos testes.
+O player do YouTube (IFrame API) pode "engasgar"/saltar para keyframe em seekTo (limitacao
+conhecida do stream do YouTube). Na v1 (so assistir/aprovar) isso nao afeta o corte: o corte
+usa o start/end ja calculado pelo harness sobre o arquivo baixado, nao o que o player
+exibe. O player serve para REVISAO (o operador confere se o trecho presta), nao para definir
+o corte. A correspondencia exata player<->arquivo so se torna critica na v2 (ajuste fino).
 
-## Contratos e interfaces
+## Criterios de aceite
 
-`POST /pedidos` recebe `{youtube_url, inicio, fim}`; valida; cria `Pedido`; enfileira;
-responde `{id}`. `GET /pedidos/{id}` responde `{id, status, erro, shorts: [nomes]}`.
-Página em `internal/web/` (HTML/CSS/JS embutidos via `embed`).
+- [ ] Servidor sobe na porta configuravel (padrao :7799), sem auth; GET / serve a pagina.
+- [ ] POST /pedidos valida entrada, cria o pedido e dispara a fase leve; responde id na
+      hora (nao bloqueia).
+- [ ] A fase leve baixa SO a legenda (nao o video) e roda a selecao; sem legenda -> erro.
+- [ ] A pagina lista os candidatos, cada um com player YouTube embutido tocando de start a
+      end, hook/dur/score, alerta de revisao quando marcado, e botoes aprovar/reprovar.
+- [ ] POST /pedidos/{id}/aprovar dispara a fase pesada so para os aprovados.
+- [ ] A fase pesada baixa o video (so aprovados, se viavel) e renderiza; a pagina lista os
+      Shorts finais para baixar.
+- [ ] O start/end do corte corresponde ao mesmo instante mostrado no player.
+- [ ] Erro em qualquer fase aparece na pagina com mensagem clara.
+- [ ] Testes: rotas (httptest), maquina de estados das duas fases com download/selecao/
+      render mockados; validacao de entrada. Nao subir pipeline real nos testes.
+- [ ] go build ./... e go test ./... verdes.
 
-## Critérios de aceite
+## Futuro (v2) -- ajuste fino de corte pelo operador
 
-- [ ] Servidor sobe na porta configurável (padrão `:7799`), sem auth.
-- [ ] `GET /` serve a página com três campos e botão.
-- [ ] `POST /pedidos` valida entrada, cria o pedido e retorna `id` imediatamente
-      (não bloqueia até o fim do processamento).
-- [ ] `GET /pedidos/{id}` reflete o estado corrente do processamento.
-- [ ] Ao concluir, a página lista os Shorts de `finalizados/<id>/` para baixar.
-- [ ] Erro no pipeline aparece na página com mensagem clara.
-- [ ] Testes de rotas e da máquina de estados com dependências mockadas.
-- [ ] `go build ./...` e `go test ./...` verdes.
+Registrado (pesquisa do dono): usar a YouTube IFrame Player API para o operador aparar
+inicio/fim ouvindo. player.seekTo(seg, true) aceita fracoes (ex.: +-0.033s = 1 frame a
+30fps); player.getCurrentTime() captura o instante exato onde o operador marca; botoes
+"marcar inicio/fim", "+-1 frame", setPlaybackRate para revisao lenta. O tempo capturado
+vira o start/end do corte. CUIDADO a resolver na v2: o seekTo do YouTube pode saltar
+para keyframe (nao frame exato) e o player e OUTRO video que nao o arquivo baixado -- e
+preciso garantir que o tempo marcado no player corresponda ao mesmo instante no arquivo
+baixado (mesma origem t=0), senao o corte sai deslocado. Resolve, de forma humana, tanto a
+entonacao (voz que nao fecha) quanto o timestamp impreciso da legenda.
 
-## Como validar
+## Nota
 
-```bash
-go test ./...
-go run ./cmd/servidor -porta :7799
-# abrir http://localhost:7799 no navegador, preencher e acompanhar
-```
-
-## Refinamento futuro — ajuste editorial do corte pelo operador
-
-Registrado a partir de teste real (short_01 do sermão `mg83gcM4ctw`): a Fase 3 produz um
-`end` VÁLIDO (fim de frase, dentro de 30–58 s), mas o ponto de corte IDEAL é uma decisão
-editorial que depende de ouvir. Ex.: a Fase 3 terminou o trecho em "...Isto é a graça que
-levanta o incapaz" (36 s, válido e temático), mas o operador, ouvindo, preferiu terminar
-uma frase antes, em "...para nos dar uma nova vida" (30 s, mais punchy). Nenhum é "errado"
-— é gosto editorial. O código chega a um fim válido; o acabamento fino é humano.
-
-Por isso, quando esta interface for além do básico, deve oferecer ao operador, para cada
-Short, um **ajuste fino do início/fim**: ele ouve o trecho e apara o ponto de corte (ex.:
-um controle de "encurtar fim / ajustar para [tempo]"). Ao confirmar, o servidor Go chama
-o ffmpeg para re-cortar apenas aquele Short, sem refazer o pipeline. É rápido (recortar
-~40 s leva segundos). Isto complementa a margem automática (spec-10): a margem resolve o
-vazamento de frações de segundo por atraso de legenda; o ajuste manual resolve a escolha
-editorial de qual frase é a última. Um é da máquina, o outro é do humano.
-
-Não é escopo do MVP desta spec (que é: subir o servidor, aceitar o pedido, processar,
-listar os Shorts). É um refinamento a implementar quando o fluxo básico estiver de pé.
-
-## Fora de escopo / próximos passos
-
-spec-06 — retenção do bruto e limpeza de disco.
+Esta interface e a porta de entrada do operador leigo. Com ela, o pipeline (specs 02-04,
+07-13) deixa de exigir terminal. E conveniencia sobre um produto que ja esta pronto para
+publicar.
