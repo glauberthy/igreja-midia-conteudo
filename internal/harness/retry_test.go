@@ -116,7 +116,7 @@ func TestRetryFase2CamposFaltando(t *testing.T) {
 	// (c) da spec: JSON válido mas com campos obrigatórios faltando → retry.
 	capturaLog(t)
 	mapa := Mapa{TemaCentral: "graça", Blocos: []BlocoEnsino{{Assunto: "a", InicioAprox: "00:00:01", FimAprox: "00:00:40"}}}
-	semAncora := `{"candidatos":[{"bloco":"a"}]}`                       // falta frase_ancora
+	semAncora := `{"candidatos":[{"bloco":"a"}]}`                         // falta frase_ancora
 	ok := `{"candidatos":[{"bloco":"a","frase_ancora":"a graça basta"}]}` // completo
 	fake := &fakeSequencia{respostas: []string{semAncora, ok}}
 
@@ -148,6 +148,69 @@ func TestRetryFase4CriteriaFaltando(t *testing.T) {
 	}
 	if a.Criteria.FormatFit != 9 {
 		t.Errorf("avaliação final inesperada: %+v", a)
+	}
+}
+
+// descascarJSON: limpeza defensiva do embrulho que alguns modelos põem no JSON.
+func TestDescascarJSON(t *testing.T) {
+	casos := []struct {
+		nome string
+		in   string
+		quer string
+	}{
+		{"json puro (Gemma) intacto", `{"tema":"graça"}`, `{"tema":"graça"}`},
+		{"json puro com espaços nas pontas", "  \n{\"a\":1}\n ", `{"a":1}`},
+		{"cerca ```json", "```json\n{\"a\":1}\n```", `{"a":1}`},
+		{"cerca ``` sem rótulo", "```\n{\"a\":1}\n```", `{"a":1}`},
+		{"cerca com texto antes", "Claro, aqui está:\n```json\n{\"a\":1}\n```", `{"a":1}`},
+		{"texto antes e depois, sem cerca", "Segue o JSON: {\"a\":1} espero que ajude.", `{"a":1}`},
+		{"cerca json numa linha só", "```json {\"a\":1} ```", `{"a":1}`},
+		{"array puro intacto", `[1,2,3]`, `[1,2,3]`},
+		{"objeto com chaves aninhadas e texto depois", "{\"a\":{\"b\":2}}\nfim", `{"a":{"b":2}}`},
+	}
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			if got := descascarJSON(c.in); got != c.quer {
+				t.Errorf("descascarJSON(%q) = %q, quero %q", c.in, got, c.quer)
+			}
+		})
+	}
+}
+
+// Integração: uma resposta do modelo embrulhada em cerca markdown (caso Qwen) deve
+// parsear de primeira, sem retry — a limpeza acontece antes do validador.
+func TestPedirValidadoDescascaRespostaEmbrulhada(t *testing.T) {
+	logs := capturaLog(t)
+	embrulhado := "```json\n" + mapaValido + "\n```"
+	fake := &fakeSequencia{respostas: []string{embrulhado}}
+
+	mapa, err := Fase1Mapa(context.Background(), fake, "P", "t")
+	if err != nil {
+		t.Fatalf("resposta em cerca markdown deveria parsear: %v", err)
+	}
+	if fake.chamadas != 1 || len(*logs) != 0 {
+		t.Errorf("não deveria haver retry: chamadas=%d logs=%v", fake.chamadas, *logs)
+	}
+	if mapa.TemaCentral != "graça" {
+		t.Errorf("mapa inesperado após descascar: %+v", mapa)
+	}
+}
+
+// Integração: resposta com texto explicativo antes/depois do JSON (sem cerca).
+func TestPedirValidadoDescascaTextoAoRedor(t *testing.T) {
+	capturaLog(t)
+	comTexto := "Aqui está o mapa do sermão:\n" + mapaValido + "\nQualquer coisa é só avisar."
+	fake := &fakeSequencia{respostas: []string{comTexto}}
+
+	mapa, err := Fase1Mapa(context.Background(), fake, "P", "t")
+	if err != nil {
+		t.Fatalf("resposta com texto ao redor deveria parsear: %v", err)
+	}
+	if fake.chamadas != 1 {
+		t.Errorf("não deveria haver retry: chamadas=%d", fake.chamadas)
+	}
+	if mapa.TemaCentral != "graça" {
+		t.Errorf("mapa inesperado: %+v", mapa)
 	}
 }
 
