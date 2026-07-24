@@ -11,8 +11,12 @@ import (
 	"time"
 )
 
-// Estado é o ponto do ciclo de vida em que o pedido está. Os estados de vídeo
-// (baixando, cortando, renderizando, entregue) entram nas specs 03/04/05.
+// Estado é o ponto do ciclo de vida em que o pedido está.
+//
+// O servidor web (spec-05) opera em duas fases separadas por aprovação humana:
+// fase leve (baixando-legenda → selecionando → validando → aguardando-aprovacao) e,
+// após a aprovação do operador, fase pesada (baixando-video → renderizando →
+// concluido). Os estados da fase pesada são consumidos nas Partes 2/3 da spec-05.
 type Estado string
 
 const (
@@ -21,6 +25,13 @@ const (
 	EstadoValidando    Estado = "validando"
 	EstadoConcluido    Estado = "concluido"
 	EstadoErro         Estado = "erro"
+
+	// Estados da interface web (spec-05).
+	EstadoBaixandoLegenda         Estado = "baixando-legenda"
+	EstadoAguardandoAprovacao     Estado = "aguardando-aprovacao"
+	EstadoAguardandoProcessamento Estado = "aguardando-processamento"
+	EstadoBaixandoVideo           Estado = "baixando-video"
+	EstadoRenderizando            Estado = "renderizando"
 )
 
 // nomeArquivo é o JSON de metadados do pedido dentro da pasta de trabalho.
