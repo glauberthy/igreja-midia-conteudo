@@ -63,6 +63,31 @@ func TestRegistrarRodadaOrdenaPorScore(t *testing.T) {
 	}
 }
 
+func TestRegistrarRodadaIncluiTitulo(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "rodadas.md")
+	s := servidorComLog(t, log)
+	ped := pipeline.NovoPedido("s", "u", "00:00:00", "00:10:00", s.agora())
+	ped.Titulo = "Culto de Domingo — A graça de Deus"
+	s.registrarRodada(ped, []validacao.Candidato{{Hook: "h", Score: 80}})
+
+	out, _ := os.ReadFile(log)
+	if !strings.Contains(string(out), "- Título: Culto de Domingo — A graça de Deus") {
+		t.Errorf("faltou o título no log:\n%s", out)
+	}
+}
+
+func TestRegistrarRodadaSemTituloOmiteLinha(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "rodadas.md")
+	s := servidorComLog(t, log)
+	ped := pipeline.NovoPedido("s", "u", "00:00:00", "00:10:00", s.agora()) // sem Titulo
+	s.registrarRodada(ped, []validacao.Candidato{{Hook: "h", Score: 80}})
+
+	out, _ := os.ReadFile(log)
+	if strings.Contains(string(out), "- Título:") {
+		t.Errorf("sem título, a linha não deveria aparecer:\n%s", out)
+	}
+}
+
 func TestRegistrarRodadaNaoAlteraOrdemOriginal(t *testing.T) {
 	s := servidorComLog(t, filepath.Join(t.TempDir(), "r.md"))
 	ped := pipeline.NovoPedido("s", "u", "00:00:00", "00:10:00", s.agora())

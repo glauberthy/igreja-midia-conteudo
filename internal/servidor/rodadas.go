@@ -58,6 +58,9 @@ func formatarRodada(n int, agora time.Time, ped *pipeline.Pedido, ord []validaca
 	var b strings.Builder
 	fmt.Fprintf(&b, "## Rodada %d — %s\n\n", n, agora.UTC().Format(time.RFC3339))
 	fmt.Fprintf(&b, "- Pedido: %s\n", ped.ID)
+	if ped.Titulo != "" {
+		fmt.Fprintf(&b, "- Título: %s\n", celula(ped.Titulo))
+	}
 	fmt.Fprintf(&b, "- Vídeo: %s\n", ped.YouTubeURL)
 	fmt.Fprintf(&b, "- Janela: %s → %s\n", ped.Inicio, ped.Fim)
 	fmt.Fprintf(&b, "- Candidatos: %d\n\n", len(ord))

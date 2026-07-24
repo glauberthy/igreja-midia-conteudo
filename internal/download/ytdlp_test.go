@@ -76,7 +76,10 @@ func TestBaixarSucesso(t *testing.T) {
 	base := t.TempDir()
 	fx := &fakeExec{handler: func(dir string, args []string) ([]byte, error) {
 		if ehLegenda(args) {
-			// yt-dlp gera legenda.pt.srt
+			// yt-dlp gera legenda.pt.srt + o .info.json (com o título) do --write-info-json.
+			if err := os.WriteFile(filepath.Join(dir, "legenda.info.json"), []byte(`{"title":"Culto de Domingo — 19/07"}`), 0644); err != nil {
+				return nil, err
+			}
 			return nil, os.WriteFile(filepath.Join(dir, "legenda.pt.srt"), []byte(srtExemplo), 0644)
 		}
 		return nil, os.WriteFile(filepath.Join(dir, "video.mp4"), []byte("mp4"), 0644)
@@ -86,6 +89,11 @@ func TestBaixarSucesso(t *testing.T) {
 	ped := pedidoTeste("teste")
 	if err := b.Baixar(context.Background(), ped); err != nil {
 		t.Fatalf("Baixar: %v", err)
+	}
+
+	// O título deve ter sido extraído do .info.json.
+	if ped.Titulo != "Culto de Domingo — 19/07" {
+		t.Errorf("título não extraído do info.json: %q", ped.Titulo)
 	}
 
 	dir := filepath.Join(base, "teste")
@@ -178,6 +186,9 @@ func TestArgsContemParametrosEssenciais(t *testing.T) {
 	leg := argsLegenda("URL", "trabalho/x", "pt")
 	if !contem(leg, "--skip-download") || !contem(leg, "--write-auto-subs") || !contem(leg, "pt") {
 		t.Errorf("args de legenda incompletos: %v", leg)
+	}
+	if !contem(leg, "--write-info-json") {
+		t.Errorf("legenda deve pedir --write-info-json (para o título): %v", leg)
 	}
 	if !contem(leg, "--force-overwrites") {
 		t.Errorf("legenda deve usar --force-overwrites (não reaproveitar arquivo antigo): %v", leg)

@@ -46,8 +46,9 @@ const nomeArquivo = "pedido.json"
 type Pedido struct {
 	ID         string    `json:"id"`
 	YouTubeURL string    `json:"youtube_url"`
-	Inicio     string    `json:"inicio"` // HH:MM:SS (opcional)
-	Fim        string    `json:"fim"`    // HH:MM:SS (opcional)
+	Titulo     string    `json:"titulo,omitempty"` // título do vídeo (yt-dlp), preenchido no download da legenda
+	Inicio     string    `json:"inicio"`           // HH:MM:SS (opcional)
+	Fim        string    `json:"fim"`              // HH:MM:SS (opcional)
 	Status     Estado    `json:"status"`
 	CriadoEm   time.Time `json:"criado_em"`
 	Erro       string    `json:"erro,omitempty"`

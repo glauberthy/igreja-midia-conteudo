@@ -12,6 +12,7 @@ package download
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -151,6 +152,12 @@ func (b *Baixador) baixarLegenda(ctx context.Context, ped *pipeline.Pedido) erro
 		}
 	}
 
+	// Título do vídeo (best-effort): o --write-info-json grava um .info.json com o
+	// "title". Não é essencial — se faltar, segue sem título (não trava o download).
+	if t := lerTitulo(dir); t != "" {
+		ped.Titulo = t
+	}
+
 	// Transcrição limpa (srtclean), recortada à janela da pregação [inicio, fim]
 	// MAS mantendo os tempos ABSOLUTOS — para o corte do vídeo (spec-04) bater
 	// (video.mp4 rebaseado a zero; corte em start-inicio). A legenda automática
@@ -188,6 +195,7 @@ func argsLegenda(url, dir, subLangs string) []string {
 		"--no-playlist",
 		"--force-overwrites",
 		"--skip-download",
+		"--write-info-json",
 		"--write-auto-subs",
 		"--sub-langs", subLangs,
 		"--convert-subs", "srt",
@@ -230,6 +238,26 @@ func acharSRT(dir string) (string, bool) {
 		return "", false
 	}
 	return matches[0], true
+}
+
+// lerTitulo lê o "title" do .info.json que o yt-dlp grava (--write-info-json). É
+// best-effort: devolve "" se não houver arquivo ou o campo faltar.
+func lerTitulo(dir string) string {
+	matches, _ := filepath.Glob(filepath.Join(dir, "*.info.json"))
+	if len(matches) == 0 {
+		return ""
+	}
+	b, err := os.ReadFile(matches[0])
+	if err != nil {
+		return ""
+	}
+	var info struct {
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(b, &info); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(info.Title)
 }
 
 // tempoValido confere formato HH:MM:SS em ambos e que fim > início.
