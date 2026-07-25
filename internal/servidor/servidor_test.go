@@ -282,10 +282,20 @@ func TestStatusConcluidoListaCandidatosEmHTML(t *testing.T) {
 	if strings.Contains(corpo, `hx-trigger="every 2s"`) {
 		t.Error("estado final não deveria continuar o polling")
 	}
-	for _, quer := range []string{"O amor de Cristo", "Jesus é Deus", "revisar fidelidade", "possível problema de fidelidade"} {
+	// A tela de revisão embute os dados num <script> JSON e a estrutura da UI (trilha,
+	// rodapé, botões). Os hooks e o motivo de revisão vão no payload JSON.
+	for _, quer := range []string{
+		`id="dados-trechos"`, `id="trilha"`, "Confirmar e gerar", // estrutura da tela
+		"O amor de Cristo", "Jesus é Deus", // hooks no payload
+		"possível problema de fidelidade", // motivo de revisão no payload
+	} {
 		if !strings.Contains(corpo, quer) {
 			t.Errorf("HTML não trouxe %q:\n%s", quer, corpo)
 		}
+	}
+	// O trecho marcado deve chegar com revisar=true no payload.
+	if !strings.Contains(corpo, `"revisar":true`) {
+		t.Errorf("trecho marcado deveria vir com revisar:true no JSON:\n%s", corpo)
 	}
 }
 

@@ -2,6 +2,7 @@ package servidor
 
 import (
 	"encoding/json"
+	"html/template"
 	"os"
 	"path/filepath"
 
@@ -13,13 +14,14 @@ import (
 // visaoStatus é o que a rota GET /pedidos/{id} apresenta — em HTML (template "status")
 // ou em JSON. Mantém uma única fonte para os dois formatos.
 type visaoStatus struct {
-	ID          string
-	Status      pipeline.Estado
-	StatusLabel string
-	EmProgresso bool
-	Erro        string
-	VideoID     string // extraído da URL do pedido, para o player YouTube (spec-05 parte 2)
-	Candidatos  []candidatoVis
+	ID           string
+	Status       pipeline.Estado
+	StatusLabel  string
+	EmProgresso  bool
+	Erro         string
+	VideoID      string      // extraído da URL do pedido, para o player YouTube (spec-05 parte 2)
+	RevisaoDados template.JS // JSON dos trechos p/ a tela de revisão (só em aguardando-aprovacao)
+	Candidatos   []candidatoVis
 	// Preenchidos após a aprovação (status aguardando-processamento).
 	Aprovada  bool
 	Aprovados []candidatoVis
@@ -74,6 +76,10 @@ func montarVisao(reg *registro) visaoStatus {
 	}
 	for i, c := range reg.cands {
 		v.Candidatos = append(v.Candidatos, candidatoParaVis(i, c))
+	}
+	// Dados da tela de revisão (só quando há candidatos para revisar).
+	if reg.ped.Status == pipeline.EstadoAguardandoAprovacao && len(reg.cands) > 0 {
+		v.RevisaoDados = revisaoJSON(reg)
 	}
 	for _, idx := range reg.aprovados {
 		if idx >= 0 && idx < len(reg.cands) {

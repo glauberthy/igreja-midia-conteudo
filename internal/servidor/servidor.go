@@ -55,6 +55,7 @@ type Selecionador interface {
 type registro struct {
 	ped       *pipeline.Pedido
 	cands     []validacao.Candidato
+	textos    []string // texto REALMENTE falado na janela de cada candidato (revisão)
 	aprovados []int
 }
 
@@ -64,6 +65,7 @@ type Servidor struct {
 	selecionador   Selecionador
 	baseDir        string
 	logRodadasPath string
+	assetsDir      string
 	agora          func() time.Time
 	gerarID        func() string
 	mux            *http.ServeMux
@@ -84,8 +86,10 @@ type Opcoes struct {
 	// LogRodadasPath é onde cada seleção é registrada como uma "rodada" (avaliação de
 	// variância). Vazio usa o padrão "resultados/rodadas.md".
 	LogRodadasPath string
-	Agora          func() time.Time // injetável para testes
-	GerarID        func() string    // injetável para testes
+	// AssetsDir é a pasta servida em /assets/ (fonte da identidade, logo). Vazio = "assets".
+	AssetsDir string
+	Agora     func() time.Time // injetável para testes
+	GerarID   func() string    // injetável para testes
 }
 
 // Novo cria o servidor e registra as rotas.
@@ -95,6 +99,7 @@ func Novo(o Opcoes) *Servidor {
 		selecionador:   o.Selecionador,
 		baseDir:        o.BaseDir,
 		logRodadasPath: o.LogRodadasPath,
+		assetsDir:      o.AssetsDir,
 		agora:          o.Agora,
 		gerarID:        o.GerarID,
 		pedidos:        make(map[string]*registro),
@@ -106,6 +111,9 @@ func Novo(o Opcoes) *Servidor {
 	if s.logRodadasPath == "" {
 		s.logRodadasPath = filepath.Join("resultados", "rodadas.md")
 	}
+	if s.assetsDir == "" {
+		s.assetsDir = "assets"
+	}
 	if s.agora == nil {
 		s.agora = time.Now
 	}
@@ -116,6 +124,8 @@ func Novo(o Opcoes) *Servidor {
 	s.mux.HandleFunc("POST /pedidos", s.handleCriar)
 	s.mux.HandleFunc("GET /pedidos/{id}", s.handleStatus)
 	s.mux.HandleFunc("POST /pedidos/{id}/aprovar", s.handleAprovar)
+	// Assets estáticos (fonte da identidade, logo) — servidos do disco.
+	s.mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(s.assetsDir))))
 	return s
 }
 
@@ -347,12 +357,17 @@ func (s *Servidor) faseLeve(reg *registro) {
 		return
 	}
 
+	// Texto REALMENTE falado em cada trecho (o artefato de revisão): reconstruído da
+	// transcrição via harness.Frasear, o mesmo do cmd/auditar. Best-effort.
+	textos := textosFalados(transc, cands)
+
 	// Registra a rodada em disco (avaliação de variância) antes de expor ao operador.
 	// Falha de log não interrompe a seleção — é auxiliar.
 	s.registrarRodada(reg.ped, cands)
 
 	s.mu.Lock()
 	reg.cands = cands
+	reg.textos = textos
 	reg.ped.Status = pipeline.EstadoAguardandoAprovacao
 	s.mu.Unlock()
 }

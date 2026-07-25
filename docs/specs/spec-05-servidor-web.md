@@ -93,6 +93,50 @@ usa o start/end ja calculado pelo harness sobre o arquivo baixado, nao o que o p
 exibe. O player serve para REVISAO (o operador confere se o trecho presta), nao para definir
 o corte. A correspondencia exata player<->arquivo so se torna critica na v2 (ajuste fino).
 
+## Tela de revisao -- layout (Parte 2, refinamento)
+
+A primeira versao da tela de revisao era uma lista vertical com os 5 players carregados
+de uma vez. Tres problemas: peso (5 iframes do YouTube nao renderizam -- ficam pretos);
+nenhum estado visivel apos aprovar/reprovar; e o texto do trecho -- o artefato principal
+para julgar doutrina -- ficava abaixo do player. As decisoes abaixo redesenham a tela.
+Referencia visual/codigo: `docs/mockups/revisao-trechos_referecnia.html`.
+
+Decisoes (nao reabrir):
+
+- **Um player so, reaproveitado.** Em vez de um iframe por candidato, um unico player do
+  YouTube que faz `seekTo(start)` ao trocar de trecho. Resolve o peso; a pagina fica
+  instantanea.
+- **Um trecho em foco por vez, com trilha de status no topo.** Trilha compacta com N
+  posicoes numeradas mostrando o estado de cada trecho: pendente (neutro), aprovado
+  (verde/check), reprovado (vermelho/x), pede revisao (ambar/alerta). Posicao atual em
+  destaque; clicar numa posicao pula para o trecho. Acima, o progresso ("Trecho 3 de 5 ·
+  2 decididos").
+- **Texto primeiro, player depois.** No card em foco: texto do trecho (fonte grande ~17px,
+  o que se le para julgar doutrina) -> meta (start -> end · duracao · score) -> player ->
+  controles. Ler e mais rapido que assistir; o video serve para julgar corte e entrega,
+  nao o conteudo.
+- **Auto-avanco.** Ao aprovar/reprovar, avanca para o proximo trecho pendente.
+- **Navegacao por mouse e teclado.** Setas ‹/› flanqueando os botoes de decisao; trilha
+  clicavel; atalhos: A aprova, R reprova, ←/→ navega, espaco toca/pausa.
+- **"Ouvir a emenda do fim/inicio".** Botoes que tocam so a costura do corte: fim de
+  `end-3s` a `end+2s`; inicio de `start-2s` a `start+3s`. Motivo: o corte as vezes termina
+  no meio da frase (timestamp da legenda adianta o audio) -- em vez de assistir 46s, o
+  operador ouve a emenda em ~5s.
+- **Alerta doutrinario em duas camadas.** Ambar na trilha (o operador ve antes de chegar
+  que o trecho pede atencao) e uma faixa no card com o `motivo_revisao` em texto, borda
+  lateral ambar. Nunca esconder trechos marcados.
+- **Rodape fixo** com a contagem ("1 aprovado · 1 reprovado · 3 pendentes") e o botao
+  "Confirmar e gerar", sem precisar rolar ate o fim.
+- **CSS na mao, sem Tailwind.** E uma tela so, poucos componentes; Tailwind exigiria build
+  (contra a escolha de HTMX sem build) e o CDN e pesado. CSS com variaveis para cor e
+  espacamento. HTMX cuida das requisicoes (criar pedido, confirmar aprovados); o JS vanilla
+  cuida do player e da navegacao local (trocar de trecho nao vai ao servidor).
+- **Identidade visual.** Fonte Google Sans Flex de `assets/fontes/` (servida pelo servidor
+  em `/assets/`); acento verde-limao da igreja.
+- **O texto falado vem do servidor.** O card mostra o texto REALMENTE falado na janela
+  `[start, end]` (reconstruido da transcricao via `harness.Frasear`, o mesmo do
+  `cmd/auditar`), nao o hook. Se faltar (edge case), cai para o hook.
+
 ## Criterios de aceite
 
 - [ ] Servidor sobe na porta configuravel (padrao :7799), sem auth; GET / serve a pagina.
