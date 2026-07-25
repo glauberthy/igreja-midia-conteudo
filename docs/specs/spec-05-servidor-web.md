@@ -122,9 +122,19 @@ Decisoes (nao reabrir):
   `end-3s` a `end+2s`; inicio de `start-2s` a `start+3s`. Motivo: o corte as vezes termina
   no meio da frase (timestamp da legenda adianta o audio) -- em vez de assistir 46s, o
   operador ouve a emenda em ~5s.
-- **Alerta doutrinario em duas camadas.** Ambar na trilha (o operador ve antes de chegar
-  que o trecho pede atencao) e uma faixa no card com o `motivo_revisao` em texto, borda
-  lateral ambar. Nunca esconder trechos marcados.
+- **Alerta doutrinario em duas camadas, com tres niveis de intensidade.** Ambar na trilha
+  (o operador ve antes de chegar que o trecho pede atencao) e uma faixa no card com o
+  `motivo_revisao` em texto. Nunca esconder trechos marcados. Mas para nao cair em fadiga
+  de alerta (⚠ em tudo deixa de ser alerta), a INTENSIDADE segue a classe do confronto
+  doutrinario (spec-14):
+  - `desalinhamento` -> **alto**: ⚠ ambar, destaque forte, com o ponto citado da Declaracao.
+  - `provavel_erro_transcricao` -> **baixo**: ℹ neutro/quieto (cinza), "conferido: provavel
+    erro de transcricao".
+  - `fiel` (marcado pela Fase 4, confronto nao achou) -> **baixo**: ℹ neutro/quieto,
+    "conferido: sem problema doutrinario aparente".
+  - sem confronto ainda (spec-14 nao implementada) -> ⚠ ambar generico (comportamento atual).
+  O operador ve TODOS os marcados, mas sabe onde olhar primeiro. Enquanto a spec-14 nao
+  existe, so ha o nivel generico; os tres niveis entram junto com ela.
 - **Rodape fixo** com a contagem ("1 aprovado · 1 reprovado · 3 pendentes") e o botao
   "Confirmar e gerar", sem precisar rolar ate o fim.
 - **CSS na mao, sem Tailwind.** E uma tela so, poucos componentes; Tailwind exigiria build
