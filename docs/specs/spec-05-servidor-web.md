@@ -183,6 +183,35 @@ Decisoes (nao reabrir):
   padrao fica confiavel e reprodutivel; a exploracao passa a ser escolha consciente, nao o
   comportamento default. (Nao implementado ainda.)
 
+## Fase pesada -- estrategia de download e alinhamento de tempo (Parte 3)
+
+Ao aprovar, o servidor dispara em background: baixar o video dos aprovados -> renderizar ->
+listar os finais. Decisoes:
+
+- **Baixa uma janela CONTIGUA, nao a pregacao inteira nem o video todo.** Via
+  `--download-sections` do yt-dlp, baixa `[menor start aprovado, maior end aprovado]` (piso/
+  teto ao segundo). E "so o necessario" no sentido que pula tudo antes do 1o trecho e depois
+  do ultimo. **Por que contigua e nao uma janela por trecho:** multiplas `--download-sections`
+  numa so chamada geram um arquivo concatenado com N origens de tempo diferentes -- a classe
+  de bug de contrato entre etapas que ja nos mordeu. Uma janela = uma origem inequivoca.
+  Trade-off: se os trechos aprovados estao longe entre si, baixa o intervalo entre eles.
+  Otimizacao futura (se incomodar): baixar cada trecho em uma chamada separada, com origem
+  por arquivo. Registrar.
+- **Alinhamento de tempo (o cuidado critico).** O `video.mp4` baixado comeca em t=0 no
+  **menor start aprovado**, NAO em `ped.Inicio`. Se o render aplicasse `start - ped.Inicio`,
+  procuraria um instante que nao existe no arquivo (Short vazio/errado). Solucao:
+  `video.RenderizarComOrigem(..., origemMs)` recebe a origem EXPLICITA (= menor start,
+  piso ao segundo) e corta cada trecho em `start - origemMs`. Testado nos dois niveis:
+  `janelaDownload` (servidor) e `TestRenderizarComOrigemAlinhaCorte` (video: o -ss do ffmpeg
+  bate exatamente).
+- **Erro nunca trava.** Falha no download ou no render -> pedido vai para `erro` com
+  mensagem clara na tela (nunca fica eternamente em baixando-video). Um erro visivel e melhor
+  que um spinner infinito.
+- **Entrega.** `GET /finalizados/{id}/{arquivo}` serve os Shorts (whitelist dos arquivos que
+  o pedido gerou -- sem travessia de caminho). O operador baixa e envia por WhatsApp manual.
+- **Progresso por polling (provisorio).** baixando-video -> renderizando -> concluido pelo
+  mesmo `every 2s`. Migrar para SSE e ideia registrada (docs/ideias-futuras.md).
+
 ## Criterios de aceite
 
 - [ ] Servidor sobe na porta configuravel (padrao :7799), sem auth; GET / serve a pagina.

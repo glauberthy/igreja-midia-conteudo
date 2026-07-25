@@ -248,7 +248,13 @@
         method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'text/html' }, body: body
       }).then(function (r) { return r.text(); }).then(function (html) {
         REV = null;
-        document.getElementById('resultado').innerHTML = html;
+        var res = document.getElementById('resultado');
+        res.innerHTML = html;
+        // O /aprovar responde com o fragmento de status (polling): retomar a fase pesada
+        // na tela (baixando-video → renderizando → concluido). htmx.process ativa o
+        // hx-get/hx-trigger do conteúdo inserido via innerHTML (o HTMX não processa
+        // sozinho conteúdo posto por JS).
+        if (window.htmx) htmx.process(res);
       });
     }
 
@@ -291,16 +297,23 @@
   <p class="progresso">Pedido criado (<code>{{.ID}}</code>). Iniciando…</p>
 </div>{{end}}
 
-{{/* status: fragmento do GET /pedidos/{id}. Em progresso, mantém o polling; ao terminar,
-     mostra erro, a TELA DE REVISÃO (dados em JSON para o JS), ou a confirmação. */}}
+{{/* status: fragmento do GET /pedidos/{id}. Em progresso (fase leve OU pesada), mantém o
+     polling; ao terminar, mostra erro, a TELA DE REVISÃO, ou os Shorts prontos.
+
+     PROVISÓRIO: o polling (hx-trigger every 2s) cobre as duas fases. A intenção é migrar
+     para um endpoint SSE no servidor Go (HTMX como cliente do SSE), que empurra o estado
+     em vez de a página perguntar de 2 em 2 s — cobrindo fase leve e pesada. Registrado em
+     docs/ideias-futuras.md. Não implementado agora. */}}
 {{define "status"}}{{if .EmProgresso}}<div id="status" hx-get="/pedidos/{{.ID}}" hx-trigger="every 2s" hx-swap="outerHTML" hx-target="this">
   <p class="progresso">Processando… <span class="etapa">{{.StatusLabel}}</span></p>
-</div>{{else if .Erro}}<div id="status"><p class="erro">Erro: {{.Erro}}</p></div>{{else if .Aprovada}}<div id="status">
-  <p><strong>Aprovação registrada.</strong> {{len .Aprovados}} trecho(s) aprovado(s) — o download do vídeo e o corte entram na próxima etapa (Parte 3).</p>
-  {{if .Aprovados}}<ul style="list-style:none;padding:0">
-    {{range .Aprovados}}<li class="carta" style="margin:10px 0"><strong>{{.Hook}}</strong><br><span class="meta">{{.Start}} → {{.End}} · {{printf "%.0f" .DurationSeconds}}s</span></li>
+</div>{{else if .Erro}}<div id="status"><p class="erro">Erro: {{.Erro}}</p></div>{{else if .Concluido}}<div id="status">
+  <p><strong>Pronto!</strong> {{len .Shorts}} Short(s) gerado(s). Baixe cada um e envie pelo WhatsApp.</p>
+  {{if .Shorts}}<ul style="list-style:none;padding:0">
+    {{range .Shorts}}<li class="carta" style="margin:10px 0">
+      🎬 <a href="/finalizados/{{$.ID}}/{{.}}" download>{{.}}</a>
+    </li>
     {{end}}
-  </ul>{{else}}<p class="progresso">Nenhum trecho aprovado.</p>{{end}}
+  </ul>{{else}}<p class="progresso">Nenhum Short foi gerado.</p>{{end}}
 </div>{{else}}<div id="status">
   <script type="application/json" id="dados-trechos">{{.RevisaoDados}}</script>
   <p class="subtitulo">Um trecho por vez. Leia o texto, ouça se precisar, decida.</p>

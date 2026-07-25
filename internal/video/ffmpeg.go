@@ -178,8 +178,30 @@ func (r *Renderizador) rodapeAltura() int {
 // devolve os caminhos gerados. Em falha, seta Status=erro e Erro. Os candidatos vêm
 // SEMPRE de fora (spec-09: fonte única = arquivo de seleção validado); o pedido não
 // os carrega mais.
+// Renderizar renderiza os candidatos assumindo que video.mp4 começa em t=0 no INÍCIO da
+// pregação (ped.Inicio) — o contrato do cmd/baixar+render (CLI), em que o vídeo é a janela
+// [inicio, fim] inteira. A origem do corte é ped.Inicio.
 func (r *Renderizador) Renderizar(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato) ([]string, error) {
-	paths, err := r.renderizar(ctx, ped, candidatos)
+	origemMs, ok := transcricao.HmsToMs(ped.Inicio)
+	if !ok {
+		ped.Status = pipeline.EstadoErro
+		ped.Erro = fmt.Sprintf("início do pedido inválido: %q", ped.Inicio)
+		return nil, fmt.Errorf("início do pedido inválido: %q", ped.Inicio)
+	}
+	return r.RenderizarComOrigem(ctx, ped, candidatos, origemMs)
+}
+
+// RenderizarComOrigem é o mesmo render, mas com a ORIGEM DE TEMPO explícita: origemMs é o
+// instante ABSOLUTO (no vídeo do YouTube) que corresponde ao t=0 do arquivo video.mp4.
+//
+// É o que a fase pesada do servidor (spec-05 parte 3) usa: lá o video.mp4 NÃO é a pregação
+// inteira, e sim a janela contígua [menor start aprovado, maior end aprovado] baixada via
+// --download-sections. Como esse arquivo começa em t=0 no menor start aprovado (não em
+// ped.Inicio), a origem do corte tem que ser esse start — senão o ffmpeg procuraria um
+// instante que não existe no arquivo (Short vazio/errado). O corte de cada candidato é
+// SEMPRE (start - origemMs); só a origem muda entre CLI (ped.Inicio) e servidor (janela).
+func (r *Renderizador) RenderizarComOrigem(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato, origemMs int) ([]string, error) {
+	paths, err := r.renderizar(ctx, ped, candidatos, origemMs)
 	if err != nil {
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = err.Error()
@@ -188,13 +210,9 @@ func (r *Renderizador) Renderizar(ctx context.Context, ped *pipeline.Pedido, can
 	return paths, nil
 }
 
-func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato) ([]string, error) {
+func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato, origemMs int) ([]string, error) {
 	if len(candidatos) == 0 {
 		return nil, fmt.Errorf("nenhum candidato para renderizar")
-	}
-	inicioMs, ok := transcricao.HmsToMs(ped.Inicio)
-	if !ok {
-		return nil, fmt.Errorf("início do pedido inválido: %q", ped.Inicio)
 	}
 
 	trabDir := filepath.Join(r.baseDir(), ped.ID)
@@ -252,8 +270,9 @@ func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, can
 			return nil, fmt.Errorf("candidato %d com tempos inválidos: start=%q end=%q", i+1, cand.Start, cand.End)
 		}
 
-		// Corte relativo ao video.mp4 (que começa em t=0 no início da pregação).
-		cutStartMs := startMs - inicioMs
+		// Corte relativo ao video.mp4 (que começa em t=0 na origem: ped.Inicio no CLI, ou
+		// o menor start aprovado na fase pesada do servidor). Ver RenderizarComOrigem.
+		cutStartMs := startMs - origemMs
 		if cutStartMs < 0 {
 			cutStartMs = 0
 		}

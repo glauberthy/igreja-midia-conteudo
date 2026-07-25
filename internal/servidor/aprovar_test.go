@@ -76,7 +76,10 @@ func TestAprovarJSONMudaEstadoERegistraIndices(t *testing.T) {
 	}
 }
 
-func TestAprovarFormHTMXConfirma(t *testing.T) {
+func TestAprovarFormHTMXRetomaPolling(t *testing.T) {
+	// Sem deps da fase pesada (baixadorVideo/renderizador nil), aprovar apenas registra e
+	// deixa o pedido em aguardando-processamento — o fragmento HTML volta a fazer polling
+	// (a página vai acompanhar a fase pesada quando ela existir).
 	s := prontoParaAprovar(t, tresCandidatos())
 
 	// Como o HTMX serializa checkboxes: aprovados=0&aprovados=1.
@@ -90,15 +93,14 @@ func TestAprovarFormHTMXConfirma(t *testing.T) {
 		t.Fatalf("código = %d, quero 200", rec.Code)
 	}
 	corpo := rec.Body.String()
-	if !strings.Contains(corpo, "Aprovação registrada") {
-		t.Errorf("fragmento não confirmou a aprovação: %q", corpo)
+	if !strings.Contains(corpo, `hx-trigger="every 2s"`) {
+		t.Errorf("fragmento pós-aprovação deveria retomar o polling: %q", corpo)
 	}
-	// Confirma os hooks aprovados (0 e 1), não o reprovado (2).
-	if !strings.Contains(corpo, "Trecho 0") || !strings.Contains(corpo, "Trecho 1") {
-		t.Errorf("confirmação não listou os aprovados: %q", corpo)
-	}
-	if strings.Contains(corpo, "Trecho 2") {
-		t.Errorf("confirmação listou o reprovado (Trecho 2): %q", corpo)
+	s.mu.Lock()
+	st := s.pedidos["teste-1"].ped.Status
+	s.mu.Unlock()
+	if st != pipeline.EstadoAguardandoProcessamento {
+		t.Errorf("estado = %q, quero aguardando-processamento", st)
 	}
 }
 

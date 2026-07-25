@@ -77,3 +77,19 @@ nº 6). Por isso o passo marca/enriquece, nunca certifica nem descarta.
 
 **Status:** registrado como candidata a spec-14. Vira spec quando o dono realinhar as
 specs (há um prompt grande de realinhamento a caminho). Não implementar antes disso.
+
+## Migrar o polling do servidor web para SSE (spec-05)
+
+Hoje a página do operador acompanha o progresso das duas fases (leve e pesada) por
+**polling**: `hx-trigger="every 2s"` refaz `GET /pedidos/{id}` de 2 em 2 segundos. Funciona
+e é simples (HTMX sem build), mas a página pergunta o tempo todo mesmo quando nada mudou.
+
+**Ideia:** um endpoint **SSE** (Server-Sent Events) no servidor Go que EMPURRA o estado
+quando ele muda, com o HTMX como cliente do SSE (extensão `sse` do HTMX). Cobre as duas
+fases (baixando-legenda → … → aguardando-aprovacao; baixando-video → renderizando →
+concluido). Menos requisições, atualização instantânea, e o servidor deixa de responder a
+N polls por pedido.
+
+**Estado:** registrado. O código atual tem um comentário em `internal/servidor/templates.html`
+apontando para cá. Fazer quando o polling incomodar (vários operadores/pedidos simultâneos)
+ou junto de outra mexida na tela. Não urgente — o polling atende o uso esporádico de hoje.

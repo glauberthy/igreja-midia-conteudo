@@ -176,8 +176,32 @@ func (b *Baixador) baixarLegenda(ctx context.Context, ped *pipeline.Pedido) erro
 // baixarVideo baixa o trecho [inicio, fim] do vídeo. Pressupõe a pasta já criada
 // pela fase leve. Não mexe em ped.Status (quem chama decide).
 func (b *Baixador) baixarVideo(ctx context.Context, ped *pipeline.Pedido) error {
+	return b.baixarVideoJanela(ctx, ped, ped.Inicio, ped.Fim)
+}
+
+// BaixarVideoJanela baixa APENAS a janela [inicio, fim] do vídeo (via --download-sections),
+// não a pregação inteira — é a fase pesada do fluxo invertido (spec-05 parte 3): baixa só o
+// necessário para os trechos aprovados. O video.mp4 resultante começa em t=0 em `inicio`
+// (o render tem que usar essa MESMA origem — ver video.RenderizarComOrigem). Em falha,
+// preenche ped.Status = erro e ped.Erro.
+func (b *Baixador) BaixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) error {
 	dir := filepath.Join(b.baseDir(), ped.ID)
-	_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsVideo(ped.YouTubeURL, ped.Inicio, ped.Fim, dir, b.Formato)...)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		ped.Status = pipeline.EstadoErro
+		ped.Erro = err.Error()
+		return fmt.Errorf("criando pasta de trabalho: %w", err)
+	}
+	if err := b.baixarVideoJanela(ctx, ped, inicio, fim); err != nil {
+		ped.Status = pipeline.EstadoErro
+		ped.Erro = err.Error()
+		return err
+	}
+	return nil
+}
+
+func (b *Baixador) baixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) error {
+	dir := filepath.Join(b.baseDir(), ped.ID)
+	_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsVideo(ped.YouTubeURL, inicio, fim, dir, b.Formato)...)
 	if err != nil {
 		if indisponivel(stderr) {
 			return ErrVideoIndisponivel

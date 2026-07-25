@@ -22,9 +22,11 @@ type visaoStatus struct {
 	VideoID      string      // extraído da URL do pedido, para o player YouTube (spec-05 parte 2)
 	RevisaoDados template.JS // JSON dos trechos p/ a tela de revisão (só em aguardando-aprovacao)
 	Candidatos   []candidatoVis
-	// Preenchidos após a aprovação (status aguardando-processamento).
-	Aprovada  bool
+	// Índices aprovados (contrato JSON de GET /pedidos/{id}).
 	Aprovados []candidatoVis
+	// Fase pesada concluída (spec-05 parte 3): os Shorts gerados, para download.
+	Concluido bool
+	Shorts    []string
 }
 
 // candidatoVis é a forma exibida de um candidato (apenas o que a revisão precisa).
@@ -45,15 +47,19 @@ type candidatoVis struct {
 
 // rotulosEtapa dá o texto amigável de cada estado de progresso.
 var rotulosEtapa = map[pipeline.Estado]string{
-	pipeline.EstadoBaixandoLegenda: "baixando legenda",
-	pipeline.EstadoSelecionando:    "selecionando trechos",
-	pipeline.EstadoValidando:       "validando",
+	pipeline.EstadoBaixandoLegenda:         "baixando legenda",
+	pipeline.EstadoSelecionando:            "selecionando trechos",
+	pipeline.EstadoValidando:               "validando",
+	pipeline.EstadoAguardandoProcessamento: "preparando…",
+	pipeline.EstadoBaixandoVideo:           "baixando o vídeo dos aprovados",
+	pipeline.EstadoRenderizando:            "renderizando os Shorts",
 }
 
-// emProgresso são os estados da fase leve em que o polling deve continuar.
+// emProgresso são os estados (fase leve E fase pesada) em que o polling deve continuar.
 func emProgresso(e pipeline.Estado) bool {
 	switch e {
-	case pipeline.EstadoBaixandoLegenda, pipeline.EstadoSelecionando, pipeline.EstadoValidando:
+	case pipeline.EstadoBaixandoLegenda, pipeline.EstadoSelecionando, pipeline.EstadoValidando,
+		pipeline.EstadoAguardandoProcessamento, pipeline.EstadoBaixandoVideo, pipeline.EstadoRenderizando:
 		return true
 	}
 	return false
@@ -69,7 +75,8 @@ func montarVisao(reg *registro) visaoStatus {
 		EmProgresso: emProgresso(reg.ped.Status),
 		Erro:        reg.ped.Erro,
 		VideoID:     videoID(reg.ped.YouTubeURL),
-		Aprovada:    reg.ped.Status == pipeline.EstadoAguardandoProcessamento,
+		Concluido:   reg.ped.Status == pipeline.EstadoConcluido,
+		Shorts:      append([]string(nil), reg.shorts...),
 	}
 	if v.StatusLabel == "" {
 		v.StatusLabel = string(reg.ped.Status)

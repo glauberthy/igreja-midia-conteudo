@@ -225,6 +225,59 @@ func prepararPedido(t *testing.T, base string) (*pipeline.Pedido, []validacao.Ca
 	return ped, cands
 }
 
+// ssDe extrai o valor do -ss (instante do corte) dos args do ffmpeg.
+func ssDe(args []string) string {
+	for i, a := range args {
+		if a == "-ss" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// CORRESPONDÊNCIA DE TEMPO (spec-05 parte 3, cuidado crítico): quando o video.mp4 é uma
+// janela baixada por --download-sections que começa em t=0 numa ORIGEM que NÃO é
+// ped.Inicio, o corte de cada candidato tem que ser (start - origem) — senão o ffmpeg
+// procura um instante que não existe no arquivo. Este teste garante que RenderizarComOrigem
+// desloca o -ss exatamente pela origem dada, e que a distância entre dois cortes preserva a
+// distância entre os starts pedidos.
+func TestRenderizarComOrigemAlinhaCorte(t *testing.T) {
+	base := t.TempDir()
+	ped, cands := prepararPedido(t, base) // cands: maior score em 01:30:10, menor em 01:31:00
+	fx := &fakeExec{}
+	r := &Renderizador{Exec: fx, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final")}
+
+	// Origem = start do candidato de MAIOR score (01:30:10): simula o video.mp4 começando
+	// exatamente ali (a janela baixada). O render ordena por score, então short_01 = maior.
+	origemMs, _ := validacao.HmsToMs("01:30:10")
+	if _, err := r.RenderizarComOrigem(context.Background(), ped, cands, origemMs); err != nil {
+		t.Fatalf("RenderizarComOrigem: %v", err)
+	}
+	if len(fx.chamadas) != 2 {
+		t.Fatalf("esperava 2 chamadas ffmpeg, veio %d", len(fx.chamadas))
+	}
+	// short_01 (maior score, start 01:30:10) cortado em (start - origem) = 0.
+	if ss := ssDe(fx.chamadas[0]); ss != "0.000" {
+		t.Errorf("short_01 -ss = %q, quero 0.000 (start == origem)", ss)
+	}
+	// short_02 (menor score, start 01:31:00) cortado em (01:31:00 - 01:30:10) = 50s.
+	if ss := ssDe(fx.chamadas[1]); ss != "50.000" {
+		t.Errorf("short_02 -ss = %q, quero 50.000 (start - origem)", ss)
+	}
+
+	// Contraprova: com a origem em ped.Inicio (contrato do CLI), os mesmos candidatos são
+	// cortados MUITO mais adiante — provando que a origem realmente desloca o corte.
+	fx2 := &fakeExec{}
+	r2 := &Renderizador{Exec: fx2, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final2")}
+	if _, err := r2.Renderizar(context.Background(), ped, cands); err != nil { // origem = 01:29:38
+		t.Fatalf("Renderizar (CLI): %v", err)
+	}
+	// short_01 (01:30:10) - inicio (01:29:38) = 32s, não 0.
+	if ss := ssDe(fx2.chamadas[0]); ss != "32.000" {
+		t.Errorf("com origem = ped.Inicio, short_01 -ss = %q, quero 32.000", ss)
+	}
+}
+
 func TestRenderizarGeraPorScore(t *testing.T) {
 	base := t.TempDir()
 	outBase := filepath.Join(base, "final")

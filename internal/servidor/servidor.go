@@ -49,6 +49,18 @@ type Selecionador interface {
 	Selecionar(ctx context.Context, transcricaoPath string) ([]validacao.Candidato, error)
 }
 
+// BaixadorVideo baixa APENAS a janela [inicio, fim] do vídeo (fase pesada, spec-05 parte 3).
+type BaixadorVideo interface {
+	BaixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) error
+}
+
+// RenderizadorVideo renderiza os candidatos aprovados a partir do video.mp4 baixado, com a
+// ORIGEM DE TEMPO explícita (origemMs = instante absoluto que corresponde ao t=0 do
+// arquivo). Devolve os caminhos dos Shorts gerados.
+type RenderizadorVideo interface {
+	RenderizarComOrigem(ctx context.Context, ped *pipeline.Pedido, cands []validacao.Candidato, origemMs int) ([]string, error)
+}
+
 // registro é o estado de um pedido na memória do servidor. Os candidatos ficam aqui
 // (o Pedido não os carrega — spec-09); são também persistidos em disco. aprovados
 // guarda os índices que o operador aprovou (spec-05 parte 2), para a fase pesada (parte 3).
@@ -57,13 +69,17 @@ type registro struct {
 	cands     []validacao.Candidato
 	textos    []string // texto REALMENTE falado na janela de cada candidato (revisão)
 	aprovados []int
+	shorts    []string // nomes dos arquivos finais gerados (fase pesada), para download
 }
 
 // Servidor guarda as dependências e o registro em memória dos pedidos.
 type Servidor struct {
 	baixador       BaixadorLegenda
 	selecionador   Selecionador
+	baixadorVideo  BaixadorVideo
+	renderizador   RenderizadorVideo
 	baseDir        string
+	outDir         string
 	logRodadasPath string
 	assetsDir      string
 	agora          func() time.Time
@@ -80,9 +96,12 @@ type Servidor struct {
 // Opcoes configura o Servidor. Campos zero recebem padrões (agora=time.Now,
 // gerarID=timestamp+sequência).
 type Opcoes struct {
-	Baixador     BaixadorLegenda
-	Selecionador Selecionador
-	BaseDir      string
+	Baixador      BaixadorLegenda
+	Selecionador  Selecionador
+	BaixadorVideo BaixadorVideo     // fase pesada (spec-05 parte 3); nil desabilita
+	Renderizador  RenderizadorVideo // fase pesada; nil desabilita
+	BaseDir       string
+	OutDir        string // raiz dos Shorts finais (padrão "finalizados")
 	// LogRodadasPath é onde cada seleção é registrada como uma "rodada" (avaliação de
 	// variância). Vazio usa o padrão "resultados/rodadas.md".
 	LogRodadasPath string
@@ -97,7 +116,10 @@ func Novo(o Opcoes) *Servidor {
 	s := &Servidor{
 		baixador:       o.Baixador,
 		selecionador:   o.Selecionador,
+		baixadorVideo:  o.BaixadorVideo,
+		renderizador:   o.Renderizador,
 		baseDir:        o.BaseDir,
+		outDir:         o.OutDir,
 		logRodadasPath: o.LogRodadasPath,
 		assetsDir:      o.AssetsDir,
 		agora:          o.Agora,
@@ -107,6 +129,9 @@ func Novo(o Opcoes) *Servidor {
 	}
 	if s.baseDir == "" {
 		s.baseDir = "trabalho"
+	}
+	if s.outDir == "" {
+		s.outDir = "finalizados"
 	}
 	if s.logRodadasPath == "" {
 		s.logRodadasPath = filepath.Join("resultados", "rodadas.md")
@@ -124,6 +149,7 @@ func Novo(o Opcoes) *Servidor {
 	s.mux.HandleFunc("POST /pedidos", s.handleCriar)
 	s.mux.HandleFunc("GET /pedidos/{id}", s.handleStatus)
 	s.mux.HandleFunc("POST /pedidos/{id}/aprovar", s.handleAprovar)
+	s.mux.HandleFunc("GET /finalizados/{id}/{arquivo}", s.handleBaixarFinal)
 	// Assets estáticos (fonte da identidade, logo) — servidos do disco.
 	s.mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(s.assetsDir))))
 	return s
@@ -265,6 +291,14 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 	vis := montarVisao(reg)
 	s.mu.Unlock()
 
+	// Dispara a fase pesada (baixar vídeo dos aprovados + render) em background, se houver
+	// pelo menos um aprovado e as dependências estiverem ligadas (parte 3). O status volta
+	// a "em progresso", então a página retoma o polling (baixando-video → renderizando →
+	// concluido). Sem aprovados, não há o que gerar.
+	if len(limpos) > 0 && s.baixadorVideo != nil && s.renderizador != nil {
+		go s.faseHeavy(reg)
+	}
+
 	if querJSON(r) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(map[string]any{
@@ -274,6 +308,77 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	tmpl.ExecuteTemplate(w, "status", vis)
+}
+
+// faseHeavy é a máquina de estados da fase pesada (spec-05 parte 3): baixando-video →
+// renderizando → concluido (ou erro, com mensagem clara — nunca trava). Roda em goroutine.
+//
+// Alinhamento de tempo (cuidado crítico da spec): baixa APENAS a janela contígua que cobre
+// todos os trechos aprovados — [menor start, maior end] — via --download-sections. O
+// arquivo resultante começa em t=0 no MENOR start (origemMs); o render recebe essa MESMA
+// origem (RenderizarComOrigem), então cada corte é (start - origemMs), casando exatamente.
+func (s *Servidor) faseHeavy(reg *registro) {
+	ctx := context.Background()
+
+	s.mu.Lock()
+	aprovados := candidatosAprovados(reg)
+	s.mu.Unlock()
+	if len(aprovados) == 0 {
+		s.setErro(reg, "nenhum trecho aprovado para gerar")
+		return
+	}
+
+	// Janela de download = [menor start, maior end] dos aprovados; origem = menor start
+	// (piso ao segundo, o que o yt-dlp recebe). Ver janelaDownload.
+	iniHms, fimHms, origemMs := janelaDownload(aprovados)
+
+	s.setStatus(reg, pipeline.EstadoBaixandoVideo)
+	if err := s.baixadorVideo.BaixarVideoJanela(ctx, reg.ped, iniHms, fimHms); err != nil {
+		s.setErro(reg, mensagemErroDownload(err))
+		return
+	}
+
+	s.setStatus(reg, pipeline.EstadoRenderizando)
+	paths, err := s.renderizador.RenderizarComOrigem(ctx, reg.ped, aprovados, origemMs)
+	if err != nil {
+		s.setErro(reg, "falha ao renderizar os Shorts: "+err.Error())
+		return
+	}
+
+	nomes := make([]string, len(paths))
+	for i, p := range paths {
+		nomes[i] = filepath.Base(p)
+	}
+	s.mu.Lock()
+	reg.shorts = nomes
+	reg.ped.Status = pipeline.EstadoConcluido
+	s.mu.Unlock()
+}
+
+// handleBaixarFinal serve um Short gerado (finalizados/<id>/<arquivo>) para download. Só
+// serve arquivos que o pedido realmente gerou (whitelist reg.shorts) — evita travessia de
+// caminho e vazamento de arquivos de outros pedidos.
+func (s *Servidor) handleBaixarFinal(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	arquivo := r.PathValue("arquivo")
+	s.mu.Lock()
+	reg, ok := s.pedidos[id]
+	permitido := false
+	if ok {
+		for _, n := range reg.shorts {
+			if n == arquivo {
+				permitido = true
+				break
+			}
+		}
+	}
+	s.mu.Unlock()
+	if !ok || !permitido {
+		http.NotFound(w, r)
+		return
+	}
+	// arquivo é um nome da whitelist (sem separadores); Base é defesa extra.
+	http.ServeFile(w, r, filepath.Join(s.outDir, id, filepath.Base(arquivo)))
 }
 
 func (s *Servidor) responderErroAprovar(w http.ResponseWriter, r *http.Request, code int, msg string) {
