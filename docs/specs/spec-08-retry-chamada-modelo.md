@@ -101,3 +101,42 @@ done
 O log de retry vira um **medidor da confiabilidade do modelo**: se o retry dispara
 raramente, o modelo é confiável no formato; se dispara com frequência, é evidência a
 favor de trocar de modelo (Qwen), decisão ainda em aberto no projeto.
+
+---
+
+## Adendo — robustez das chamadas ao modelo (além do retry)
+
+> Registrado depois do fato (dívida documental do inventário de specs). Com estas duas
+> defesas, o escopo real da spec-08 passou a ser **"robustez das chamadas ao modelo"**,
+> não só o retry. Ambas são **genéricas** — valem para qualquer modelo, não só o Qwen —
+> e ambas se integram ao `PedirValidado`/`ClienteLLM` (a mesma camada do retry).
+
+### (a) Descascar JSON embrulhado antes do parse — commit `c7525ee`
+
+Alguns modelos (ex.: Qwen) embrulham o JSON em cerca de código markdown (```` ```json ````
+… ```` ``` ````) ou o cercam de texto explicativo. O parse tropeçava (ex.: `invalid
+character '`'`). `PedirValidado` passou a **descascar** a resposta antes de validar/parsear,
+em TODAS as fases que falam com o modelo (1, 2 e 4). `descascarJSON` é idempotente: remove
+a cerca (e o rótulo de linguagem), recorta o contêiner externo (`{…}` ou `[…]`) e descarta
+texto antes/depois. **JSON puro (Gemma) sai intacto.**
+
+### (b) Detectar resposta truncada por `max_tokens` — commit `31a2c37`
+
+Quando o modelo estoura o `max_tokens`, o JSON vem cortado no meio e o parse acusava o
+críptico `unexpected end of JSON input`. Agora, `finish_reason=length` vira um **erro
+claro e RETRYÁVEL** (`resposta truncada em max_tokens=N (finish_reason=length)`) — a
+próxima tentativa costuma sair completa; se persistir, o operador sabe que é o limite, não
+um bug. Nunca deixa passar JSON incompleto como se fosse válido. Junto, a folga de tokens
+das Fases 1 e 2 subiu para 4096 (uma resposta típica da Fase 2 tem ~700 tokens; a margem
+maior reduz o truncamento).
+
+Nota: o truncamento crônico da Fase 2 com o Qwen Q3 foi resolvido de fato pela
+desduplicação da transcrição (ver spec-15), que corta o input em ~68%. Estas defesas são a
+rede de segurança que torna o erro **claro e recuperável** quando ainda acontecer.
+
+### Critérios de aceite (adendo)
+
+- [x] Resposta em cerca markdown ou cercada de texto parseia (JSON puro passa intacto).
+- [x] `finish_reason=length` → erro "truncada", retryável; nunca passa JSON incompleto.
+- [x] Defesas genéricas (qualquer modelo), na mesma camada do retry.
+- [x] Testes: `TestDescascarJSON`, `TestPedirValidadoDescasca*` (harness), `TestClienteLLMTruncada`.
