@@ -65,6 +65,20 @@ Após o ajuste de prompt (ordem de prioridade na Fase 2) e a rede de retry (spec
 Leitura: o modelo é razoavelmente confiável no formato, mas não perfeito (o mapa vazio
 ocasional é sua fragilidade típica). Bom o suficiente para produção com revisão humana.
 
-### (Espaço para o próximo modelo avaliado — ex.: Qwen 14B)
-Ao testar outro modelo, repetir o protocolo e preencher as mesmas 4 medidas aqui, para
-comparação direta com o baseline do Gemma acima.
+### Qwen3.5 35B-A3B (UD-Q3_K_XL) — testado, INVIÁVEL nesta placa (com ressalva)
+Data: durante a otimização do modelo local (spec-15 / otimizacao-modelo-local.md).
+
+- **Sintoma**: a Fase 2 loopava/truncava — 3/3 tentativas estourando o `max_tokens`
+  (finish_reason=length), e em alguns casos o llama-server **caía** (EOF/OOM). O harness
+  reportava claro (spec-08), mas o retry não recuperava: era loop consistente, não azar.
+- **Causas prováveis**: quant Q3 agressivo (instável) somado à transcrição inflada pela
+  duplicação de rolling captions (~25k tokens).
+- **Veredito**: inviável nesta placa (RTX 4000 Ada, 20 GB) para produção. O Gemma Q4 é o
+  modelo recomendado (ver otimizacao-modelo-local.md).
+
+**Ressalva importante (não deixar virar mito):** este teste foi feito **ANTES** da
+desduplicação da transcrição (spec-15), que corta o input em ~68%. O Qwen Q3 **não foi
+re-executado depois do dedup**. É plausível que o dedup atenue o loop (menos input
+repetitivo), mas isso **não foi verificado**. Se um dia se quiser reconsiderar o Qwen,
+o teste honesto é: rodar o protocolo (4x) com o Qwen Q3 **já com o dedup ativo** e
+preencher as 4 medidas aqui.

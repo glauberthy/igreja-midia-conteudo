@@ -91,7 +91,9 @@ go test ./internal/harness/    # TestTranscricaoLinearDesduplicaEPreserva
 
 ## Nota
 
-O dedup foi o que fechou o loop/truncamento da Fase 2 com o Qwen Q3, mas o ganho vale para
-**qualquer** modelo (menos tokens = mais rápido e mais barato). A folga de contexto que ele
-abriu também embasou a redução do `-c` do llama-server de 64k para 24k
-(`docs/otimizacao-modelo-local.md`).
+O dedup remove um **agravante plausível** do loop/truncamento da Fase 2 com o Qwen Q3
+(input repetitivo puxa output repetitivo), **mas isso não foi verificado**: o Qwen Q3 não
+foi re-executado depois do dedup — a validação do dedup foi feita com o Gemma. O ganho
+vale para **qualquer** modelo por outro motivo, esse sim medido: menos tokens = mais
+rápido e mais barato (−68% de input). A folga de contexto que ele abriu também embasou a
+redução do `-c` do llama-server de 64k para 24k (`docs/otimizacao-modelo-local.md`).
