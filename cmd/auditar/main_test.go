@@ -25,6 +25,32 @@ func cand(start, end string, dur float64, hook string) validacao.Candidato {
 	return validacao.Candidato{Start: start, End: end, DurationSeconds: dur, Score: 90, Hook: hook}
 }
 
+func TestGradeCriterios(t *testing.T) {
+	cands := []validacao.Candidato{
+		{Score: 88, Hook: "hook a", Criteria: validacao.Criteria{ContextFidelity: 28, PastoralValue: 30, Completeness: 15, OpeningStrength: 7, FormatFit: 8}},
+		{Score: 60, Hook: "hook b", RequerRevisaoReforcada: true, MotivoRevisao: "possível problema de fidelidade — revisar",
+			Criteria: validacao.Criteria{ContextFidelity: 12, PastoralValue: 20, Completeness: 12, OpeningStrength: 8, FormatFit: 8}},
+	}
+	var b strings.Builder
+	imprimirGradeCriterios(&b, cands)
+	out := b.String()
+
+	// Cabeçalho com os 5 critérios e o teto de cada.
+	for _, col := range []string{"fidelidade/30", "pastoral/30", "completude/20", "abertura/10", "formato/10"} {
+		if !strings.Contains(out, col) {
+			t.Errorf("faltou coluna %q:\n%s", col, out)
+		}
+	}
+	// Linha do #1: score 88 e a fidelidade 28.
+	if !strings.Contains(out, "| 1 | 88 | 28 |") {
+		t.Errorf("linha de critérios do #1 inesperada:\n%s", out)
+	}
+	// O #2 tem fidelidade baixa (12) → coluna revisão marcada com o motivo.
+	if !strings.Contains(out, "⚠ possível problema de fidelidade") {
+		t.Errorf("revisão do #2 (fidelidade baixa) não apareceu:\n%s", out)
+	}
+}
+
 func TestAuditarCandidatoFiel(t *testing.T) {
 	frases := harness.Frasear(trAudit)
 	probs, texto := AuditarCandidato(frases, cand("00:00:07.000", "00:00:45.000", 38, "Salvação não é um processo."))

@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,6 +38,7 @@ func main() {
 	base := flag.String("base", "trabalho", "pasta raiz de trabalho")
 	todos := flag.Bool("todos", false, "audita todos os pedidos com candidatos em <base>/")
 	comTexto := flag.Bool("texto", false, "inclui o texto falado de cada trecho (para revisão teológica)")
+	comCriterios := flag.Bool("criterios", false, "mostra a grade de critérios da Fase 4 (por que o score é aquele)")
 	flag.Parse()
 
 	if *id == "" && !*todos {
@@ -56,7 +58,7 @@ func main() {
 
 	problemasTotais := 0
 	for _, pid := range ids {
-		n, err := auditarPedido(os.Stdout, *base, pid, *comTexto)
+		n, err := auditarPedido(os.Stdout, *base, pid, *comTexto, *comCriterios)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "erro em %s: %v\n", pid, err)
 			continue
@@ -82,7 +84,7 @@ func pedidosComCandidatos(base string) []string {
 }
 
 // auditarPedido audita um pedido e escreve o relatório em w. Devolve o nº de problemas.
-func auditarPedido(w *os.File, base, id string, comTexto bool) (int, error) {
+func auditarPedido(w *os.File, base, id string, comTexto, comCriterios bool) (int, error) {
 	dir := filepath.Join(base, id)
 	trBytes, err := os.ReadFile(filepath.Join(dir, "transcricao.txt"))
 	if err != nil {
@@ -102,6 +104,10 @@ func auditarPedido(w *os.File, base, id string, comTexto bool) (int, error) {
 	frases := harness.Frasear(string(trBytes))
 	fmt.Fprintf(w, "## %s — %d candidato(s)\n\n", id, len(doc.Candidatos))
 
+	if comCriterios {
+		imprimirGradeCriterios(w, doc.Candidatos)
+	}
+
 	problemas := 0
 	for i, c := range doc.Candidatos {
 		probs, texto := AuditarCandidato(frases, c)
@@ -117,6 +123,34 @@ func auditarPedido(w *os.File, base, id string, comTexto bool) (int, error) {
 	}
 	fmt.Fprintln(w)
 	return problemas, nil
+}
+
+// imprimirGradeCriterios escreve a grade de critérios da Fase 4 (o que compõe o score) —
+// score = soma dos 5 critérios. context_fidelity é o indicador teológico: fidelidade
+// baixa ou avaliações divergentes marcam "revisão" (⚠), nunca descartam (spec-11).
+func imprimirGradeCriterios(w io.Writer, cands []validacao.Candidato) {
+	fmt.Fprintln(w, "| # | score | fidelidade/30 | pastoral/30 | completude/20 | abertura/10 | formato/10 | revisão | hook |")
+	fmt.Fprintln(w, "|---|-------|---------------|-------------|---------------|-------------|------------|---------|------|")
+	for i, c := range cands {
+		cr := c.Criteria
+		rev := "—"
+		if c.RequerRevisaoReforcada {
+			rev = "⚠ " + c.MotivoRevisao
+		}
+		hook := c.Hook
+		if len(hook) > 45 {
+			hook = hook[:45] + "…"
+		}
+		fmt.Fprintf(w, "| %d | %d | %d | %d | %d | %d | %d | %s | %s |\n",
+			i+1, c.Score, cr.ContextFidelity, cr.PastoralValue, cr.Completeness, cr.OpeningStrength, cr.FormatFit, rev, celula(hook))
+	}
+	fmt.Fprintln(w)
+}
+
+// celula deixa um texto seguro para uma célula de tabela markdown (sem "|" nem quebra).
+func celula(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	return strings.ReplaceAll(s, "|", "/")
 }
 
 // AuditarCandidato confere as invariantes de um candidato contra as frases da legenda.
