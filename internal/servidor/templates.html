@@ -203,7 +203,7 @@
     function desenhar() {
       var t = trechoAtual();
       document.getElementById('texto').textContent = t.texto || t.hook;
-      document.getElementById('meta').textContent = t.inicio + ' → ' + t.fim + ' · ' + t.dur + 's · score ' + t.score;
+      document.getElementById('meta').textContent = t.inicio + ' → ' + t.fim + ' · ' + t.dur + 's · score ' + t.score + (t.melhorScore ? ' · ★ maior score' : '');
       var fa = document.getElementById('faixa-aviso');
       if (t.revisar) {
         fa.hidden = false;

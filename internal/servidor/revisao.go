@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"os"
+	"sort"
 	"strings"
 
 	"srtclean/internal/harness"
@@ -47,18 +48,22 @@ func textoDoTrecho(frases []harness.Frase, start, end string) string {
 
 // trechoRevisao é o dado de um trecho que o front (JS) consome para desenhar a tela de
 // revisão. Tempos em segundos (startSeg/endSeg) para o seekTo do player.
+//
+// Indice é o índice ORIGINAL do candidato (o que o POST /aprovar espera) — preservado
+// mesmo depois de reordenar os trechos para exibição.
 type trechoRevisao struct {
-	Indice   int    `json:"indice"`
-	Texto    string `json:"texto"`  // o que foi falado (artefato de revisão)
-	Hook     string `json:"hook"`   // fallback quando texto vazio
-	Inicio   string `json:"inicio"` // HH:MM:SS
-	Fim      string `json:"fim"`
-	StartSeg int    `json:"startSeg"`
-	EndSeg   int    `json:"endSeg"`
-	Dur      int    `json:"dur"`
-	Score    int    `json:"score"`
-	Revisar  bool   `json:"revisar"`
-	Motivo   string `json:"motivo"`
+	Indice      int    `json:"indice"`
+	Texto       string `json:"texto"`  // o que foi falado (artefato de revisão)
+	Hook        string `json:"hook"`   // fallback quando texto vazio
+	Inicio      string `json:"inicio"` // HH:MM:SS
+	Fim         string `json:"fim"`
+	StartSeg    int    `json:"startSeg"`
+	EndSeg      int    `json:"endSeg"`
+	Dur         int    `json:"dur"`
+	Score       int    `json:"score"`
+	MelhorScore bool   `json:"melhorScore"` // selo discreto "maior score" (destaque sem reordenar)
+	Revisar     bool   `json:"revisar"`
+	Motivo      string `json:"motivo"`
 }
 
 // dadosRevisao é o payload JSON embutido na página de revisão.
@@ -75,6 +80,13 @@ func revisaoJSON(reg *registro) template.JS {
 		PedidoID: reg.ped.ID,
 		VideoID:  videoID(reg.ped.YouTubeURL),
 	}
+	// Índice do candidato de MAIOR score — para o selo discreto (destaca sem reordenar).
+	melhor := -1
+	for i, c := range reg.cands {
+		if melhor == -1 || c.Score > reg.cands[melhor].Score {
+			melhor = i
+		}
+	}
 	for i, c := range reg.cands {
 		ini, _ := transcricao.HmsToMs(c.Start)
 		fim, _ := transcricao.HmsToMs(c.End)
@@ -83,19 +95,25 @@ func revisaoJSON(reg *registro) template.JS {
 			texto = reg.textos[i]
 		}
 		d.Trechos = append(d.Trechos, trechoRevisao{
-			Indice:   i,
-			Texto:    texto,
-			Hook:     c.Hook,
-			Inicio:   cortaHms(c.Start),
-			Fim:      cortaHms(c.End),
-			StartSeg: ini / 1000,
-			EndSeg:   fim / 1000,
-			Dur:      int(c.DurationSeconds + 0.5),
-			Score:    c.Score,
-			Revisar:  c.RequerRevisaoReforcada,
-			Motivo:   c.MotivoRevisao,
+			Indice:      i, // índice ORIGINAL (o /aprovar usa este), preservado ao reordenar
+			Texto:       texto,
+			Hook:        c.Hook,
+			Inicio:      cortaHms(c.Start),
+			Fim:         cortaHms(c.End),
+			StartSeg:    ini / 1000,
+			EndSeg:      fim / 1000,
+			Dur:         int(c.DurationSeconds + 0.5),
+			Score:       c.Score,
+			MelhorScore: i == melhor,
+			Revisar:     c.RequerRevisaoReforcada,
+			Motivo:      c.MotivoRevisao,
 		})
 	}
+	// Ordem CRONOLÓGICA na revisão (ordem do sermão), NÃO por score — decisão da spec-05
+	// ("Ordenação: revisão cronológica, render por score"): ordenar por score empurraria os
+	// trechos marcados (fidelidade baixa derruba o score) para o fim, justo os que mais
+	// precisam do olho do pastor. O índice original é preservado para o /aprovar.
+	sort.SliceStable(d.Trechos, func(a, b int) bool { return d.Trechos[a].StartSeg < d.Trechos[b].StartSeg })
 	// json.Marshal escapa < > & (<…), então o resultado é seguro dentro de <script>.
 	b, err := json.Marshal(d)
 	if err != nil {

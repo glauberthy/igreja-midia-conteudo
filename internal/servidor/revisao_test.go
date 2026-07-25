@@ -60,6 +60,38 @@ func TestRevisaoJSONShape(t *testing.T) {
 	}
 }
 
+// A revisão ordena os trechos CRONOLOGICAMENTE (não por score), preservando o índice
+// original (que o /aprovar usa) e marcando o de maior score com um selo — decisão da
+// spec-05 (ordenar por score empurraria os marcados para o fim).
+func TestRevisaoOrdemCronologicaPreservaIndice(t *testing.T) {
+	reg := &registro{
+		ped: pipeline.NovoPedido("p", "https://youtu.be/v", "00:00:00", "00:10:00", time.Unix(0, 0)),
+		cands: []validacao.Candidato{
+			// fora de ordem cronológica; o de MAIOR score (índice 0) é o mais tardio.
+			{Hook: "tardio", Start: "00:05:00.000", End: "00:05:35.000", DurationSeconds: 35, Score: 95},
+			{Hook: "cedo", Start: "00:01:00.000", End: "00:01:34.000", DurationSeconds: 34, Score: 70},
+			{Hook: "meio", Start: "00:03:00.000", End: "00:03:33.000", DurationSeconds: 33, Score: 80},
+		},
+		textos: []string{"", "", ""},
+	}
+	var d dadosRevisao
+	if err := json.Unmarshal([]byte(revisaoJSON(reg)), &d); err != nil {
+		t.Fatal(err)
+	}
+	// Ordem de exibição = cronológica: cedo, meio, tardio.
+	if d.Trechos[0].Hook != "cedo" || d.Trechos[1].Hook != "meio" || d.Trechos[2].Hook != "tardio" {
+		t.Errorf("ordem não é cronológica: %s, %s, %s", d.Trechos[0].Hook, d.Trechos[1].Hook, d.Trechos[2].Hook)
+	}
+	// Índices originais preservados (o /aprovar usa estes): cedo=1, meio=2, tardio=0.
+	if d.Trechos[0].Indice != 1 || d.Trechos[1].Indice != 2 || d.Trechos[2].Indice != 0 {
+		t.Errorf("índices originais não preservados: %d, %d, %d", d.Trechos[0].Indice, d.Trechos[1].Indice, d.Trechos[2].Indice)
+	}
+	// Selo de maior score no "tardio" (score 95), não no primeiro exibido.
+	if d.Trechos[0].MelhorScore || !d.Trechos[2].MelhorScore {
+		t.Errorf("selo de maior score no trecho errado: %+v", d.Trechos)
+	}
+}
+
 // Integração: com uma transcrição real, a fase leve computa o texto falado e ele chega
 // no payload de revisão (o artefato principal para julgar doutrina).
 func TestFaseLeveIncluiTextoFalado(t *testing.T) {
