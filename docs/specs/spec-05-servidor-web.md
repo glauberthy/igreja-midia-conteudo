@@ -188,15 +188,28 @@ Decisoes (nao reabrir):
 Ao aprovar, o servidor dispara em background: baixar o video dos aprovados -> renderizar ->
 listar os finais. Decisoes:
 
-- **Baixa uma janela CONTIGUA, nao a pregacao inteira nem o video todo.** Via
-  `--download-sections` do yt-dlp, baixa `[menor start aprovado, maior end aprovado]` (piso/
-  teto ao segundo). E "so o necessario" no sentido que pula tudo antes do 1o trecho e depois
-  do ultimo. **Por que contigua e nao uma janela por trecho:** multiplas `--download-sections`
-  numa so chamada geram um arquivo concatenado com N origens de tempo diferentes -- a classe
-  de bug de contrato entre etapas que ja nos mordeu. Uma janela = uma origem inequivoca.
-  Trade-off: se os trechos aprovados estao longe entre si, baixa o intervalo entre eles.
-  Otimizacao futura (se incomodar): baixar cada trecho em uma chamada separada, com origem
-  por arquivo. Registrar.
+- **Implementado hoje: baixa uma janela CONTIGUA** `[menor start aprovado, maior end
+  aprovado]` via `--download-sections`. Evita o arquivo concatenado de multiplas secoes numa
+  chamada (N origens de tempo) e da uma origem inequivoca. **Trade-off:** se os trechos estao
+  longe, baixa o intervalo entre eles.
+
+- **Decidido (a implementar): DOWNLOAD POR-TRECHO** — uma chamada `--download-sections` por
+  trecho aprovado, cada arquivo comecando em t=0 no seu proprio start. Medido no sermao
+  `IxmiQGL9CMQ` (janela de 18 min, 4 trechos aprovados):
+  - contigua 18 min: **576 s / 98 MB** (YouTube estrangula a ~174 KiB/s; baixa tudo);
+  - 4 secoes de ~40 s: **110 s / 14,6 MB** — **~5x mais rapido, ~7x menos disco**.
+  - **Sem travessia** (a pergunta que decidia): uma secao de 40 s no INICIO (00:21:58) levou
+    29 s e no FIM (00:39:18) levou 24 s, ambas transferindo so ~3,4 MiB — `--download-sections`
+    usa range requests e SALTA para a secao, nao percorre o stream desde o inicio. Logo baixar
+    por-trecho NAO paga custo de travessia por trecho (o risco que quase matou a otimizacao).
+  - **O ganho e primariamente de CONTRATO e DISCO, o tempo confirmado por medicao.** Contrato:
+    cada arquivo tem origem = start daquele trecho, entao o corte e sempre `start - start = 0`
+    — some o calculo de origem contigua a propagar (menor start, piso/teto), eliminando uma
+    classe de bug de "origem trocada". Disco: 98 MB para extrair ~2 min de Short, e a limpeza
+    (spec-06) nao existe. Tempo: os ~5x acima.
+  - Custo: cada download paga ~5 s de reach (extracao de info do yt-dlp); com N trechos sao
+    N x 5 s, mas a transferencia e minuscula. So perde para a contigua se os trechos forem
+    MUITO proximos (span ~= soma), caso raro. Registrar como decidido; implementar a parte.
 - **Alinhamento de tempo (o cuidado critico).** O `video.mp4` baixado comeca em t=0 no
   **menor start aprovado**, NAO em `ped.Inicio`. Se o render aplicasse `start - ped.Inicio`,
   procuraria um instante que nao existe no arquivo (Short vazio/errado). Solucao:

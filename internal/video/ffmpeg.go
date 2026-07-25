@@ -262,6 +262,17 @@ func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, can
 		return ordenados[a].Score > ordenados[b].Score
 	})
 
+	// Os blocos de legenda viram arquivos .txt temporários (short_NN.subNNN.txt) que o
+	// drawtext lê via textfile= (evita escapar o texto no filtro). São descartáveis: o
+	// ffmpeg já os leu quando o Short fica pronto. Removemos todos ao final (antes,
+	// acumulavam órfãos na pasta de trabalho — 46 por pedido).
+	var tempTxt []string
+	defer func() {
+		for _, f := range tempTxt {
+			os.Remove(f)
+		}
+	}()
+
 	var paths []string
 	for i, cand := range ordenados {
 		startMs, ok1 := transcricao.HmsToMs(cand.Start)
@@ -302,6 +313,7 @@ func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, can
 			if err := os.WriteFile(tf, []byte(bl.Texto), 0644); err != nil {
 				return nil, fmt.Errorf("gravando bloco de legenda: %w", err)
 			}
+			tempTxt = append(tempTxt, tf)
 			usados = append(usados, bl)
 			textfiles = append(textfiles, tf)
 		}

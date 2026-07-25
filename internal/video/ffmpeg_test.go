@@ -278,6 +278,22 @@ func TestRenderizarComOrigemAlinhaCorte(t *testing.T) {
 	}
 }
 
+// Os .txt temporários da legenda (short_NN.subNNN.txt) são removidos após o render — antes
+// acumulavam órfãos na pasta de trabalho (46 por pedido).
+func TestRenderizarLimpaSubTxt(t *testing.T) {
+	base := t.TempDir()
+	ped, cands := prepararPedido(t, base)
+	fx := &fakeExec{}
+	r := &Renderizador{Exec: fx, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final")}
+	if _, err := r.Renderizar(context.Background(), ped, cands); err != nil {
+		t.Fatalf("Renderizar: %v", err)
+	}
+	sobras, _ := filepath.Glob(filepath.Join(base, ped.ID, "short_*.sub*.txt"))
+	if len(sobras) != 0 {
+		t.Errorf("sobraram %d arquivos sub*.txt na pasta de trabalho: %v", len(sobras), sobras)
+	}
+}
+
 func TestRenderizarGeraPorScore(t *testing.T) {
 	base := t.TempDir()
 	outBase := filepath.Join(base, "final")
