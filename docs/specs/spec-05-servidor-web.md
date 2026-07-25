@@ -188,35 +188,72 @@ Decisoes (nao reabrir):
 Ao aprovar, o servidor dispara em background: baixar o video dos aprovados -> renderizar ->
 listar os finais. Decisoes:
 
-- **Implementado hoje: baixa uma janela CONTIGUA** `[menor start aprovado, maior end
-  aprovado]` via `--download-sections`. Evita o arquivo concatenado de multiplas secoes numa
-  chamada (N origens de tempo) e da uma origem inequivoca. **Trade-off:** se os trechos estao
-  longe, baixa o intervalo entre eles.
+- **Implementado hoje: janela CONTIGUA** `[menor start aprovado, maior end aprovado]` via
+  `--download-sections`. Origem inequivoca; mas LENTO (ver medicao).
 
-- **Decidido (a implementar): DOWNLOAD POR-TRECHO** — uma chamada `--download-sections` por
-  trecho aprovado, cada arquivo comecando em t=0 no seu proprio start. Medido no sermao
-  `IxmiQGL9CMQ` (janela de 18 min, 4 trechos aprovados):
-  - contigua 18 min: **576 s / 98 MB** (YouTube estrangula a ~174 KiB/s; baixa tudo);
-  - 4 secoes de ~40 s: **110 s / 14,6 MB** — **~5x mais rapido, ~7x menos disco**.
-  - **Sem travessia** (a pergunta que decidia): uma secao de 40 s no INICIO (00:21:58) levou
-    29 s e no FIM (00:39:18) levou 24 s, ambas transferindo so ~3,4 MiB — `--download-sections`
-    usa range requests e SALTA para a secao, nao percorre o stream desde o inicio. Logo baixar
-    por-trecho NAO paga custo de travessia por trecho (o risco que quase matou a otimizacao).
-  - **O ganho e primariamente de CONTRATO e DISCO, o tempo confirmado por medicao.** Contrato:
-    cada arquivo tem origem = start daquele trecho, entao o corte e sempre `start - start = 0`
-    — some o calculo de origem contigua a propagar (menor start, piso/teto), eliminando uma
-    classe de bug de "origem trocada". Disco: 98 MB para extrair ~2 min de Short, e a limpeza
-    (spec-06) nao existe. Tempo: os ~5x acima.
-  - Custo: cada download paga ~5 s de reach (extracao de info do yt-dlp); com N trechos sao
-    N x 5 s, mas a transferencia e minuscula. So perde para a contigua se os trechos forem
-    MUITO proximos (span ~= soma), caso raro. Registrar como decidido; implementar a parte.
-- **Alinhamento de tempo (o cuidado critico).** O `video.mp4` baixado comeca em t=0 no
-  **menor start aprovado**, NAO em `ped.Inicio`. Se o render aplicasse `start - ped.Inicio`,
-  procuraria um instante que nao existe no arquivo (Short vazio/errado). Solucao:
-  `video.RenderizarComOrigem(..., origemMs)` recebe a origem EXPLICITA (= menor start,
-  piso ao segundo) e corta cada trecho em `start - origemMs`. Testado nos dois niveis:
-  `janelaDownload` (servidor) e `TestRenderizarComOrigemAlinhaCorte` (video: o -ss do ffmpeg
-  bate exatamente).
+- **Em investigacao (decisao NAO fechada): a lentidao e a ORDEM DOS ARGUMENTOS do ffmpeg,
+  nao o YouTube (issue #686).** O `--download-sections` faz o yt-dlp invocar `ffmpeg` com
+  `-ss/-to DEPOIS do -i` — o ffmpeg le o stream desde o inicio e DESCARTA ate a secao
+  (travessia). O caminho rapido: `-ss/-to ANTES do -i`, que faz range-request HTTP e SALTA
+  direto. Receita canonica: `yt-dlp -g` resolve as URLs (2 — video e audio separados) e o
+  ffmpeg corta com `-ss` antes de cada `-i`.
+
+  Medicoes ate agora (sermao `IxmiQGL9CMQ`, yt-dlp 2026.07.04):
+
+  | abordagem | bytes | parede |
+  |---|---|---|
+  | (A) contigua 18 min (`--download-sections`) | 98 MB | **576 s** |
+  | (C) 4 secoes ~50 s (`--download-sections` x4) | 18 MB | **129 s** |
+  | (D) video inteiro, `--concurrent-fragments 8` (nativo paralelo) | 125 MB | **18 s** |
+  | (B) `-g` + ffmpeg `-ss` ANTES do `-i`, `-c copy` | ? | **pendente** (bloqueio 429) |
+
+  (D) vence as medidas (~31x mais rapido que (A)) — o nativo puxa 8 fragmentos em paralelo a
+  ~6,9 MB/s, contra o `--download-sections` sequencial e estrangulado (regressao #15036, que
+  esta versao tem). Mas (B) — a receita do #686 — **ainda nao foi medida**: o YouTube
+  bloqueou o IP (429/anti-bot) apos as ~5 rodadas de download da investigacao. So decidir a
+  arquitetura com (B) na mao.
+
+  **Duas arquiteturas candidatas, a decidir com os numeros:**
+  - **(D) baixar o video inteiro, cortar local.** Contrato mais simples (origem = 0, tempo
+    absoluto, sem calculo). Custo: ~125 MB/pedido em disco → torna a **spec-06 (limpeza) uma
+    prioridade REAL** (hoje inexistente).
+  - **(B)/colapso: buscar so o trecho por range-request e ja renderizar na mesma passada do
+    ffmpeg** (`-ss` no input + os filtros do render: crop 9:16, gradiente, legenda, logo →
+    escreve `short_NN.mp4` direto). Elimina o `video.mp4` intermediario, os ~98-125 MB e o
+    contrato de origem (com `-ss` no input, a saida comeca em 0 = inicio do trecho). Riscos a
+    tratar: URLs do `-g` sao temporarias e atadas ao IP (usar ja, re-resolver no retry,
+    expiracao = erro claro); se o render falha, perde o download (re-resolver + refazer);
+    o ajuste fino da v2 (operador apara inicio/fim) precisa de material em disco — o colapso
+    nao deixa nenhum, entao a v2 exigiria manter o trecho baixado a parte ou re-buscar; duas
+    entradas (v+a) exigem `-map` e `-ss` em cada; com `-c copy` o corte cai no keyframe
+    (dai a folga de 5s), mas o colapso RE-CODIFICA (aplica filtros) e ai o `-ss` de input e
+    preciso — a folga vira desnecessaria.
+
+  Nao decidir/implementar antes de medir (B). Ate la, o contiguo atual fica.
+
+- **`-ss` do render precisa ser PRECISO em (B).** Com (A)+`--force-keyframes-at-cuts`, o
+  arquivo comeca exatamente no start pedido e o corte cai em `-ss` pequeno. Com (B), o render
+  faz `-ss <start absoluto>` sobre o video inteiro: como o `-ss` ANTES do `-i` salta para o
+  keyframe mais proximo, o corte pode comecar ate ~1 GOP (~8 s) antes do pedido. Na
+  implementacao de (B), garantir corte preciso (ex.: seek em dois estagios, ou `-ss` de
+  saida no re-encode que o render ja faz) e cobrir com teste de duracao/posicao. Ver tambem
+  a nota do `--force-keyframes-at-cuts` abaixo.
+
+- **Alinhamento de tempo do CONTIGUO atual (ate (B) entrar).** O `video.mp4` comeca em t=0 no
+  **menor start aprovado**, NAO em `ped.Inicio`. O render recebe a origem explicita
+  (`video.RenderizarComOrigem`, origem = menor start, piso ao segundo) e corta cada trecho em
+  `start - origemMs`. Testado: `janelaDownload` (servidor) e `TestRenderizarComOrigemAlinhaCorte`
+  (o `-ss` do ffmpeg bate exato). Com (B), a origem vira 0 e some o calculo.
+- **`--force-keyframes-at-cuts` e a origem do arquivo (contrato de tempo, qualquer
+  abordagem).** A doc do yt-dlp: com essa flag ele forca keyframes nos pontos de corte AO
+  CUSTO DE RECODIFICAR — em troca, o arquivo comeca EXATAMENTE no tempo pedido, entao a
+  origem e conhecida (= start pedido). **Sem a flag**, o corte da secao cai no keyframe mais
+  proximo ANTES do ponto -> a secao comeca antes do tempo pedido e a **origem do arquivo
+  desliza** (fica menor que o start pedido, por ate ~1 GOP). Isso quebraria o contrato: o
+  render assume origem = start pedido; se o arquivo comeca antes, o corte `start - origem`
+  fica deslocado. Consequencia para o desenho: se um dia trocarmos a flag por velocidade
+  (nao recodificar), a origem tem que ser MEDIDA do arquivo (ffprobe do 1o keyframe), nao
+  assumida. Hoje mantemos a flag — a origem e exata.
 - **Erro nunca trava.** Falha no download ou no render -> pedido vai para `erro` com
   mensagem clara na tela (nunca fica eternamente em baixando-video). Um erro visivel e melhor
   que um spinner infinito.
