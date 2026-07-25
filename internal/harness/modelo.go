@@ -26,12 +26,18 @@ const (
 	EnvAPIKey      = "LLM_API_KEY"
 )
 
-// Parâmetros de sampling. Os padrões vêm do spike (docs/aprendizados-do-spike.md);
-// são sobreponíveis por variável de ambiente para calibrar por máquina/modelo SEM
-// recompilar (HARNESS_TEMP, HARNESS_REPEAT_PENALTY) — ver docs/otimizacao-modelo-local.md.
+// Parâmetros de sampling, sobreponíveis por variável de ambiente para calibrar por
+// máquina/modelo SEM recompilar (HARNESS_TEMP, HARNESS_REPEAT_PENALTY).
+//
+// temperatura default = 0 (greedy). Decisão do dono (ver spec-05, "Temperatura padrão
+// = 0"): supera o default 0.2 do spike em favor de AUDITABILIDADE — mesma entrada, mesma
+// saída (na prática), então "se mudou, alguém mexeu em algo". Preço registrado na spec:
+// congela um único caminho greedy (trechos que só apareceriam com temperatura > 0 nunca
+// aparecem). Para explorar outros trechos, o operador re-roda com temperatura maior
+// (HARNESS_TEMP=0.5) — o "buscar outros trechos" da spec-05.
 // max_tokens é dimensionado POR FASE (ver fases.go).
 var (
-	temperatura   = envFloat("HARNESS_TEMP", 0.2)
+	temperatura   = envFloat("HARNESS_TEMP", 0.0)
 	repeatPenalty = envFloat("HARNESS_REPEAT_PENALTY", 1.1)
 )
 

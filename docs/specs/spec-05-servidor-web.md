@@ -146,6 +146,39 @@ Decisoes (nao reabrir):
 - **O texto falado vem do servidor.** O card mostra o texto REALMENTE falado na janela
   `[start, end]` (reconstruido da transcricao via `harness.Frasear`, o mesmo do
   `cmd/auditar`), nao o hook. Se faltar (edge case), cai para o hook.
+- **Ordenacao: revisao cronologica, render por score (dois contextos, duas ordens, de
+  proposito).** Na tela de revisao a ordem e CRONOLOGICA (ordem do sermao), NAO por score.
+  Tres motivos: (a) a marcacao de fidelidade DERRUBA o score (spec-11), entao ordenar por
+  score empurra os trechos marcados para o fim da fila — justo os que mais precisam do olho
+  do pastor, o oposto do proposito; (b) o score erra de forma conhecida (no run do
+  `IxmiQGL9CMQ`, a frase quebrada "como o que nos somos os filhos deles" levou score 88, o
+  mais alto) — ordenar por sinal ruidoso ancora o operador no item errado; (c) trechos
+  vizinhos compartilham o contexto do sermao, o que ajuda a julgar se o trecho se sustenta
+  sozinho. Na saida do RENDER a ordem por score continua (`short_01` = melhor e util para
+  publicar; ver `internal/video`). Para destacar o melhor na revisao SEM reordenar, um selo
+  discreto ("★ maior score") no card. O indice ORIGINAL do candidato e preservado apos a
+  reordenacao (o `/aprovar` usa esse indice).
+
+## Temperatura padrao = 0 (auditabilidade) e "buscar outros trechos"
+
+- **Default de temperatura do modelo = 0** (greedy), no harness e no servidor (era 0.2 do
+  spike). O argumento decisivo e **AUDITABILIDADE**, nao so confiabilidade pastoral: durante
+  o desenvolvimento, a variancia entre execucoes foi um confusor permanente em cada
+  diagnostico — toda saida diferente exigia perguntar "e bug ou e o modelo?". Com temp 0,
+  "mesma entrada, mesma saida" vira ferramenta de depuracao: **se mudou, alguem mexeu em
+  algo**. Configuravel por `HARNESS_TEMP` (nao recompila).
+- **A perda, registrada:** temp 0 congela um unico caminho greedy. Se o sermao tem oito
+  trechos bons e o greedy acha quatro, os outros quatro **nunca aparecem, nem re-rodando**.
+- **Sem promessa de reprodutibilidade exata:** e "reprodutivel na pratica". Medido: 3/3
+  runs identicos no `IxmiQGL9CMQ`; mas no sermao grande `174206-3` deu 4 vs 3 a temp 0 — ha
+  residuo de nao-determinismo de hardware (ponto flutuante na GPU / MoE / speculative
+  decoding). Nao prometer "identico sempre".
+- **"Selecionar de novo" = "buscar outros trechos" (a implementar; so o desenho aqui).**
+  Com o default 0, re-rodar devolveria o mesmo conjunto — o botao so faz sentido se re-rodar
+  com **temperatura maior** (ex.: `HARNESS_TEMP=0.5`). Fica como acao EXPLICITA do operador,
+  rotulada pelo que faz ("buscar outros trechos"), para quando ele achar que veio pouco. O
+  padrao fica confiavel e reprodutivel; a exploracao passa a ser escolha consciente, nao o
+  comportamento default. (Nao implementado ainda.)
 
 ## Criterios de aceite
 

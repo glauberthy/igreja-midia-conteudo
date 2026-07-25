@@ -89,9 +89,12 @@ Detalhe do maior sermão (~9.3k tokens desduplicados):
   altos) saem idênticos entre execuções, **sem perder qualidade** (os melhores sempre
   emergem). A variância residual (4 vs 3) vem do roteamento MoE + speculative + ponto
   flutuante, não do sampling.
-- A temperatura agora é **configurável por ambiente** (`HARNESS_TEMP`, `HARNESS_REPEAT_PENALTY`)
-  — sem recompilar. Para rodar a seleção reprodutível pelo servidor web:
-  `HARNESS_TEMP=0 go run ./cmd/servidor`.
+- A temperatura é **configurável por ambiente** (`HARNESS_TEMP`, `HARNESS_REPEAT_PENALTY`)
+  — sem recompilar. **O default passou a ser 0** (era 0.2), por auditabilidade — ver a
+  decisão na spec-05 ("Temperatura padrão = 0"). Medição posterior (3× no `IxmiQGL9CMQ`):
+  **3/3 runs idênticos** a temp 0. Ressalva: não é garantia exata — o sermão grande
+  `174206-3` deu 4 vs 3 a temp 0 (resíduo de hardware). Para explorar outros trechos,
+  re-rodar com `HARNESS_TEMP=0.5` ("buscar outros trechos", spec-05).
 
 ### Recomendação
 
@@ -99,8 +102,9 @@ Detalhe do maior sermão (~9.3k tokens desduplicados):
   boa qualidade teológica (scores altos, sem marcações de fidelidade nos testes). O Qwen
   Q3 é mais arriscado (quant agressivo; loop/crash antes do dedup + contexto reduzido).
 - **Config:** `~/start-gemma-otim.sh` (24k, 1 slot).
-- **Reprodutibilidade:** `HARNESS_TEMP=0` para o pastor ver sempre os mesmos melhores
-  trechos. Se quiser *mais cobertura* (mais candidatos, aceitando variância), manter 0.2.
+- **Reprodutibilidade:** default `HARNESS_TEMP=0` (decisão na spec-05) — mesma entrada,
+  mesma saída na prática, o que dá auditabilidade ("se mudou, alguém mexeu"). Para *mais
+  cobertura* pontual, o operador re-roda com `HARNESS_TEMP=0.5`.
 - **Ideia futura (não implementada):** rodar a seleção 2× e unir os candidatos (dedup por
   região) — combina cobertura alta E estabilidade, ao custo de ~2× o tempo.
 
