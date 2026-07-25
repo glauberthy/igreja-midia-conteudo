@@ -170,9 +170,12 @@ Decisoes (nao reabrir):
 - **A perda, registrada:** temp 0 congela um unico caminho greedy. Se o sermao tem oito
   trechos bons e o greedy acha quatro, os outros quatro **nunca aparecem, nem re-rodando**.
 - **Sem promessa de reprodutibilidade exata:** e "reprodutivel na pratica". Medido: 3/3
-  runs identicos no `IxmiQGL9CMQ`; mas no sermao grande `174206-3` deu 4 vs 3 a temp 0 — ha
-  residuo de nao-determinismo de hardware (ponto flutuante na GPU / MoE / speculative
-  decoding). Nao prometer "identico sempre".
+  runs identicos no `IxmiQGL9CMQ`; mas no sermao grande `174206-3` deu 4 vs 3 a temp 0. O
+  residuo e **nao-determinismo de hardware** (ordem de reducao em ponto flutuante na GPU +
+  roteamento do MoE) — **NAO** o speculative decoding: medido, rodar temp 0 SEM o draft
+  model deu 4/5/6 (pior, nao melhor). Ou seja, nao ha conserto barato para determinismo
+  total; o draft fica (e mais rapido e, se algo, mais estavel). Nao prometer "identico
+  sempre" — sermoes com muitos trechos-limite variam mais.
 - **"Selecionar de novo" = "buscar outros trechos" (a implementar; so o desenho aqui).**
   Com o default 0, re-rodar devolveria o mesmo conjunto — o botao so faz sentido se re-rodar
   com **temperatura maior** (ex.: `HARNESS_TEMP=0.5`). Fica como acao EXPLICITA do operador,

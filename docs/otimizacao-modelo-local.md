@@ -87,8 +87,9 @@ Detalhe do maior sermão (~9.3k tokens desduplicados):
   o que varia é a **frase-âncora exata** e a **contagem** de candidatos.
 - **temp 0.0 torna a seleção quase determinística**: os 3 melhores trechos (scores mais
   altos) saem idênticos entre execuções, **sem perder qualidade** (os melhores sempre
-  emergem). A variância residual (4 vs 3) vem do roteamento MoE + speculative + ponto
-  flutuante, não do sampling.
+  emergem). A variância residual (4 vs 3) vem do **não-determinismo de hardware** (ponto
+  flutuante na GPU + roteamento do MoE), não do sampling nem do speculative decoding —
+  medido: temp 0 SEM o draft model deu 4/5/6 (não melhorou; o draft não é o culpado).
 - A temperatura é **configurável por ambiente** (`HARNESS_TEMP`, `HARNESS_REPEAT_PENALTY`)
   — sem recompilar. **O default passou a ser 0** (era 0.2), por auditabilidade — ver a
   decisão na spec-05 ("Temperatura padrão = 0"). Medição posterior (3× no `IxmiQGL9CMQ`):
