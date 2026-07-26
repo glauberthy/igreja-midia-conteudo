@@ -219,6 +219,31 @@ go run ./cmd/auditar -id <pedido> -texto
   "Rodada N" com os candidatos ordenados por score, o título do vídeo e a janela — para
   comparar variância entre sermões/execuções. Configurável com `-log`.
 
+### Retenção e limpeza de disco (spec-06)
+
+A fase pesada baixa o vídeo inteiro (decisão medida — 7,3s contra 577s do seccionado), e o
+preço é disco: **~571 MB por pedido** (medido; 4,0 GB em 7 pedidos). A limpeza mantém o
+bruto dos **N pedidos mais recentes** (padrão 1, o bastante para regerar um Short sem
+baixar de novo) e apaga o dos anteriores.
+
+- **Automática**: ao concluir um pedido, limpa os anteriores (desligue com `-sem-limpeza`;
+  ajuste com `-reter N`).
+- **Manual**: `cmd/limpar`, para limpeza retroativa ou quando quiser.
+
+```bash
+go run ./cmd/limpar -dry-run     # mostra o que apagaria e quanto liberaria
+go run ./cmd/limpar              # limpa, retendo o pedido mais recente
+go run ./cmd/limpar -reter 3 -v  # retém 3 pedidos e lista os arquivos
+```
+
+**Apagado** (bruto regenerável): `video.mp4`, `legenda.srt`, `legenda.info.json`, os
+`short_NN.subNNN.txt` do drawtext, e os intermediários das fases.
+**Preservado sempre**: `finalizados/` (os Shorts entregues), `candidatos.corrigido.json`,
+`transcricao.txt`, `revisao-teologica.json`, `pedido.json` e `resultados/`.
+
+A limpeza só enxerga a raiz de trabalho, recusa travessia de caminho e nunca toca no pedido
+em curso.
+
 ### Auditoria de desempenho
 
 - **Tempos por pedido** (`resultados/tempos.csv`, configurável com `-tempos`): uma linha
