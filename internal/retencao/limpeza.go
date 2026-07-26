@@ -16,6 +16,7 @@
 package retencao
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -227,6 +228,60 @@ func limparPedido(raiz, id string, dryRun bool) (PedidoLimpo, error) {
 		p.Bytes += fi.Size()
 	}
 	return p, nil
+}
+
+// MargemPadrao é o espaço livre mínimo exigido ANTES de começar a fase pesada. Um vídeo
+// de culto medido passou de 900 MB; 2 GB dá folga para o download, o merge do yt-dlp
+// (que escreve o mp4 final ao lado dos fluxos) e os Shorts renderizados.
+const MargemPadrao int64 = 2 << 30 // 2 GB
+
+// ErrEspacoInsuficiente é devolvido por GarantirEspaco quando, mesmo após a limpeza, não
+// há margem para baixar. Falhar ANTES de começar, com número, é muito melhor que o disco
+// encher no meio de um download de 900 MB (o yt-dlp morre com erro de biblioteca, que não
+// diz nada ao operador).
+var ErrEspacoInsuficiente = errors.New("espaço em disco insuficiente")
+
+// GarantirEspaco confere se há `margem` bytes livres para trabalhar. Se não houver, roda
+// a limpeza (mantendo `intocaveis`) e confere de novo. Devolve o espaço livre final e, se
+// ainda faltar, um erro que NOMEIA os números.
+//
+// É a parte PROSPECTIVA da spec-06: a limpeza sozinha é reativa (arruma depois), mas a
+// falha que ela existe para evitar acontece antes — o disco enchendo durante o download.
+func GarantirEspaco(o Opcoes, margem int64) (livre int64, err error) {
+	if margem <= 0 {
+		margem = MargemPadrao
+	}
+	livre, err = EspacoLivre(o.RaizTrabalho)
+	if err != nil {
+		// Não sabemos o espaço (SO sem suporte, caminho ainda inexistente): não bloquear
+		// o operador por causa da checagem — seguir e deixar o download falhar se falhar.
+		return 0, nil
+	}
+	if livre >= margem {
+		return livre, nil
+	}
+	// Apertado: tenta liberar antes de desistir.
+	if _, errL := Limpar(o); errL != nil {
+		return livre, fmt.Errorf("%w: %s livres, precisa de ~%s (a limpeza automática falhou: %v)",
+			ErrEspacoInsuficiente, FormatarBytes(livre), FormatarBytes(margem), errL)
+	}
+	livre, err = EspacoLivre(o.RaizTrabalho)
+	if err != nil {
+		return 0, nil
+	}
+	if livre < margem {
+		return livre, fmt.Errorf("%w: %s livres, precisa de ~%s (a limpeza automática já rodou)",
+			ErrEspacoInsuficiente, FormatarBytes(livre), FormatarBytes(margem))
+	}
+	return livre, nil
+}
+
+// LimparPedido apaga o material bruto de UM pedido específico, ignorando a política de
+// retenção. Serve para o pedido que FALHOU: ele não tem Short a regerar, e deixou lixo
+// (mp4 parcial, .part, .ytdl). Como falha costuma acontecer justamente quando o disco
+// está apertado, não limpar aqui realimenta o problema.
+func LimparPedido(raiz, id string, dryRun bool) (PedidoLimpo, error) {
+	return limparPedido(raiz, id, dryRun)
 }
 
 // PodeRemover diz se um NOME de arquivo (sem caminho) é material bruto descartável.

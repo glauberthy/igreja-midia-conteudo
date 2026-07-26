@@ -90,6 +90,7 @@ type Servidor struct {
 	assetsDir        string
 	reterPedidos     int
 	limpezaDesligada bool
+	logTemposFn      func(string)
 	agora            func() time.Time
 	gerarID          func() string
 	mux              *http.ServeMux
@@ -123,6 +124,8 @@ type Opcoes struct {
 	LimpezaDesligada bool
 	// AssetsDir é a pasta servida em /assets/ (fonte da identidade, logo). Vazio = "assets".
 	AssetsDir string
+	// LogTempos recebe o resumo de desempenho/limpeza de cada pedido. Nil = stderr.
+	LogTempos func(string)
 	Agora     func() time.Time // injetável para testes
 	GerarID   func() string    // injetável para testes
 }
@@ -141,6 +144,7 @@ func Novo(o Opcoes) *Servidor {
 		assetsDir:        o.AssetsDir,
 		reterPedidos:     o.ReterPedidos,
 		limpezaDesligada: o.LimpezaDesligada,
+		logTemposFn:      o.LogTempos,
 		agora:            o.Agora,
 		gerarID:          o.GerarID,
 		pedidos:          make(map[string]*registro),
@@ -353,19 +357,35 @@ func (s *Servidor) faseHeavy(reg *registro) {
 
 	s.mu.Lock()
 	aprovados := candidatosAprovados(reg)
+	idPedido := reg.ped.ID
 	s.mu.Unlock()
 	if len(aprovados) == 0 {
 		s.setErro(reg, "nenhum trecho aprovado para gerar")
 		return
 	}
 
+	// Espaço em disco ANTES de baixar (spec-06): um vídeo de culto passa de 900 MB. Se
+	// faltar margem, tenta a limpeza automática; se ainda faltar, falha AQUI com números —
+	// muito melhor que o disco encher no meio do download (o yt-dlp morre com erro de
+	// biblioteca, que não diz nada ao operador).
+	if err := s.garantirEspaco(reg.ped.ID); err != nil {
+		s.setErro(reg, err.Error())
+		return
+	}
+
 	s.setStatus(reg, pipeline.EstadoBaixandoVideo)
-	if err := s.baixadorVideo.BaixarVideoCompleto(ctx, reg.ped); err != nil {
+	// Cópia: o Baixador escreve Status/Erro no Pedido (contrato do cmd/baixar, onde não há
+	// concorrência). Aqui o registro é compartilhado com o handleStatus, então deixá-lo
+	// escrever direto é corrida de verdade (pega pelo -race). O servidor é dono do status.
+	if err := s.baixadorVideo.BaixarVideoCompleto(ctx, s.copiaPedido(reg)); err != nil {
 		s.setErro(reg, mensagemErroDownload(err))
 		return
 	}
-	reg.metricas.BaixarVideoMs = reg.metricas.marcar(s.agora())
-	reg.metricas.BytesVideo = tamanhoArquivo(filepath.Join(s.baseDir, reg.ped.ID, "video.mp4"))
+	videoPath := filepath.Join(s.baseDir, idPedido, "video.mp4")
+	s.metrica(reg, func(m *Metricas) {
+		m.BaixarVideoMs = m.marcar(s.agora())
+		m.BytesVideo = tamanhoArquivo(videoPath)
+	})
 
 	s.setStatus(reg, pipeline.EstadoRenderizando)
 	// Origem 0: o video.mp4 é o vídeo inteiro, então t=0 do arquivo == t=0 do vídeo.
@@ -395,24 +415,93 @@ func (s *Servidor) faseHeavy(reg *registro) {
 	s.limparAntigos(reg.ped.ID)
 }
 
-// limparAntigos roda a política de retenção mantendo o pedido recém-concluído intacto.
-// Falha de limpeza NUNCA quebra o pedido: só emite aviso — o Short já foi entregue.
+// limparAntigos roda a política de retenção. Ver limparSobLock para a invariante.
 func (s *Servidor) limparAntigos(idAtual string) {
+	s.limparSobLock(idAtual)
+}
+
+// intocaveisLocked lista os pedidos que a limpeza NÃO pode enxergar: todo pedido que o
+// servidor conhece e que ainda não chegou a estado terminal. Exige s.mu já segurado —
+// é o mesmo mutex que registra pedido novo e muda estado, então a lista não pode
+// envelhecer entre ser calculada e ser usada.
+func (s *Servidor) intocaveisLocked(extras ...string) []string {
+	ids := append([]string(nil), extras...)
+	for id, reg := range s.pedidos {
+		if !estadoTerminal(reg.ped.Status) {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// limparSobLock executa a limpeza com o mutex SEGURADO durante a decisão E a remoção.
+// A limpeza apaga arquivo: uma corrida aqui não corrompe uma leitura, ela destrói o
+// video.mp4 que um pedido acabou de baixar, em silêncio. Segurar o mutex do começo ao fim
+// fecha a janela por construção — nenhum pedido nasce nem avança nesse intervalo. Custo
+// nulo na prática: a remoção é de poucos arquivos e o servidor atende um pedido por vez.
+func (s *Servidor) limparSobLock(extras ...string) {
 	if s.limpezaDesligada {
 		return
 	}
+	s.mu.Lock()
 	res, err := retencao.Limpar(retencao.Opcoes{
 		RaizTrabalho: s.baseDir,
 		Reter:        s.reterPedidos,
-		Intocaveis:   []string{idAtual},
+		Intocaveis:   s.intocaveisLocked(extras...),
 	})
+	s.mu.Unlock()
+
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "aviso: limpeza de disco falhou: %v\n", err)
 		return
 	}
 	if res.BytesLiberados > 0 {
-		LogTempos(res.Resumo())
+		s.logTempos(res.Resumo())
 	}
+}
+
+// estadoTerminal diz se o pedido acabou (para o bem ou para o mal). Só o que terminou
+// pode ter o material bruto limpo.
+func estadoTerminal(e pipeline.Estado) bool {
+	return e == pipeline.EstadoConcluido || e == pipeline.EstadoErro
+}
+
+// limparResiduoDeErro apaga o material bruto do pedido que FALHOU. Ele não tem Short a
+// regerar, e um download interrompido deixa mp4 parcial, .part e .ytdl. Como a falha
+// costuma acontecer justamente com o disco apertado, não limpar aqui realimentaria o
+// problema: falhas acumulariam lixo e nunca seriam limpas.
+func (s *Servidor) limparResiduoDeErro(id string) {
+	if s.limpezaDesligada || id == "" {
+		return
+	}
+	s.mu.Lock()
+	p, err := retencao.LimparPedido(s.baseDir, id, false)
+	s.mu.Unlock()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "aviso: limpeza do resíduo de %s falhou: %v\n", id, err)
+		return
+	}
+	if p.Bytes > 0 {
+		s.logTempos(fmt.Sprintf("limpeza: resíduo do pedido %s removido (%s em %d arquivo(s))",
+			id, retencao.FormatarBytes(p.Bytes), len(p.Arquivos)))
+	}
+}
+
+// garantirEspaco confere a margem de disco antes da fase pesada; se apertar, tenta a
+// limpeza (preservando o pedido em curso) antes de desistir.
+func (s *Servidor) garantirEspaco(idAtual string) error {
+	if s.limpezaDesligada {
+		return nil // sem limpeza automática, não faz sentido bloquear por espaço
+	}
+	// GarantirEspaco também APAGA quando falta margem — mesma invariante do limparSobLock.
+	s.mu.Lock()
+	_, err := retencao.GarantirEspaco(retencao.Opcoes{
+		RaizTrabalho: s.baseDir,
+		Reter:        s.reterPedidos,
+		Intocaveis:   s.intocaveisLocked(idAtual),
+	}, retencao.MargemPadrao)
+	s.mu.Unlock()
+	return err
 }
 
 // tokensAprox estima o tamanho da transcrição em tokens (bytes/4 — regra prática boa o
@@ -520,25 +609,34 @@ func validarIndices(indices []int, n int) ([]int, bool) {
 // validando → aguardando-aprovacao (ou erro, com mensagem clara). Roda em goroutine.
 func (s *Servidor) faseLeve(reg *registro) {
 	ctx := context.Background()
+	idPedidoLeve := s.copiaPedido(reg).ID
 
 	s.setStatus(reg, pipeline.EstadoBaixandoLegenda)
-	if err := s.baixador.BaixarLegenda(ctx, reg.ped); err != nil {
+	// Cópia pelo mesmo motivo da fase pesada: o Baixador escreve no Pedido, e o registro é
+	// compartilhado com os handlers. Aqui a cópia traz de volta o título (do .info.json).
+	copia := s.copiaPedido(reg)
+	if err := s.baixador.BaixarLegenda(ctx, copia); err != nil {
 		s.setErro(reg, mensagemErroDownload(err))
 		return
 	}
-	reg.metricas.BaixarLegendaMs = reg.metricas.marcar(s.agora())
-	reg.metricas.Titulo = reg.ped.Titulo
+	s.aplicarTitulo(reg, copia)
+	s.metrica(reg, func(m *Metricas) {
+		m.BaixarLegendaMs = m.marcar(s.agora())
+		m.Titulo = copia.Titulo
+	})
 
 	s.setStatus(reg, pipeline.EstadoSelecionando)
-	transc := filepath.Join(s.baseDir, reg.ped.ID, "transcricao.txt")
-	reg.metricas.TokensTranscricao = tokensAprox(transc)
+	transc := filepath.Join(s.baseDir, idPedidoLeve, "transcricao.txt")
+	s.metrica(reg, func(m *Metricas) { m.TokensTranscricao = tokensAprox(transc) })
 	cands, err := s.selecionador.Selecionar(ctx, transc)
 	if err != nil {
 		s.setErro(reg, "falha na seleção: "+err.Error())
 		return
 	}
-	reg.metricas.SelecionarMs = reg.metricas.marcar(s.agora())
-	reg.metricas.NumCandidatos = len(cands)
+	s.metrica(reg, func(m *Metricas) {
+		m.SelecionarMs = m.marcar(s.agora())
+		m.NumCandidatos = len(cands)
+	})
 
 	s.setStatus(reg, pipeline.EstadoValidando)
 	if err := salvarCandidatos(s.baseDir, reg.ped.ID, cands); err != nil {
@@ -562,6 +660,38 @@ func (s *Servidor) faseLeve(reg *registro) {
 	s.mu.Unlock()
 }
 
+// metrica aplica uma escrita nas métricas do pedido SOB LOCK. As fases rodam em goroutine
+// e o mesmo registro é tocado pelos handlers HTTP; sem o lock, o -race acusa (com razão).
+// Nil-safe: depois de finalizarPedido as métricas são zeradas e a escrita vira no-op.
+func (s *Servidor) metrica(reg *registro, fn func(m *Metricas)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if reg.metricas != nil {
+		fn(reg.metricas)
+	}
+}
+
+// copiaPedido devolve uma cópia do Pedido para entregar a dependências que escrevem nele
+// (o Baixador preenche Status/Erro/Titulo — contrato do CLI). O registro é compartilhado
+// com os handlers HTTP, então deixar uma goroutine escrever ali direto é corrida real: o
+// handleStatus lê Status sob lock enquanto o download escreveria sem. O servidor é o dono
+// do status; da cópia aproveitamos só o que o baixador legitimamente descobre (o título).
+func (s *Servidor) copiaPedido(reg *registro) *pipeline.Pedido {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := *reg.ped
+	return &c
+}
+
+// aplicarTitulo copia de volta, sob lock, o título que o baixador descobriu no .info.json.
+func (s *Servidor) aplicarTitulo(reg *registro, copia *pipeline.Pedido) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if copia.Titulo != "" {
+		reg.ped.Titulo = copia.Titulo
+	}
+}
+
 func (s *Servidor) setStatus(reg *registro, e pipeline.Estado) {
 	s.mu.Lock()
 	reg.ped.Status = e
@@ -575,8 +705,13 @@ func (s *Servidor) setErro(reg *registro, msg string) {
 	s.mu.Lock()
 	reg.ped.Status = pipeline.EstadoErro
 	reg.ped.Erro = msg
+	id := reg.ped.ID
 	s.mu.Unlock()
 	s.finalizarPedido(reg, msg)
+	// O pedido que falhou não tem Short a regerar e pode ter deixado lixo (mp4 parcial,
+	// .part, .ytdl). Limpar na hora: falha costuma ocorrer com o disco apertado, e
+	// acumular resíduo de falhas realimentaria o problema.
+	s.limparResiduoDeErro(id)
 }
 
 // finalizarPedido fecha a auditoria de UM pedido: registra os retries, loga o resumo e
@@ -593,7 +728,7 @@ func (s *Servidor) finalizarPedido(reg *registro, erro string) {
 	met.Erro = erro
 	met.Completou = erro == ""
 	met.FecharRetries()
-	LogTempos(met.Resumo())
+	s.logTempos(met.Resumo())
 	s.gravarTempos(met)
 }
 

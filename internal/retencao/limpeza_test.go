@@ -1,6 +1,7 @@
 package retencao
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -286,6 +287,107 @@ func TestRaizInexistenteNaoErra(t *testing.T) {
 	}
 	if len(res.Pedidos) != 0 {
 		t.Error("nada a limpar numa raiz inexistente")
+	}
+}
+
+// --- Resíduo de pedidos que falharam ---
+
+// Um download que morre deixa mp4 parcial e os temporários do yt-dlp. Como falha costuma
+// acontecer com o disco apertado, esse lixo PRECISA ser removível — senão as falhas
+// acumulam e o problema se realimenta.
+func TestResiduoDeFalhaEhRemovivel(t *testing.T) {
+	for _, nome := range []string{"video.mp4.part", "video.f398.mp4.part", "video.mp4.ytdl", "video.part"} {
+		if !PodeRemover(nome) {
+			t.Errorf("%q é resíduo de download interrompido e deveria ser removível", nome)
+		}
+	}
+}
+
+// LimparPedido apaga o bruto de UM pedido, ignorando a política de retenção — é o caminho
+// do pedido que falhou (não tem Short a regerar), mesmo sendo o mais recente.
+func TestLimparPedidoIgnoraPoliticaMasPreservaHistorico(t *testing.T) {
+	raiz := t.TempDir()
+	arquivos := pedidoCompleto()
+	arquivos["video.mp4.part"] = 700 // download interrompido
+	dir := criarPedido(t, raiz, "falhou", time.Minute, arquivos)
+
+	p, err := LimparPedido(raiz, "falhou", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if existe(t, filepath.Join(dir, "video.mp4")) || existe(t, filepath.Join(dir, "video.mp4.part")) {
+		t.Error("o bruto (inclusive o .part) do pedido que falhou deveria ter sido removido")
+	}
+	// O histórico continua — mesmo num pedido que falhou, o que existir é auditável.
+	for _, nome := range preservados {
+		if !existe(t, filepath.Join(dir, nome)) {
+			t.Errorf("preservado foi apagado: %s", nome)
+		}
+	}
+	if p.Bytes == 0 {
+		t.Error("deveria reportar os bytes liberados")
+	}
+}
+
+func TestLimparPedidoRecusaCaminhoPerigoso(t *testing.T) {
+	raiz := t.TempDir()
+	if _, err := LimparPedido(raiz, "../outro", false); err == nil {
+		t.Error("LimparPedido deveria recusar travessia de caminho")
+	}
+}
+
+// --- Verificação de espaço ANTES de baixar ---
+
+func TestGarantirEspacoPassaComMargemFolgada(t *testing.T) {
+	raiz := t.TempDir()
+	criarPedido(t, raiz, "p", time.Minute, pedidoCompleto())
+	// Margem de 1 byte: qualquer disco tem isso.
+	if _, err := GarantirEspaco(Opcoes{RaizTrabalho: raiz, Reter: 1}, 1); err != nil {
+		t.Errorf("com margem trivial não deveria falhar: %v", err)
+	}
+}
+
+// A falha tem que vir ANTES do download e NOMEAR os números — "espaço insuficiente: N
+// livres, precisa de ~M". Falhar no meio do download dá um erro de biblioteca do yt-dlp,
+// que não diz nada ao operador.
+func TestGarantirEspacoFalhaComMensagemUtil(t *testing.T) {
+	raiz := t.TempDir()
+	criarPedido(t, raiz, "p", time.Minute, pedidoCompleto())
+	// Margem absurda: nenhum disco tem 1 EB livre.
+	_, err := GarantirEspaco(Opcoes{RaizTrabalho: raiz, Reter: 1}, 1<<60)
+	if err == nil {
+		t.Fatal("deveria falhar por espaço insuficiente")
+	}
+	if !errors.Is(err, ErrEspacoInsuficiente) {
+		t.Errorf("erro deveria ser ErrEspacoInsuficiente, veio: %v", err)
+	}
+	for _, q := range []string{"livres", "precisa"} {
+		if !strings.Contains(err.Error(), q) {
+			t.Errorf("mensagem não informa os números (%q): %v", q, err)
+		}
+	}
+}
+
+// Antes de desistir, a verificação TENTA liberar espaço com a limpeza.
+func TestGarantirEspacoTentaLimparAntesDeFalhar(t *testing.T) {
+	raiz := t.TempDir()
+	criarPedido(t, raiz, "recente", time.Minute, pedidoCompleto())
+	dir := criarPedido(t, raiz, "antigo", 24*time.Hour, pedidoCompleto())
+
+	// Margem impossível: falha, mas a limpeza deve ter rodado no caminho.
+	GarantirEspaco(Opcoes{RaizTrabalho: raiz, Reter: 1}, 1<<60)
+	if existe(t, filepath.Join(dir, "video.mp4")) {
+		t.Error("a verificação deveria ter tentado a limpeza antes de desistir")
+	}
+}
+
+func TestEspacoLivreRetornaValorPlausivel(t *testing.T) {
+	livre, err := EspacoLivre(t.TempDir())
+	if err != nil {
+		t.Skipf("sistema sem suporte a consulta de espaço: %v", err)
+	}
+	if livre <= 0 {
+		t.Errorf("espaço livre = %d, esperava um valor positivo", livre)
 	}
 }
 

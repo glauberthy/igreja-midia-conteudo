@@ -32,9 +32,17 @@ var retriesObservados atomic.Int64
 // (LogTentativa) e do download (LogTentativaDownload), ligados no cmd/servidor.
 func ContarRetry() { retriesObservados.Add(1) }
 
-// LogTempos escreve o resumo de desempenho ao final de cada pedido. Variável para os
-// testes capturarem; em produção vai para o stderr (o log do servidor).
-var LogTempos = func(msg string) { fmt.Fprintln(os.Stderr, msg) }
+// logTempos escreve o resumo de desempenho/limpeza. É um CAMPO do Servidor (injetável por
+// Opcoes.LogTempos), não uma variável global: as goroutines das fases escrevem por aqui, e
+// um global trocado/restaurado por teste vira corrida com a goroutine que ainda está
+// finalizando (pego pelo -race). Nil = stderr, o log do servidor.
+func (s *Servidor) logTempos(msg string) {
+	if s.logTemposFn != nil {
+		s.logTemposFn(msg)
+		return
+	}
+	fmt.Fprintln(os.Stderr, msg)
+}
 
 // duracaoJanelaS devolve a duração da janela [inicio, fim] do pedido em segundos (0 se os
 // tempos não parsearem). É o principal previsor de custo: sermão maior = transcrição maior

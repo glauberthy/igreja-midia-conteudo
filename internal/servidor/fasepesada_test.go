@@ -80,6 +80,35 @@ func servidorPesada(t *testing.T, sel *selecionadorFake, bv *baixadorVideoFake, 
 	})
 }
 
+// esperarArquivo aguarda um arquivo APARECER (escrito por uma goroutine). O status
+// terminal é setado ANTES de persistir o CSV/limpar — de propósito: o operador vê o
+// desfecho na hora e a faxina acontece atrás. Os testes, então, esperam o EFEITO.
+func esperarArquivo(t *testing.T, path string) {
+	t.Helper()
+	prazo := time.Now().Add(2 * time.Second)
+	for time.Now().Before(prazo) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("o arquivo %s não foi criado", path)
+}
+
+// esperarSumir aguarda um arquivo ser removido por uma goroutine (a limpeza roda depois
+// de o status mudar, então checar na hora deixaria o teste flaky).
+func esperarSumir(t *testing.T, path string) {
+	t.Helper()
+	prazo := time.Now().Add(2 * time.Second)
+	for time.Now().Before(prazo) {
+		if _, err := os.Stat(path); err != nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Errorf("o arquivo %s deveria ter sido limpo", filepath.Base(path))
+}
+
 func candsJanela() *selecionadorFake {
 	return &selecionadorFake{cands: []validacao.Candidato{
 		{Hook: "trecho 0", Start: "01:45:25.800", End: "01:46:10.200", DurationSeconds: 44, Score: 88},
@@ -188,9 +217,8 @@ func TestFaseHeavyLimpaPedidosAntigos(t *testing.T) {
 	aprovarJSON(t, s, "teste-1", []int{0})
 	esperarStatus(t, s, "teste-1", pipeline.EstadoConcluido)
 
-	if _, err := os.Stat(filepath.Join(antigo, "video.mp4")); err == nil {
-		t.Error("o bruto do pedido antigo deveria ter sido limpo ao concluir")
-	}
+	// A limpeza roda depois do status (assíncrona): esperar o efeito, não o estado.
+	esperarSumir(t, filepath.Join(antigo, "video.mp4"))
 	// ...mas o histórico auditável dele continua.
 	if _, err := os.Stat(filepath.Join(antigo, "candidatos.corrigido.json")); err != nil {
 		t.Error("candidatos.corrigido.json (fonte de verdade) foi apagado")
@@ -224,6 +252,36 @@ func TestLimpezaDesligadaNaoApaga(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(antigo, "video.mp4")); err != nil {
 		t.Error("com a limpeza desligada, nada deveria ser apagado")
+	}
+}
+
+// Um pedido que FALHA deixa lixo (mp4 parcial, .part do yt-dlp). Como falha costuma
+// acontecer com o disco apertado, o resíduo é limpo na hora — senão o problema se
+// realimenta: falhas acumulam e nunca são limpas.
+func TestFaseHeavyLimpaResiduoDoPedidoQueFalhou(t *testing.T) {
+	bv := &baixadorVideoFake{erro: fmt.Errorf("conexão caiu no meio")}
+	rf := &renderFake{}
+	s := servidorPesada(t, candsJanela(), bv, rf)
+
+	criarPedidoOK(t, s)
+	esperarStatus(t, s, "teste-1", pipeline.EstadoAguardandoAprovacao)
+
+	// Simula o lixo que um download interrompido deixa na pasta do pedido.
+	dir := filepath.Join(s.baseDir, "teste-1")
+	os.WriteFile(filepath.Join(dir, "video.mp4.part"), make([]byte, 4000), 0644)
+	os.WriteFile(filepath.Join(dir, "video.mp4.ytdl"), make([]byte, 100), 0644)
+
+	aprovarJSON(t, s, "teste-1", []int{0})
+	esperarStatus(t, s, "teste-1", pipeline.EstadoErro)
+
+	// A limpeza do resíduo roda DEPOIS de o status virar erro (é assíncrona ao estado),
+	// então esperar só o status deixaria o teste flaky. Aguarda o efeito observável.
+	for _, lixo := range []string{"video.mp4.part", "video.mp4.ytdl"} {
+		esperarSumir(t, filepath.Join(dir, lixo))
+	}
+	// A transcrição (histórico) sobrevive mesmo num pedido que falhou.
+	if _, err := os.Stat(filepath.Join(dir, "transcricao.txt")); err != nil {
+		t.Error("transcricao.txt não deveria ser apagada")
 	}
 }
 

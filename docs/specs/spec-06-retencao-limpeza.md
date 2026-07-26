@@ -38,12 +38,30 @@ Fora:
   desta spec, que falava em 7 dias). Mantém-se o bruto dos N pedidos mais recentes
   (padrão N=1) e limpa-se o resto. Motivo: com ~571 MB por pedido (medido), um prazo de 7
   dias significa "quantos pedidos couberem em 7 dias" — imprevisível, porque depende da
-  frequência de uso. Por contagem, o teto de disco é conhecido: N × ~571 MB. Manter o
-  último permite regerar um Short sem baixar de novo; mais que isso volta a acumular.
+  frequência de uso. Por contagem o teto é conhecido — mas **o teto é N × o MAIOR pedido,
+  não N × a média**: os vídeos medidos variaram de 124 MB a 994 MB (8x), porque a
+  resolução disponível no YouTube varia. Com N=1, `trabalho/` fica entre ~124 MB e ~1 GB
+  conforme o último pedido; hoje calhou de ser o menor (124 MB), o que faz o resultado
+  parecer melhor do que o pior caso. Dimensionar disco por **~1 GB por pedido retido**.
+  Manter o último permite regerar um Short sem baixar de novo; mais que isso volta a
+  acumular.
 - **A recência vem dos arquivos PRESERVADOS do pedido, não do mtime da pasta.** Apagar
   arquivos atualiza o mtime do diretório — se a ordem viesse dali, o pedido recém-limpo
   viraria "o mais recente" e a limpeza seguinte comeria justamente o que deve ser retido.
   (Bug real, pego por teste durante a implementação.)
+
+- **Verificação de espaço ANTES da fase pesada (parte PROSPECTIVA).** A limpeza sozinha é
+  reativa: arruma depois. Mas a falha que esta spec existe para evitar acontece ANTES — o
+  disco enchendo no meio de um download de ~900 MB, com o yt-dlp morrendo com um erro de
+  biblioteca que não diz nada ao operador. Então, antes de baixar: confere o espaço livre;
+  se estiver abaixo da margem (`MargemPadrao` = 2 GB — um vídeo passa de 900 MB, e ainda há
+  o merge do yt-dlp e os Shorts), roda a limpeza automática; se AINDA faltar, falha ali
+  mesmo com os números ("espaço insuficiente: N livres, precisa de ~M"). Falhar cedo com
+  diagnóstico é muito melhor que falhar no meio sem explicação.
+- **O pedido que FALHA é limpo na hora** (não espera a política): ele não tem Short a
+  regerar e pode ter deixado mp4 parcial, `.part`, `.ytdl`. Como a falha costuma acontecer
+  justamente com o disco apertado, deixar esse resíduo realimentaria o problema — falhas
+  acumulariam lixo que nunca seria limpo.
 
 ## Passos de implementação
 
@@ -75,16 +93,51 @@ protegido na lista de remoção, ele continua protegido — coberto por teste); 
 recusa travessia (`..`, separadores, caminho absoluto) e confere que o destino está sob a
 raiz; o pedido em curso entra como intocável.
 
+### A invariante do pedido em curso é estrutural, não verificada
+
+Uma corrida na limpeza não corrompe uma leitura: ela **apaga arquivo, em silêncio**. O
+cenário perigoso é a limpeza automática rodando concorrente com um pedido que está
+começando e removendo o `video.mp4` que ele acabou de baixar. Um `-race` verde não é prova
+de ausência disso — o detector só vê as corridas que aconteceram naquela execução, e
+"arquivo apagado indevidamente" nem é o tipo de falha que ele reporta.
+
+Por isso a garantia é **de construção**, não de verificação posterior:
+
+- O conjunto de intocáveis é calculado por `intocaveisLocked`, que percorre os pedidos em
+  memória e protege **todo** pedido que não chegou a estado terminal (`concluido`/`erro`) —
+  não apenas o pedido que acabou de concluir.
+- Esse cálculo e a **remoção** acontecem com o **mesmo mutex** que registra pedido novo
+  (`handleCriar`) e muda estado (`setStatus`/`setErro`) segurado do começo ao fim. Logo
+  nenhum pedido pode nascer nem avançar entre a decisão e o `os.Remove`: não existe janela
+  em que um pedido em curso fique invisível para a lista.
+- Vale para **as três** entradas que apagam — limpeza automática, `GarantirEspaco`
+  (que também limpa quando falta margem) e a limpeza de resíduo de erro. Todas passam pelo
+  mesmo ponto de montagem, para não divergirem.
+
+Custo: desprezível. A remoção é de poucos arquivos e o servidor atende um pedido por vez.
+
+Provado por três testes: a invariante direta (pedido em curso é o mais antigo do disco e
+sobrevive, com contraprova de que a limpeza de fato removeu algo naquela rodada), o lado
+oposto (estado terminal É limpável, senão o disco nunca esvazia) e um teste de estresse
+com pedidos nascendo enquanto a limpeza roda — este verifica **sobrevivência do arquivo**,
+não só ausência de corrida de memória.
+
 ## Critérios de aceite
 
 - [x] Bruto removido dos pedidos anteriores; os N mais recentes ficam intactos.
 - [x] `candidatos.corrigido.json`, `transcricao.txt`, `revisao-teologica.json` e
       `pedido.json` preservados; `finalizados/` nunca tocado.
+- [x] Nenhum pedido em curso pode ser enxergado pela limpeza — garantido pela estrutura
+      (mesmo mutex cobrindo decisão e remoção), não por checagem posterior.
 - [x] Retenção configurável (`-reter`, padrão 1).
 - [x] `cmd/limpar` roda, tem `-dry-run`, reporta o liberado e é idempotente.
 - [x] Limpeza automática ao concluir um pedido, com o atual intocável.
-- [x] Testes cobrem política, whitelist, guarda de caminho, dry-run e idempotência
-      (sem tocar disco real além de `t.TempDir`).
+- [x] `.part`/`.ytdl` (resíduo de download interrompido) são removíveis.
+- [x] Pedido que FALHA tem o resíduo limpo na hora (não espera a política).
+- [x] Verificação de espaço antes da fase pesada: tenta limpar e, se ainda faltar, falha
+      com "espaço insuficiente: N livres, precisa de ~M".
+- [x] Testes cobrem política, whitelist, guarda de caminho, dry-run, idempotência,
+      resíduo de falha e verificação de espaço (sem tocar disco real além de `t.TempDir`).
 - [x] `go build ./...` e `go test ./...` verdes.
 
 **Resultado da limpeza retroativa (2026-07-26):** `trabalho/` foi de **4,0 GB para 126 MB**
@@ -99,6 +152,21 @@ go run ./cmd/limpar -dry-run      # mostra o que faria e quanto liberaria
 go run ./cmd/limpar               # limpa, retendo o pedido mais recente
 go run ./cmd/limpar -reter 3 -v   # retém 3 e lista os arquivos
 ```
+
+## Registrado para depois: `finalizados/` cresce sem limite (por design)
+
+Esta spec limpa `trabalho/` (o bruto). **`finalizados/` NÃO é tocado — de propósito**: são
+os Shorts entregues, o produto. Mas ele cresce indefinidamente: **32 Shorts = 417 MB**
+medidos hoje; a um culto por semana, ~**3 GB/ano**.
+
+É bem mais lento que o bruto (que crescia ~571 MB por PEDIDO), então não é urgente. Mas
+vale registrar a decisão que ficará: **depois de entregue, o Short é uma cópia** — o
+operador baixa pela página e envia por WhatsApp, e o arquivo em `finalizados/` passa a ser
+redundante. Opções para quando incomodar: (a) apagar Shorts de pedidos já entregues após um
+prazo; (b) arquivar em outro volume; (c) manter só os N últimos pedidos, como no bruto.
+Precisa de um sinal de "já entregue" que hoje não existe (o sistema não sabe se o operador
+baixou). Não implementar antes de haver o sinal — apagar um Short que o operador ainda não
+baixou seria perda real.
 
 ## Fora de escopo / próximos passos
 

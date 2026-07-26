@@ -1,0 +1,38 @@
+{
+  "candidatos": [
+    {
+      "start": "01:54:40.000",
+      "end": "01:55:16.000",
+      "duration_seconds": 36,
+      "score": 66,
+      "hook": "Jesus também está vendo a sua vida, querido irmão.",
+      "reason": "O trecho é teologicamente fiel à onisciência de Deus, mas o tom torna-se excessivamente agressivo e pouco pastoral ao final.",
+      "complete_thought": true,
+      "requer_revisao_reforcada": false,
+      "criteria": {
+        "context_fidelity": 28,
+        "pastoral_value": 15,
+        "completeness": 10,
+        "opening_strength": 7,
+        "format_fit": 6
+      }
+    },
+    {
+      "start": "02:04:03.000",
+      "end": "02:04:37.000",
+      "duration_seconds": 34,
+      "score": 77,
+      "hook": "O fim para aqueles que não entregam a vida a Jesus é morte e é morte eterna.",
+      "reason": "O trecho é teologicamente fiel à doutrina da salvação e do juízo, mas perde o foco ao transicionar para uma instrução litúrgica de culto.",
+      "complete_thought": true,
+      "requer_revisao_reforcada": false,
+      "criteria": {
+        "context_fidelity": 30,
+        "pastoral_value": 25,
+        "completeness": 10,
+        "opening_strength": 8,
+        "format_fit": 4
+      }
+    }
+  ]
+}

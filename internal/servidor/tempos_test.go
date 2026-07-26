@@ -83,20 +83,19 @@ func TestGravarTemposAnexaComCabecalhoUmaVez(t *testing.T) {
 // Integração: o ciclo completo preenche as métricas, loga o resumo e grava a linha.
 func TestCicloRegistraTempos(t *testing.T) {
 	// O resumo é emitido pela goroutine da fase pesada: protege o slice (senão o -race
-	// acusa, com razão, leitura concorrente no próprio teste).
+	// acusa, com razão, leitura concorrente no próprio teste). O hook é do SERVIDOR (não
+	// global): assim não há corrida entre restaurar a variável e a goroutine que ainda loga.
 	var mu sync.Mutex
 	var resumos []string
-	orig := LogTempos
-	LogTempos = func(m string) { mu.Lock(); resumos = append(resumos, m); mu.Unlock() }
-	t.Cleanup(func() { LogTempos = orig })
-
 	bv := &baixadorVideoFake{}
 	rf := &renderFake{}
 	s := servidorPesada(t, candsJanela(), bv, rf)
+	s.logTemposFn = func(m string) { mu.Lock(); resumos = append(resumos, m); mu.Unlock() }
 	criarPedidoOK(t, s) // janela do pedido: 00:00:00 → 00:10:00
 	esperarStatus(t, s, "teste-1", pipeline.EstadoAguardandoAprovacao)
 	aprovarJSON(t, s, "teste-1", []int{0, 1})
 	esperarStatus(t, s, "teste-1", pipeline.EstadoConcluido)
+	esperarArquivo(t, s.temposPath) // idem: persistência vem depois do status
 
 	// Resumo no log do servidor.
 	mu.Lock()
@@ -137,17 +136,15 @@ func TestCicloRegistraTempos(t *testing.T) {
 func TestPedidoQueFalhaEntraNoCSV(t *testing.T) {
 	var mu sync.Mutex
 	var resumos []string
-	orig := LogTempos
-	LogTempos = func(m string) { mu.Lock(); resumos = append(resumos, m); mu.Unlock() }
-	t.Cleanup(func() { LogTempos = orig })
-
 	bv := &baixadorVideoFake{erro: fmt.Errorf("googlevideo timeout")}
 	rf := &renderFake{}
 	s := servidorPesada(t, candsJanela(), bv, rf)
+	s.logTemposFn = func(m string) { mu.Lock(); resumos = append(resumos, m); mu.Unlock() }
 	criarPedidoOK(t, s)
 	esperarStatus(t, s, "teste-1", pipeline.EstadoAguardandoAprovacao)
 	aprovarJSON(t, s, "teste-1", []int{0})
 	esperarStatus(t, s, "teste-1", pipeline.EstadoErro)
+	esperarArquivo(t, s.temposPath) // o CSV é gravado logo após o status virar erro
 
 	b, err := os.ReadFile(s.temposPath)
 	if err != nil {
@@ -167,7 +164,13 @@ func TestPedidoQueFalhaEntraNoCSV(t *testing.T) {
 	// E o tempo até a falha foi contabilizado (não é zero).
 	mu.Lock()
 	defer mu.Unlock()
-	if len(resumos) != 1 || !strings.Contains(resumos[0], "FALHOU") {
+	achouFalhou := false
+	for _, r := range resumos {
+		if strings.Contains(r, "FALHOU") {
+			achouFalhou = true
+		}
+	}
+	if !achouFalhou {
 		t.Errorf("resumo no log deveria dizer que falhou: %v", resumos)
 	}
 }
