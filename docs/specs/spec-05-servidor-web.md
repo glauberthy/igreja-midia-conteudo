@@ -191,45 +191,47 @@ listar os finais. Decisoes:
 - **Implementado hoje: janela CONTIGUA** `[menor start aprovado, maior end aprovado]` via
   `--download-sections`. Origem inequivoca; mas LENTO (ver medicao).
 
-- **Em investigacao (decisao NAO fechada): a lentidao e a ORDEM DOS ARGUMENTOS do ffmpeg,
-  nao o YouTube (issue #686).** O `--download-sections` faz o yt-dlp invocar `ffmpeg` com
-  `-ss/-to DEPOIS do -i` — o ffmpeg le o stream desde o inicio e DESCARTA ate a secao
-  (travessia). O caminho rapido: `-ss/-to ANTES do -i`, que faz range-request HTTP e SALTA
-  direto. Receita canonica: `yt-dlp -g` resolve as URLs (2 — video e audio separados) e o
-  ffmpeg corta com `-ss` antes de cada `-i`.
+- **MEDIDO (com runtime JS instalado): o fator dominante e PARALELISMO, nao assinatura nem
+  travessia.** Todas as abordagens medidas no mesmo sermao (`IxmiQGL9CMQ`, 46 min, yt-dlp
+  2026.07.04, **com deno**):
 
-  Medicoes ate agora (sermao `IxmiQGL9CMQ`, yt-dlp 2026.07.04):
+  | abordagem | bytes | parede | throughput |
+  |---|---|---|---|
+  | (A') contigua 18 min (`--download-sections`) | 98 MB | **577 s** | 174 KiB/s |
+  | (B') `-g` + ffmpeg `-ss` ANTES do `-i`, `-c copy`, trecho 50 s | 2,4 MB | **29 s** (+2 s p/ resolver) | ~84 KiB/s |
+  | (C) 4 secoes ~50 s (`--download-sections` x4, sem runtime) | 18 MB | 129 s | — |
+  | **(D') video INTEIRO, `--concurrent-fragments 8` (nativo)** | 125 MB | **7,3 s** | **26+28 MiB/s** |
 
-  | abordagem | bytes | parede |
-  |---|---|---|
-  | (A) contigua 18 min (`--download-sections`) | 98 MB | **576 s** |
-  | (C) 4 secoes ~50 s (`--download-sections` x4) | 18 MB | **129 s** |
-  | (D) video inteiro, `--concurrent-fragments 8` (nativo paralelo) | 125 MB | **18 s** |
-  | (B) `-g` + ffmpeg `-ss` ANTES do `-i`, `-c copy` | ? | **pendente** (bloqueio 429) |
+  **(D') e ~79x mais rapido que (A')** e ~4x mais rapido que (B') — baixando o video inteiro
+  (46 min) em menos tempo do que (B') leva para pegar 50 segundos.
 
-  (D) vence as medidas (~31x mais rapido que (A)) — o nativo puxa 8 fragmentos em paralelo a
-  ~6,9 MB/s, contra o `--download-sections` sequencial e estrangulado (regressao #15036, que
-  esta versao tem). Mas (B) — a receita do #686 — **ainda nao foi medida**: o YouTube
-  bloqueou o IP (429/anti-bot) apos as ~5 rodadas de download da investigacao. So decidir a
-  arquitetura com (B) na mao.
+  **Qual fator dominava (a pergunta que os numeros de ontem levantaram):**
+  - **NAO era a assinatura/runtime JS.** (A') com runtime = **577 s**, praticamente igual aos
+    576 s medidos SEM runtime. Se o estrangulamento viesse de URL mal assinada, o runtime
+    teria consertado; nao mudou nada.
+  - **Nao e (so) travessia.** (B') usa range-request de verdade (transferiu so 2,4 MB, sem
+    percorrer os 21 min ate o trecho) e AINDA assim levou 29 s — ~84 KiB/s.
+  - **E PARALELISMO.** Todo caminho que usa o **ffmpeg como downloader** (A' e B') abre UMA
+    conexao e e estrangulado a ~84-174 KiB/s. O downloader **nativo** do yt-dlp abre 8
+    fragmentos em paralelo e atinge ~26 MiB/s — **~150x**. A travessia do #6273 explica os
+    BYTES a mais de (A'), e a regressao #15036 piora o caminho seccionado, mas o que domina
+    o TEMPO e conexao unica vs fragmentos paralelos.
+  - (D) foi de 18 s (sem runtime) para 7,3 s (com) — pode ser o runtime dando URLs melhores,
+    pode ser variacao de rede; uma amostra nao distingue, e a ordem de grandeza ja era a
+    mesma. Nao atribuir ao runtime sem mais medicoes.
 
-  **Duas arquiteturas candidatas, a decidir com os numeros:**
-  - **(D) baixar o video inteiro, cortar local.** Contrato mais simples (origem = 0, tempo
-    absoluto, sem calculo). Custo: ~125 MB/pedido em disco → torna a **spec-06 (limpeza) uma
-    prioridade REAL** (hoje inexistente).
-  - **(B)/colapso: buscar so o trecho por range-request e ja renderizar na mesma passada do
-    ffmpeg** (`-ss` no input + os filtros do render: crop 9:16, gradiente, legenda, logo →
-    escreve `short_NN.mp4` direto). Elimina o `video.mp4` intermediario, os ~98-125 MB e o
-    contrato de origem (com `-ss` no input, a saida comeca em 0 = inicio do trecho). Riscos a
-    tratar: URLs do `-g` sao temporarias e atadas ao IP (usar ja, re-resolver no retry,
-    expiracao = erro claro); se o render falha, perde o download (re-resolver + refazer);
-    o ajuste fino da v2 (operador apara inicio/fim) precisa de material em disco — o colapso
-    nao deixa nenhum, entao a v2 exigiria manter o trecho baixado a parte ou re-buscar; duas
-    entradas (v+a) exigem `-map` e `-ss` em cada; com `-c copy` o corte cai no keyframe
-    (dai a folga de 5s), mas o colapso RE-CODIFICA (aplica filtros) e ai o `-ss` de input e
-    preciso — a folga vira desnecessaria.
+  **Consequencia para a arquitetura (a decidir, nao implementado):** baixar **o video
+  inteiro com o downloader nativo paralelo** e o mais rapido E o contrato mais simples
+  (origem = inicio do video, tempo absoluto, sem calculo de origem). Baixar por segmento
+  (URLs efemeras do `-g`, mais requisicoes, mais risco de 429) **nao se paga em tempo** — o
+  ganho seria de disco, e disco e problema da **spec-06 (retencao/limpeza)**, que passa a ser
+  prioridade real: ~125 MB por pedido ficariam em `trabalho/<id>/`.
 
-  Nao decidir/implementar antes de medir (B). Ate la, o contiguo atual fica.
+  Riscos ja levantados do colapso download+render numa passada (se um dia for reconsiderado):
+  URLs do `-g` sao temporarias e atadas ao IP (usar ja, re-resolver no retry, expiracao =
+  erro claro); falha do render perde o download e acopla os estados baixando/renderizando
+  (perde diagnostico); o ajuste fino da v2 precisa de material em disco; duas entradas (v+a)
+  exigem `-map` e `-ss` em cada.
 
 - **`-ss` do render precisa ser PRECISO em (B).** Com (A)+`--force-keyframes-at-cuts`, o
   arquivo comeca exatamente no start pedido e o corte cai em `-ss` pequeno. Com (B), o render

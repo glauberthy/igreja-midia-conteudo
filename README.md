@@ -72,9 +72,25 @@ Além do Go, a fase de produção usa ferramentas externas de linha de comando. 
 - **ffmpeg** (spec-03 e spec-04): o yt-dlp usa o ffmpeg para converter a legenda em
   `.srt` (`--convert-subs`) e para recortar/mesclar o vídeo; a spec-04 o usará direto.
   - `sudo apt install ffmpeg` / `brew install ffmpeg`. Verifique com `ffmpeg -version`.
+- **deno** (runtime JavaScript, requerido pelo yt-dlp): o YouTube assina as URLs de mídia
+  com um desafio em JS (parâmetro `n`/`nsig`) que o yt-dlp precisa executar. **A extração
+  sem um runtime JS está descontinuada** — o yt-dlp avisa "No supported JavaScript runtime
+  could be found… has been deprecated, and some formats may be missing" e pode devolver
+  formatos incompletos ou URLs mal assinadas.
+  - `curl -fsSL https://deno.land/install.sh | sh` (instala em `~/.deno/bin`). Se preferir
+    não alterar o PATH pelo instalador, use `--no-modify-path` e crie um link onde o PATH já
+    passa: `ln -s ~/.deno/bin/deno ~/.local/bin/deno`.
+  - Escolhemos o **deno** por ser o único runtime habilitado por padrão no yt-dlp; usar Node
+    exigiria passar `--js-runtimes`. Verifique com `deno --version` — e confirme que o aviso
+    sumiu rodando qualquer comando do yt-dlp.
 
 Sem legenda automática em português, o download **para** com mensagem clara: não há
 transcrição local (Whisper etc.). É uma decisão de projeto (BRD DP-001).
+
+Se o YouTube responder **HTTP 429 / "Sign in to confirm you're not a bot"**, é limite de
+requisições temporário: o download refaz sozinho com espera crescente e, se persistir, a
+tela mostra "o YouTube pediu verificação anti-robô; aguarde alguns minutos e tente
+novamente". Insistir prolonga o bloqueio — espere.
 
 ## Ordem prevista das specs (roadmap)
 
