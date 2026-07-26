@@ -14,9 +14,23 @@ import (
 // COMPLETAS dentro das bordas do bloco do mapa até a duração cair em 30–58 s, e
 // descarta o que não formar 30 s coerentes. start/end sempre em limites de frase.
 
+// DuracaoMinMs e DuracaoMaxMs são a faixa de CONSTRUÇÃO de um trecho: valem para a Fase 3
+// (delimitação automática) e para o ajuste manual do operador (spec-05 v2). Um lugar só,
+// para as duas não divergirem.
+//
+// Por que 58 s e não 60: o teto absoluto de um Short é 60 s, e 58 deixa 2 s de folga para
+// arredondamento de keyframe e para a margem de fim (spec-10). Daí a assimetria com a
+// Fase 5 e o auditor, que VALIDAM contra 60 s — e é de propósito: quem constrói mira 58,
+// quem valida aceita até 60, então o portão final nunca rejeita o que a construção
+// aprovou. Se ambos usassem 58, um arredondamento de 0,1 s viraria descarte.
 const (
-	duracaoMinMs = 30000 // 30 s
-	duracaoMaxMs = 58000 // 58 s (limite absoluto do Short é 60)
+	DuracaoMinMs = 30000 // 30 s
+	DuracaoMaxMs = 58000 // 58 s
+)
+
+const (
+	duracaoMinMs = DuracaoMinMs
+	duracaoMaxMs = DuracaoMaxMs
 )
 
 // Frase é uma sentença da transcrição. InicioMs é o tempo da primeira palavra;

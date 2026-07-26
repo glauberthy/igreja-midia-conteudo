@@ -9,9 +9,17 @@ import (
 func candidatosAprovados(reg *registro) []validacao.Candidato {
 	var out []validacao.Candidato
 	for _, idx := range reg.aprovados {
-		if idx >= 0 && idx < len(reg.cands) {
-			out = append(out, reg.cands[idx])
+		if idx < 0 || idx >= len(reg.cands) {
+			continue
 		}
+		c := reg.cands[idx]
+		// Se o operador refez o corte à mão (spec-05 v2), são os tempos DELE que valem —
+		// já recalculados e validados no /aprovar. O render recebe o ajuste, não o
+		// original: é o ponto inteiro da funcionalidade.
+		if t, ok := reg.ajustes[idx]; ok {
+			c = aplicarAjuste(c, t)
+		}
+		out = append(out, c)
 	}
 	return out
 }

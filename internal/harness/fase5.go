@@ -12,6 +12,8 @@ import (
 // que NENHUM candidato com score 0 / critérios zerados / duração fora de 30–60 s passe.
 const (
 	duracaoFinalMinS = 30.0
+	// 60 s (e não os 58 da construção): este é o PORTÃO, e um portão mais estreito que a
+	// régua de construção transformaria arredondamento em descarte. Ver DuracaoMinMs.
 	duracaoFinalMaxS = 60.0
 )
 

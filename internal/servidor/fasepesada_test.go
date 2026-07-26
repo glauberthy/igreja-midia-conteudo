@@ -36,16 +36,18 @@ func (b *baixadorVideoFake) BaixarVideoCompleto(ctx context.Context, ped *pipeli
 }
 
 type renderFake struct {
-	erro     error
-	outDir   string
-	origemMs int
-	nCands   int
-	mu       sync.Mutex
+	erro      error
+	outDir    string
+	origemMs  int
+	nCands    int
+	recebidos []validacao.Candidato // o que chegou ao render (spec-05 v2: tempos ajustados)
+	mu        sync.Mutex
 }
 
 func (r *renderFake) RenderizarComOrigem(ctx context.Context, ped *pipeline.Pedido, cands []validacao.Candidato, origemMs int) ([]string, error) {
 	r.mu.Lock()
 	r.origemMs, r.nCands = origemMs, len(cands)
+	r.recebidos = append([]validacao.Candidato(nil), cands...)
 	r.mu.Unlock()
 	if r.erro != nil {
 		return nil, r.erro

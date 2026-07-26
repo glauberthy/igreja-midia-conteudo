@@ -37,6 +37,14 @@ func textoDoTrecho(frases []harness.Frase, start, end string) string {
 	if !okI || !okF {
 		return ""
 	}
+	return textoDoTrechoMs(frases, ini, fim)
+}
+
+// textoDoTrechoMs é a mesma junção, em ms — usada pelo ajuste manual, que trabalha com os
+// tempos do player. Uma regra só para os dois caminhos: o texto que o operador lê na
+// revisão tem de ser o mesmo que o ajuste recalcula, senão ele julga uma coisa e aprova
+// outra.
+func textoDoTrechoMs(frases []harness.Frase, ini, fim int) string {
 	var partes []string
 	for _, f := range frases {
 		if f.InicioMs >= ini && f.InicioMs < fim {

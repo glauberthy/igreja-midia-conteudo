@@ -73,8 +73,11 @@ type registro struct {
 	cands     []validacao.Candidato
 	textos    []string // texto REALMENTE falado na janela de cada candidato (revisão)
 	aprovados []int
-	shorts    []string  // nomes dos arquivos finais gerados (fase pesada), para download
-	metricas  *Metricas // tempos por etapa (auditoria de desempenho)
+	// ajustes guarda, por índice de candidato, o corte que o operador refez à mão
+	// (spec-05 v2). São ESTES tempos que vão ao render — ver candidatosAprovados.
+	ajustes  map[int]TrechoAjustado
+	shorts   []string  // nomes dos arquivos finais gerados (fase pesada), para download
+	metricas *Metricas // tempos por etapa (auditoria de desempenho)
 }
 
 // Servidor guarda as dependências e o registro em memória dos pedidos.
@@ -180,6 +183,7 @@ func Novo(o Opcoes) *Servidor {
 	s.mux.HandleFunc("POST /pedidos", s.handleCriar)
 	s.mux.HandleFunc("GET /pedidos/{id}", s.handleStatus)
 	s.mux.HandleFunc("POST /pedidos/{id}/aprovar", s.handleAprovar)
+	s.mux.HandleFunc("POST /pedidos/{id}/ajustar", s.handleAjustar)
 	s.mux.HandleFunc("GET /finalizados/{id}/{arquivo}", s.handleBaixarFinal)
 	// Assets estáticos (fonte da identidade, logo) — servidos do disco.
 	s.mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(s.assetsDir))))
@@ -307,7 +311,7 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	indices, err := lerAprovados(r)
+	indices, ajustesRecebidos, err := lerAprovados(r)
 	if err != nil {
 		s.responderErroAprovar(w, r, http.StatusBadRequest, "não entendi a lista de aprovados")
 		return
@@ -318,8 +322,19 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Recalcula cada ajuste no SERVIDOR e recusa a aprovação se algum trecho ajustado
+	// estiver fora da faixa válida. Recusar aqui, e não no cliente, é o que garante a
+	// guarda: um POST direto (ou um JS desatualizado) não pode enfiar um corte de 64 s no
+	// render. A mensagem diz qual trecho e o que falta.
+	ajustes, motivo := s.validarAjustes(reg, limpos, ajustesRecebidos)
+	if motivo != "" {
+		s.responderErroAprovar(w, r, http.StatusBadRequest, motivo)
+		return
+	}
+
 	s.mu.Lock()
 	reg.aprovados = limpos
+	reg.ajustes = ajustes
 	// Fecha o tempo de ESPERA HUMANA (revisão do operador). Fica em coluna própria e fora
 	// do total de máquina — é tempo de pessoa, não de sistema.
 	if reg.metricas.AguardandoMs == 0 {
@@ -581,27 +596,68 @@ func (s *Servidor) responderErroAprovar(w http.ResponseWriter, r *http.Request, 
 
 // lerAprovados extrai os índices aprovados de JSON ({"aprovados":[..]}) ou do formulário
 // (campos repetidos aprovados=0&aprovados=2, como o HTMX serializa os checkboxes).
-func lerAprovados(r *http.Request) ([]int, error) {
+// ajusteRecebido é um corte manual como chega no POST /aprovar. Só tempos: o servidor
+// RECALCULA hook, duração e texto a partir deles, em vez de confiar no que o cliente
+// mandou. O cliente é conveniência; a fonte de verdade é o recálculo.
+type ajusteRecebido struct {
+	Indice int     `json:"indice"`
+	Start  float64 `json:"start"`
+	End    float64 `json:"end"`
+}
+
+func lerAprovados(r *http.Request) ([]int, []ajusteRecebido, error) {
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		defer r.Body.Close()
 		var corpo struct {
-			Aprovados []int `json:"aprovados"`
+			Aprovados []int            `json:"aprovados"`
+			Ajustes   []ajusteRecebido `json:"ajustes"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&corpo); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return corpo.Aprovados, nil
+		return corpo.Aprovados, corpo.Ajustes, nil
 	}
 	if err := r.ParseForm(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var out []int
 	for _, s := range r.Form["aprovados"] {
 		n, err := strconv.Atoi(strings.TrimSpace(s))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, n)
+	}
+	// Formulário sem JS: "ajuste_<i>=start,end" (mesma semântica do caminho JSON).
+	ajs, err := lerAjustesDoForm(r)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, ajs, nil
+}
+
+// lerAjustesDoForm aceita os ajustes no POST de formulário, para a tela seguir funcionando
+// sem JavaScript (o cliente novo usa JSON).
+func lerAjustesDoForm(r *http.Request) ([]ajusteRecebido, error) {
+	var out []ajusteRecebido
+	for chave, vals := range r.Form {
+		if !strings.HasPrefix(chave, "ajuste_") || len(vals) == 0 {
+			continue
+		}
+		idx, err := strconv.Atoi(strings.TrimPrefix(chave, "ajuste_"))
+		if err != nil {
+			return nil, err
+		}
+		partes := strings.Split(vals[0], ",")
+		if len(partes) != 2 {
+			return nil, fmt.Errorf("ajuste %q: esperado \"start,end\"", chave)
+		}
+		ini, err1 := strconv.ParseFloat(strings.TrimSpace(partes[0]), 64)
+		fim, err2 := strconv.ParseFloat(strings.TrimSpace(partes[1]), 64)
+		if err1 != nil || err2 != nil {
+			return nil, fmt.Errorf("ajuste %q: tempos ilegíveis", chave)
+		}
+		out = append(out, ajusteRecebido{Indice: idx, Start: ini, End: fim})
 	}
 	return out, nil
 }
