@@ -63,6 +63,11 @@ type Metricas struct {
 	BytesVideo        int64 // tamanho do video.mp4 baixado
 	Retries           int   // retries de modelo + download durante o pedido
 
+	// Desfecho. Pedidos que FALHAM também entram no CSV: o tempo gasto até a falha é real
+	// e o operador vai refazer — registrar só o sucesso deixaria a média otimista.
+	Completou bool   // true = ciclo completo; false = terminou em erro
+	Erro      string // motivo, quando não completou
+
 	// Etapas (ms).
 	BaixarLegendaMs int64
 	SelecionarMs    int64
@@ -121,7 +126,7 @@ func (m *Metricas) RenderPorShortMs() int64 {
 
 const cabecalhoTempos = "quando,pedido,titulo,sermao_s,transcricao_tokens,candidatos,aprovados," +
 	"video_mb,retries,baixar_legenda_s,selecionar_s,validar_s,baixar_video_s,renderizar_s," +
-	"render_por_short_s,total_maquina_s,aguardando_humano_s\n"
+	"render_por_short_s,total_maquina_s,aguardando_humano_s,completou,erro\n"
 
 // LinhaCSV formata o pedido como uma linha do arquivo de auditoria. Tempos em segundos com
 // 1 casa (mais legível que ms para comparar a olho, e suficiente para média).
@@ -145,6 +150,8 @@ func (m *Metricas) LinhaCSV() string {
 		seg(m.RenderPorShortMs()),
 		seg(m.TotalMaquinaMs()),
 		seg(m.AguardandoMs),
+		completouTexto(m.Completou),
+		csvCampo(m.Erro),
 	}, ",") + "\n"
 }
 
@@ -160,6 +167,13 @@ func csvCampo(s string) string {
 // Resumo é a linha legível mostrada no log do servidor ao final do pedido.
 func (m *Metricas) Resumo() string {
 	s := func(ms int64) float64 { return float64(ms) / 1000 }
+	if !m.Completou {
+		return fmt.Sprintf(
+			"tempos [%s] FALHOU após %.1fs de máquina (legenda %.1fs + selecionar %.1fs + "+
+				"baixar vídeo %.1fs + renderizar %.1fs) | motivo: %s",
+			m.ID, s(m.TotalMaquinaMs()), s(m.BaixarLegendaMs), s(m.SelecionarMs),
+			s(m.BaixarVideoMs), s(m.RenderizarMs), m.Erro)
+	}
 	return fmt.Sprintf(
 		"tempos [%s] TOTAL DE MÁQUINA %.1fs = legenda %.1fs + selecionar %.1fs + validar %.1fs "+
 			"+ baixar vídeo %.1fs + renderizar %.1fs (%.1fs/short) | espera humana %.1fs "+
@@ -201,4 +215,12 @@ func (s *Servidor) gravarTempos(m *Metricas) {
 	if _, err := f.WriteString(m.LinhaCSV()); err != nil {
 		fmt.Fprintf(os.Stderr, "aviso: não escrevi no CSV de tempos: %v\n", err)
 	}
+}
+
+// completouTexto formata o desfecho para o CSV (sim/nao — fácil de filtrar com awk/grep).
+func completouTexto(ok bool) string {
+	if ok {
+		return "sim"
+	}
+	return "nao"
 }

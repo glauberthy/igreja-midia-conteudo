@@ -42,6 +42,8 @@ func main() {
 	out := flag.String("out", "finalizados", "pasta raiz dos Shorts finais")
 	logRodadas := flag.String("log", "resultados/rodadas.md", "arquivo de log das rodadas (avaliação de variância)")
 	tempos := flag.String("tempos", "resultados/tempos.csv", "CSV de auditoria de desempenho (uma linha por pedido)")
+	reter := flag.Int("reter", 1, "quantos pedidos mantêm o material bruto após a limpeza automática (spec-06)")
+	semLimpeza := flag.Bool("sem-limpeza", false, "desliga a limpeza automática de disco (use o cmd/limpar manualmente)")
 	bin := flag.String("bin", "yt-dlp", "binário do yt-dlp")
 	ffmpegBin := flag.String("ffmpeg", "ffmpeg", "binário do ffmpeg (fase pesada)")
 	sublang := flag.String("sublang", "pt", "idioma da legenda automática (ex.: pt, pt-orig)")
@@ -72,14 +74,16 @@ func main() {
 	}
 
 	s := servidor.Novo(servidor.Opcoes{
-		Baixador:       baixador,
-		Selecionador:   sel,
-		BaixadorVideo:  baixador,
-		Renderizador:   rend,
-		BaseDir:        *base,
-		OutDir:         *out,
-		LogRodadasPath: *logRodadas,
-		TemposPath:     *tempos,
+		Baixador:         baixador,
+		Selecionador:     sel,
+		BaixadorVideo:    baixador,
+		Renderizador:     rend,
+		BaseDir:          *base,
+		OutDir:           *out,
+		LogRodadasPath:   *logRodadas,
+		TemposPath:       *tempos,
+		ReterPedidos:     *reter,
+		LimpezaDesligada: *semLimpeza,
 	})
 
 	addr := fmt.Sprintf(":%d", *porta)

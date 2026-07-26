@@ -1,6 +1,7 @@
 package servidor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,6 +128,68 @@ func TestCicloRegistraTempos(t *testing.T) {
 	}
 	if campos[5] != "3" || campos[6] != "2" { // 3 candidatos, 2 aprovados
 		t.Errorf("candidatos/aprovados = %q/%q, quero 3/2", campos[5], campos[6])
+	}
+}
+
+// Pedidos que FALHAM também entram no CSV. Antes, gravarTempos ficava depois dos setErro
+// (que fazem return), então só o sucesso era registrado — e a média ficava otimista,
+// escondendo justamente o tempo perdido que o operador sente e vai refazer.
+func TestPedidoQueFalhaEntraNoCSV(t *testing.T) {
+	var mu sync.Mutex
+	var resumos []string
+	orig := LogTempos
+	LogTempos = func(m string) { mu.Lock(); resumos = append(resumos, m); mu.Unlock() }
+	t.Cleanup(func() { LogTempos = orig })
+
+	bv := &baixadorVideoFake{erro: fmt.Errorf("googlevideo timeout")}
+	rf := &renderFake{}
+	s := servidorPesada(t, candsJanela(), bv, rf)
+	criarPedidoOK(t, s)
+	esperarStatus(t, s, "teste-1", pipeline.EstadoAguardandoAprovacao)
+	aprovarJSON(t, s, "teste-1", []int{0})
+	esperarStatus(t, s, "teste-1", pipeline.EstadoErro)
+
+	b, err := os.ReadFile(s.temposPath)
+	if err != nil {
+		t.Fatalf("pedido que falhou NÃO foi registrado no CSV: %v", err)
+	}
+	linhas := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(linhas) != 2 {
+		t.Fatalf("esperava cabeçalho + 1 linha, veio %d:\n%s", len(linhas), b)
+	}
+	// Marcado como NÃO completado, com o motivo.
+	if !strings.Contains(linhas[1], ",nao,") {
+		t.Errorf("a linha deveria marcar completou=nao: %s", linhas[1])
+	}
+	if !strings.Contains(linhas[1], "timeout") {
+		t.Errorf("a linha deveria trazer o motivo da falha: %s", linhas[1])
+	}
+	// E o tempo até a falha foi contabilizado (não é zero).
+	mu.Lock()
+	defer mu.Unlock()
+	if len(resumos) != 1 || !strings.Contains(resumos[0], "FALHOU") {
+		t.Errorf("resumo no log deveria dizer que falhou: %v", resumos)
+	}
+}
+
+// Só UMA linha por pedido, mesmo que setErro seja chamado mais de uma vez.
+func TestFinalizarGravaUmaVezSo(t *testing.T) {
+	bv := &baixadorVideoFake{}
+	rf := &renderFake{}
+	s := servidorPesada(t, candsJanela(), bv, rf)
+	criarPedidoOK(t, s)
+	esperarStatus(t, s, "teste-1", pipeline.EstadoAguardandoAprovacao)
+
+	s.mu.Lock()
+	reg := s.pedidos["teste-1"]
+	s.mu.Unlock()
+	s.finalizarPedido(reg, "primeiro erro")
+	s.finalizarPedido(reg, "segundo erro") // não deve gravar de novo
+
+	b, _ := os.ReadFile(s.temposPath)
+	linhas := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(linhas) != 2 {
+		t.Errorf("esperava 1 linha de dados, veio %d:\n%s", len(linhas)-1, b)
 	}
 }
 

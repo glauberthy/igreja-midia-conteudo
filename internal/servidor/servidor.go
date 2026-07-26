@@ -29,6 +29,7 @@ import (
 
 	"srtclean/internal/download"
 	"srtclean/internal/pipeline"
+	"srtclean/internal/retencao"
 	"srtclean/internal/transcricao"
 	"srtclean/internal/validacao"
 )
@@ -78,18 +79,20 @@ type registro struct {
 
 // Servidor guarda as dependências e o registro em memória dos pedidos.
 type Servidor struct {
-	baixador       BaixadorLegenda
-	selecionador   Selecionador
-	baixadorVideo  BaixadorVideo
-	renderizador   RenderizadorVideo
-	baseDir        string
-	outDir         string
-	logRodadasPath string
-	temposPath     string
-	assetsDir      string
-	agora          func() time.Time
-	gerarID        func() string
-	mux            *http.ServeMux
+	baixador         BaixadorLegenda
+	selecionador     Selecionador
+	baixadorVideo    BaixadorVideo
+	renderizador     RenderizadorVideo
+	baseDir          string
+	outDir           string
+	logRodadasPath   string
+	temposPath       string
+	assetsDir        string
+	reterPedidos     int
+	limpezaDesligada bool
+	agora            func() time.Time
+	gerarID          func() string
+	mux              *http.ServeMux
 
 	mu      sync.Mutex
 	pedidos map[string]*registro
@@ -113,6 +116,11 @@ type Opcoes struct {
 	// TemposPath é o CSV de auditoria de desempenho (uma linha por pedido, append).
 	// Vazio usa o padrão "resultados/tempos.csv".
 	TemposPath string
+	// ReterPedidos é quantos pedidos mantêm o material bruto após a limpeza automática
+	// (spec-06). 0 usa o padrão 1 (o último, para regerar sem baixar de novo).
+	// LimpezaDesligada desativa a limpeza automática (o cmd/limpar continua disponível).
+	ReterPedidos     int
+	LimpezaDesligada bool
 	// AssetsDir é a pasta servida em /assets/ (fonte da identidade, logo). Vazio = "assets".
 	AssetsDir string
 	Agora     func() time.Time // injetável para testes
@@ -122,19 +130,21 @@ type Opcoes struct {
 // Novo cria o servidor e registra as rotas.
 func Novo(o Opcoes) *Servidor {
 	s := &Servidor{
-		baixador:       o.Baixador,
-		selecionador:   o.Selecionador,
-		baixadorVideo:  o.BaixadorVideo,
-		renderizador:   o.Renderizador,
-		baseDir:        o.BaseDir,
-		outDir:         o.OutDir,
-		logRodadasPath: o.LogRodadasPath,
-		temposPath:     o.TemposPath,
-		assetsDir:      o.AssetsDir,
-		agora:          o.Agora,
-		gerarID:        o.GerarID,
-		pedidos:        make(map[string]*registro),
-		mux:            http.NewServeMux(),
+		baixador:         o.Baixador,
+		selecionador:     o.Selecionador,
+		baixadorVideo:    o.BaixadorVideo,
+		renderizador:     o.Renderizador,
+		baseDir:          o.BaseDir,
+		outDir:           o.OutDir,
+		logRodadasPath:   o.LogRodadasPath,
+		temposPath:       o.TemposPath,
+		assetsDir:        o.AssetsDir,
+		reterPedidos:     o.ReterPedidos,
+		limpezaDesligada: o.LimpezaDesligada,
+		agora:            o.Agora,
+		gerarID:          o.GerarID,
+		pedidos:          make(map[string]*registro),
+		mux:              http.NewServeMux(),
 	}
 	if s.baseDir == "" {
 		s.baseDir = "trabalho"
@@ -373,13 +383,36 @@ func (s *Servidor) faseHeavy(reg *registro) {
 	reg.shorts = nomes
 	reg.metricas.RenderizarMs = reg.metricas.marcar(s.agora())
 	reg.ped.Status = pipeline.EstadoConcluido
-	met := reg.metricas
 	s.mu.Unlock()
 
 	// Auditoria de desempenho: resumo no log + uma linha no CSV histórico.
-	met.FecharRetries()
-	LogTempos(met.Resumo())
-	s.gravarTempos(met)
+	s.finalizarPedido(reg, "")
+
+	// Limpeza de disco (spec-06): concluído o pedido, apaga o bruto dos ANTERIORES. Sem
+	// isto, ~571 MB por pedido se acumulam até o disco encher — e o operador recebe um
+	// erro incompreensível, longe do problema real. O pedido atual é intocável (ainda pode
+	// ser regerado sem baixar de novo).
+	s.limparAntigos(reg.ped.ID)
+}
+
+// limparAntigos roda a política de retenção mantendo o pedido recém-concluído intacto.
+// Falha de limpeza NUNCA quebra o pedido: só emite aviso — o Short já foi entregue.
+func (s *Servidor) limparAntigos(idAtual string) {
+	if s.limpezaDesligada {
+		return
+	}
+	res, err := retencao.Limpar(retencao.Opcoes{
+		RaizTrabalho: s.baseDir,
+		Reter:        s.reterPedidos,
+		Intocaveis:   []string{idAtual},
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "aviso: limpeza de disco falhou: %v\n", err)
+		return
+	}
+	if res.BytesLiberados > 0 {
+		LogTempos(res.Resumo())
+	}
 }
 
 // tokensAprox estima o tamanho da transcrição em tokens (bytes/4 — regra prática boa o
@@ -535,11 +568,33 @@ func (s *Servidor) setStatus(reg *registro, e pipeline.Estado) {
 	s.mu.Unlock()
 }
 
+// setErro põe o pedido em erro E fecha a auditoria de tempo. Um pedido que falha também
+// consumiu tempo — e esse tempo é parte real da percepção do operador, que vai refazer.
+// Gravar só o sucesso deixaria a média otimista (spec-06/instrumentação).
 func (s *Servidor) setErro(reg *registro, msg string) {
 	s.mu.Lock()
 	reg.ped.Status = pipeline.EstadoErro
 	reg.ped.Erro = msg
 	s.mu.Unlock()
+	s.finalizarPedido(reg, msg)
+}
+
+// finalizarPedido fecha a auditoria de UM pedido: registra os retries, loga o resumo e
+// grava a linha no CSV. Idempotente — chamada mais de uma vez (erro após erro), grava só
+// na primeira: `metricas` é zerado depois de gravar.
+func (s *Servidor) finalizarPedido(reg *registro, erro string) {
+	s.mu.Lock()
+	met := reg.metricas
+	reg.metricas = nil // marca como já finalizado
+	s.mu.Unlock()
+	if met == nil {
+		return
+	}
+	met.Erro = erro
+	met.Completou = erro == ""
+	met.FecharRetries()
+	LogTempos(met.Resumo())
+	s.gravarTempos(met)
 }
 
 // lerEntrada aceita tanto JSON (Content-Type: application/json) quanto formulário.

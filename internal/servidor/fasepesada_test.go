@@ -168,6 +168,65 @@ func TestFaseHeavyErroRenderNaoTrava(t *testing.T) {
 	}
 }
 
+// Ao concluir, o servidor limpa o bruto dos pedidos ANTERIORES (spec-06) — sem isso,
+// ~571 MB/pedido se acumulam até o disco encher. O pedido recém-concluído fica intacto.
+func TestFaseHeavyLimpaPedidosAntigos(t *testing.T) {
+	bv := &baixadorVideoFake{}
+	rf := &renderFake{}
+	s := servidorPesada(t, candsJanela(), bv, rf)
+
+	// Um pedido ANTIGO com material bruto, já em disco.
+	antigo := filepath.Join(s.baseDir, "pedido-antigo")
+	os.MkdirAll(antigo, 0755)
+	os.WriteFile(filepath.Join(antigo, "video.mp4"), make([]byte, 5000), 0644)
+	os.WriteFile(filepath.Join(antigo, "candidatos.corrigido.json"), []byte("{}"), 0644)
+	velho := time.Now().Add(-48 * time.Hour)
+	os.Chtimes(filepath.Join(antigo, "candidatos.corrigido.json"), velho, velho)
+
+	criarPedidoOK(t, s)
+	esperarStatus(t, s, "teste-1", pipeline.EstadoAguardandoAprovacao)
+	aprovarJSON(t, s, "teste-1", []int{0})
+	esperarStatus(t, s, "teste-1", pipeline.EstadoConcluido)
+
+	if _, err := os.Stat(filepath.Join(antigo, "video.mp4")); err == nil {
+		t.Error("o bruto do pedido antigo deveria ter sido limpo ao concluir")
+	}
+	// ...mas o histórico auditável dele continua.
+	if _, err := os.Stat(filepath.Join(antigo, "candidatos.corrigido.json")); err != nil {
+		t.Error("candidatos.corrigido.json (fonte de verdade) foi apagado")
+	}
+}
+
+func TestLimpezaDesligadaNaoApaga(t *testing.T) {
+	bv := &baixadorVideoFake{}
+	rf := &renderFake{}
+	base := t.TempDir()
+	out := t.TempDir()
+	rf.outDir = out
+	s := Novo(Opcoes{
+		Baixador: &baixadorFake{transc: "x", base: base}, Selecionador: candsJanela(),
+		BaixadorVideo: bv, Renderizador: rf, BaseDir: base, OutDir: out,
+		LogRodadasPath: filepath.Join(base, "r.md"), TemposPath: filepath.Join(base, "t.csv"),
+		LimpezaDesligada: true,
+		Agora:            func() time.Time { return time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC) },
+		GerarID:          func() string { return "teste-1" },
+	})
+	antigo := filepath.Join(base, "pedido-antigo")
+	os.MkdirAll(antigo, 0755)
+	os.WriteFile(filepath.Join(antigo, "video.mp4"), make([]byte, 5000), 0644)
+	velho := time.Now().Add(-48 * time.Hour)
+	os.Chtimes(antigo, velho, velho)
+
+	criarPedidoOK(t, s)
+	esperarStatus(t, s, "teste-1", pipeline.EstadoAguardandoAprovacao)
+	aprovarJSON(t, s, "teste-1", []int{0})
+	esperarStatus(t, s, "teste-1", pipeline.EstadoConcluido)
+
+	if _, err := os.Stat(filepath.Join(antigo, "video.mp4")); err != nil {
+		t.Error("com a limpeza desligada, nada deveria ser apagado")
+	}
+}
+
 // O download só serve arquivos que o pedido gerou (whitelist), nunca um caminho arbitrário.
 func TestBaixarFinalRecusaArquivoForaDaWhitelist(t *testing.T) {
 	bv := &baixadorVideoFake{}
