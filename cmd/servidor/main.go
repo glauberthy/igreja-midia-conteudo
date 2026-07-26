@@ -41,6 +41,7 @@ func main() {
 	base := flag.String("base", "trabalho", "pasta raiz de trabalho")
 	out := flag.String("out", "finalizados", "pasta raiz dos Shorts finais")
 	logRodadas := flag.String("log", "resultados/rodadas.md", "arquivo de log das rodadas (avaliação de variância)")
+	tempos := flag.String("tempos", "resultados/tempos.csv", "CSV de auditoria de desempenho (uma linha por pedido)")
 	bin := flag.String("bin", "yt-dlp", "binário do yt-dlp")
 	ffmpegBin := flag.String("ffmpeg", "ffmpeg", "binário do ffmpeg (fase pesada)")
 	sublang := flag.String("sublang", "pt", "idioma da legenda automática (ex.: pt, pt-orig)")
@@ -49,7 +50,13 @@ func main() {
 	declaracao := flag.String("declaracao", harness.DeclaracaoPadrao, "caminho da Declaração Doutrinária")
 	flag.Parse()
 
-	// O mesmo Baixador serve a fase leve (BaixarLegenda) e a pesada (BaixarVideoJanela).
+	// Contagem de retries para a auditoria de desempenho: os hooks de log do harness e do
+	// download passam a incrementar o contador do pedido em curso, além de logar.
+	logHarness, logDownload := harness.LogTentativa, download.LogTentativaDownload
+	harness.LogTentativa = func(msg string) { servidor.ContarRetry(); logHarness(msg) }
+	download.LogTentativaDownload = func(msg string) { servidor.ContarRetry(); logDownload(msg) }
+
+	// O mesmo Baixador serve a fase leve (BaixarLegenda) e a pesada (BaixarVideoCompleto).
 	baixador := &download.Baixador{
 		Exec: download.ExecutorReal{}, Bin: *bin, BaseDir: *base, SubLangs: *sublang,
 	}
@@ -72,6 +79,7 @@ func main() {
 		BaseDir:        *base,
 		OutDir:         *out,
 		LogRodadasPath: *logRodadas,
+		TemposPath:     *tempos,
 	})
 
 	addr := fmt.Sprintf(":%d", *porta)

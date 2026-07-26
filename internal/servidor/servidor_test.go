@@ -76,6 +76,7 @@ func servidorTeste(t *testing.T, b BaixadorLegenda, sel Selecionador) *Servidor 
 		Selecionador:   sel,
 		BaseDir:        base,
 		LogRodadasPath: filepath.Join(base, "rodadas.md"), // isola o log no TempDir
+		TemposPath:     filepath.Join(base, "tempos.csv"), // idem para a auditoria de tempos
 		Agora:          func() time.Time { return time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC) },
 		GerarID:        func() string { n++; return "teste-1" },
 	})

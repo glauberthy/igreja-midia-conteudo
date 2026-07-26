@@ -20,6 +20,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -71,7 +72,8 @@ type registro struct {
 	cands     []validacao.Candidato
 	textos    []string // texto REALMENTE falado na janela de cada candidato (revisão)
 	aprovados []int
-	shorts    []string // nomes dos arquivos finais gerados (fase pesada), para download
+	shorts    []string  // nomes dos arquivos finais gerados (fase pesada), para download
+	metricas  *Metricas // tempos por etapa (auditoria de desempenho)
 }
 
 // Servidor guarda as dependências e o registro em memória dos pedidos.
@@ -83,6 +85,7 @@ type Servidor struct {
 	baseDir        string
 	outDir         string
 	logRodadasPath string
+	temposPath     string
 	assetsDir      string
 	agora          func() time.Time
 	gerarID        func() string
@@ -107,6 +110,9 @@ type Opcoes struct {
 	// LogRodadasPath é onde cada seleção é registrada como uma "rodada" (avaliação de
 	// variância). Vazio usa o padrão "resultados/rodadas.md".
 	LogRodadasPath string
+	// TemposPath é o CSV de auditoria de desempenho (uma linha por pedido, append).
+	// Vazio usa o padrão "resultados/tempos.csv".
+	TemposPath string
 	// AssetsDir é a pasta servida em /assets/ (fonte da identidade, logo). Vazio = "assets".
 	AssetsDir string
 	Agora     func() time.Time // injetável para testes
@@ -123,6 +129,7 @@ func Novo(o Opcoes) *Servidor {
 		baseDir:        o.BaseDir,
 		outDir:         o.OutDir,
 		logRodadasPath: o.LogRodadasPath,
+		temposPath:     o.TemposPath,
 		assetsDir:      o.AssetsDir,
 		agora:          o.Agora,
 		gerarID:        o.GerarID,
@@ -137,6 +144,9 @@ func Novo(o Opcoes) *Servidor {
 	}
 	if s.logRodadasPath == "" {
 		s.logRodadasPath = filepath.Join("resultados", "rodadas.md")
+	}
+	if s.temposPath == "" {
+		s.temposPath = filepath.Join("resultados", "tempos.csv")
 	}
 	if s.assetsDir == "" {
 		s.assetsDir = "assets"
@@ -198,7 +208,9 @@ func (s *Servidor) handleCriar(w http.ResponseWriter, r *http.Request) {
 
 	id := s.gerarID()
 	ped := pipeline.NovoPedido(id, ent.YouTubeURL, ent.Inicio, ent.Fim, s.agora())
-	reg := &registro{ped: ped}
+	met := &Metricas{ID: id, DuracaoSermaoS: duracaoJanelaS(ent.Inicio, ent.Fim)}
+	met.IniciarPedido(s.agora())
+	reg := &registro{ped: ped, metricas: met}
 	s.mu.Lock()
 	s.pedidos[id] = reg
 	s.mu.Unlock()
@@ -289,6 +301,12 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	reg.aprovados = limpos
+	// Fecha o tempo de ESPERA HUMANA (revisão do operador). Fica em coluna própria e fora
+	// do total de máquina — é tempo de pessoa, não de sistema.
+	if reg.metricas.AguardandoMs == 0 {
+		reg.metricas.AguardandoMs = reg.metricas.marcar(s.agora())
+	}
+	reg.metricas.NumAprovados = len(limpos)
 	reg.ped.Status = pipeline.EstadoAguardandoProcessamento
 	vis := montarVisao(reg)
 	s.mu.Unlock()
@@ -336,6 +354,8 @@ func (s *Servidor) faseHeavy(reg *registro) {
 		s.setErro(reg, mensagemErroDownload(err))
 		return
 	}
+	reg.metricas.BaixarVideoMs = reg.metricas.marcar(s.agora())
+	reg.metricas.BytesVideo = tamanhoArquivo(filepath.Join(s.baseDir, reg.ped.ID, "video.mp4"))
 
 	s.setStatus(reg, pipeline.EstadoRenderizando)
 	// Origem 0: o video.mp4 é o vídeo inteiro, então t=0 do arquivo == t=0 do vídeo.
@@ -351,8 +371,34 @@ func (s *Servidor) faseHeavy(reg *registro) {
 	}
 	s.mu.Lock()
 	reg.shorts = nomes
+	reg.metricas.RenderizarMs = reg.metricas.marcar(s.agora())
 	reg.ped.Status = pipeline.EstadoConcluido
+	met := reg.metricas
 	s.mu.Unlock()
+
+	// Auditoria de desempenho: resumo no log + uma linha no CSV histórico.
+	met.FecharRetries()
+	LogTempos(met.Resumo())
+	s.gravarTempos(met)
+}
+
+// tokensAprox estima o tamanho da transcrição em tokens (bytes/4 — regra prática boa o
+// bastante para explicar variação de tempo entre sermões). 0 se o arquivo não abrir.
+func tokensAprox(path string) int {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return int(fi.Size() / 4)
+}
+
+// tamanhoArquivo devolve o tamanho em bytes (0 se não existir).
+func tamanhoArquivo(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
 }
 
 // handleBaixarFinal serve um Short gerado (finalizados/<id>/<arquivo>) para download. Só
@@ -447,14 +493,19 @@ func (s *Servidor) faseLeve(reg *registro) {
 		s.setErro(reg, mensagemErroDownload(err))
 		return
 	}
+	reg.metricas.BaixarLegendaMs = reg.metricas.marcar(s.agora())
+	reg.metricas.Titulo = reg.ped.Titulo
 
 	s.setStatus(reg, pipeline.EstadoSelecionando)
 	transc := filepath.Join(s.baseDir, reg.ped.ID, "transcricao.txt")
+	reg.metricas.TokensTranscricao = tokensAprox(transc)
 	cands, err := s.selecionador.Selecionar(ctx, transc)
 	if err != nil {
 		s.setErro(reg, "falha na seleção: "+err.Error())
 		return
 	}
+	reg.metricas.SelecionarMs = reg.metricas.marcar(s.agora())
+	reg.metricas.NumCandidatos = len(cands)
 
 	s.setStatus(reg, pipeline.EstadoValidando)
 	if err := salvarCandidatos(s.baseDir, reg.ped.ID, cands); err != nil {
@@ -473,6 +524,7 @@ func (s *Servidor) faseLeve(reg *registro) {
 	s.mu.Lock()
 	reg.cands = cands
 	reg.textos = textos
+	reg.metricas.ValidarMs = reg.metricas.marcar(s.agora())
 	reg.ped.Status = pipeline.EstadoAguardandoAprovacao
 	s.mu.Unlock()
 }

@@ -18,6 +18,7 @@ func servidorComLog(t *testing.T, logPath string) *Servidor {
 		Selecionador:   &selecionadorFake{},
 		BaseDir:        t.TempDir(),
 		LogRodadasPath: logPath,
+		TemposPath:     filepath.Join(t.TempDir(), "tempos.csv"),
 		Agora:          func() time.Time { return time.Date(2026, 7, 24, 9, 0, 0, 0, time.UTC) },
 		GerarID:        func() string { return "x" },
 	})
@@ -169,6 +170,7 @@ func TestFaseLeveRegistraRodada(t *testing.T) {
 		Selecionador:   sel,
 		BaseDir:        base,
 		LogRodadasPath: log,
+		TemposPath:     filepath.Join(t.TempDir(), "tempos.csv"),
 		Agora:          func() time.Time { return time.Date(2026, 7, 24, 9, 0, 0, 0, time.UTC) },
 		GerarID:        func() string { return "teste-1" },
 	})

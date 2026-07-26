@@ -67,14 +67,16 @@ func servidorPesada(t *testing.T, sel *selecionadorFake, bv *baixadorVideoFake, 
 	out := t.TempDir()
 	rf.outDir = out
 	return Novo(Opcoes{
-		Baixador:      &baixadorFake{transc: "[00:00:00] a graça basta.", base: base},
-		Selecionador:  sel,
-		BaixadorVideo: bv,
-		Renderizador:  rf,
-		BaseDir:       base,
-		OutDir:        out,
-		Agora:         func() time.Time { return time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC) },
-		GerarID:       func() string { return "teste-1" },
+		Baixador:       &baixadorFake{transc: "[00:00:00] a graça basta.", base: base},
+		Selecionador:   sel,
+		BaixadorVideo:  bv,
+		Renderizador:   rf,
+		BaseDir:        base,
+		OutDir:         out,
+		LogRodadasPath: filepath.Join(base, "rodadas.md"), // isola: não escrever em resultados/
+		TemposPath:     filepath.Join(base, "tempos.csv"),
+		Agora:          func() time.Time { return time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC) },
+		GerarID:        func() string { return "teste-1" },
 	})
 }
 
