@@ -182,6 +182,49 @@ Os dois desfechos, na mensagem ao operador:
 Sem esse cálculo, metade dos `ambiguo_isolado` viraria orientação inexequível — e o operador
 aprenderia a ignorar a classe, exatamente o que a spec quer evitar.
 
+#### E se a frase NÃO casar na transcrição? (precedente: o bug da frase-âncora)
+
+O contrato pede a frase "copiada literalmente", mas **modelos parafraseiam mesmo quando
+mandados copiar**. Isso já nos custou uma investigação inteira: era exatamente o bug da
+`frase_ancora` que a Fase 3 não encontrava. Não repetir o erro — a spec define o desfecho:
+
+1. **Busca tolerante primeiro, reusando `AcharAncora`** (a mesma função que resolveu aquele
+   bug): casa pelas **primeiras ~6 palavras normalizadas da primeira sentença**, o que
+   absorve pontuação diferente, sufixo cortado e pequenas variações.
+2. **Se ainda assim não casar: DEGRADAR COM HONESTIDADE**, nunca falhar em silêncio nem
+   prometer um cálculo que não aconteceu. A classe continua `ambiguo_isolado` (o julgamento
+   do modelo vale), mas a mensagem diz o que de fato se sabe:
+   > "o sermão parece esclarecer isto, mas **não localizei onde** — estenda ouvindo, ou
+   > reprove"
+   Sem número de segundos, sem "estenda até X" — porque não temos o X.
+3. Registrar a ocorrência (log/`revisao-teologica.json`) para sabermos a frequência: se
+   passar a ser comum, o prompt precisa de ajuste.
+
+Critério de aceite correspondente na lista abaixo.
+
+### Estender para TRÁS muda o hook — contrato entre confronto, ajuste manual e auditor
+
+Se `lado = "antes"`, estender **move o start** e o trecho passa a começar com outras
+palavras. Isso toca três peças, e contrato entre peças é onde este projeto sangra — então
+fica decidido aqui:
+
+- **O hook é RECALCULADO ao estender: `hook = primeira frase a partir do novo start`.** Não
+  é regra nova — é **exatamente o que a Fase 3 já faz** (`internal/harness/fase3.go`:
+  *"hook = a PRIMEIRA frase real a partir do start final. Hook e start têm que bater
+  sempre; se o trecho cresceu para trás, o hook deixa de ser a frase-âncora e passa a ser a
+  frase de abertura de fato"*). O ajuste manual segue a MESMA regra.
+- **Consequência para o auditor (spec-16): NADA a mudar.** A invariante "o hook começa
+  exatamente no start" continua verdadeira **por construção**, porque o hook é derivado do
+  start. Se o ajuste NÃO recalculasse, o auditor acusaria "start com sobra" num trecho que o
+  próprio sistema mandou estender — recalcular resolve na origem, em vez de ensinar o
+  auditor a tolerar exceções (tolerância que enfraqueceria a checagem para todos os casos).
+- **Consequência para a UI (spec-05):** o operador aprovou um hook e o Short sairia com
+  outro. O card **tem que refletir o hook novo assim que o trecho é estendido** — junto com
+  a duração e o texto falado atualizados. Estender é ação do operador, então ele vê a
+  mudança acontecer; o que não pode é o card seguir mostrando o hook antigo.
+
+### Convergência com o ajuste manual do corte (v2 da tela de revisão)
+
 Quando o veredito é `ambiguo_isolado`, a ação natural é **estender o trecho** — que é
 exatamente o **ajuste fino do corte pelo operador**, já registrado como v2 da spec-05. As
 duas frentes se encaixam: **o confronto diz "o corte ficou curto"; o ajuste manual permite
@@ -261,6 +304,14 @@ isso o prompt do confronto DEVE declarar explicitamente:
 - [ ] **Teste — extensão NÃO cabe**: a frase que resolve está longe (o trecho estendido
       passaria de 58 s) → mensagem diz que **não dá para consertar por extensão** (reprovar
       ou aceitar ciente), NUNCA "estenda".
+- [ ] **Teste — frase PARAFRASEADA pelo modelo** (não casa literal na transcrição): a busca
+      tolerante (`AcharAncora`) resolve; se nem assim casar, **degrada com honestidade**
+      ("não localizei onde — estenda ouvindo"), sem número inventado e **sem falhar em
+      silêncio**. É o precedente do bug da `frase_ancora`.
+- [ ] **Teste — estender para trás recalcula o hook**: com `lado = "antes"`, o hook passa a
+      ser a primeira frase a partir do NOVO start (mesma regra da Fase 3), e o
+      `cmd/auditar` continua reportando o trecho como fiel (invariante "hook começa no
+      start" preservada — nada a afrouxar no auditor).
 - [ ] **Teste — trecho garbled pelo ASR** (ex.: termo hebraico corrompido tipo "chiva ou
       chuva", mensagem no geral correta): classe esperada `provavel_erro_transcricao`,
       **nunca** `desalinhamento`.

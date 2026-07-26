@@ -381,6 +381,14 @@ natural e **estender o corte**. Ou seja: **o confronto diz que o corte ficou cur
 ajuste manual permite consertar.** Sem o ajuste, o operador so pode REPROVAR um trecho cujo
 conteudo e bom, o que e desperdicio. As duas frentes se encaixam e valem em sequencia.
 
+**Contrato ao ESTENDER (decidido na spec-14, vale para este ajuste):** se o operador move o
+START para tras, o trecho passa a comecar com outras palavras, entao o **hook e RECALCULADO**
+(`hook = primeira frase a partir do novo start`) — a mesma regra que a Fase 3 ja aplica
+quando o trecho cresce para tras. Duas consequencias aqui na tela: (a) o **card tem que
+atualizar** hook, duracao e texto falado assim que o trecho e ajustado — nao pode seguir
+mostrando o hook que o operador aprovou antes; (b) o `cmd/auditar` (spec-16) **nao precisa
+mudar**: sua invariante "o hook comeca exatamente no start" continua valida por construcao.
+
 ## Nota
 
 Esta interface e a porta de entrada do operador leigo. Com ela, o pipeline (specs 02-04,
