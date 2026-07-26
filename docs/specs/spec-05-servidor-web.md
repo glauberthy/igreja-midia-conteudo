@@ -188,8 +188,11 @@ Decisoes (nao reabrir):
 Ao aprovar, o servidor dispara em background: baixar o video dos aprovados -> renderizar ->
 listar os finais. Decisoes:
 
-- **Implementado hoje: janela CONTIGUA** `[menor start aprovado, maior end aprovado]` via
-  `--download-sections`. Origem inequivoca; mas LENTO (ver medicao).
+- **IMPLEMENTADO: baixa o VIDEO INTEIRO com o downloader nativo paralelo**
+  (`--concurrent-fragments 8`, sem `--download-sections`) e corta local no render. Substituiu
+  a janela contigua por decisao de medicao (abaixo). Contrato: `origemVideoCompleto = 0` — o
+  arquivo comeca no inicio do video, entao o render corta em tempo ABSOLUTO, sem calculo de
+  origem a propagar. `download.BaixarVideoCompleto`.
 
 - **MEDIDO (com runtime JS instalado): o fator dominante e PARALELISMO, nao assinatura nem
   travessia.** Todas as abordagens medidas no mesmo sermao (`IxmiQGL9CMQ`, 46 min, yt-dlp
@@ -241,11 +244,57 @@ listar os finais. Decisoes:
   saida no re-encode que o render ja faz) e cobrir com teste de duracao/posicao. Ver tambem
   a nota do `--force-keyframes-at-cuts` abaixo.
 
-- **Alinhamento de tempo do CONTIGUO atual (ate (B) entrar).** O `video.mp4` comeca em t=0 no
-  **menor start aprovado**, NAO em `ped.Inicio`. O render recebe a origem explicita
-  (`video.RenderizarComOrigem`, origem = menor start, piso ao segundo) e corta cada trecho em
-  `start - origemMs`. Testado: `janelaDownload` (servidor) e `TestRenderizarComOrigemAlinhaCorte`
-  (o `-ss` do ffmpeg bate exato). Com (B), a origem vira 0 e some o calculo.
+- **Alinhamento de tempo (como ficou).** Servidor: video inteiro -> `origemVideoCompleto = 0`
+  -> o render corta em tempo ABSOLUTO. CLI (`cmd/baixar` + `cmd/render`): o video.mp4 e a
+  janela `[ped.Inicio, ped.Fim]`, entao a origem e `ped.Inicio` (`video.Renderizar`, que
+  chama `RenderizarComOrigem` com essa origem). As duas origens convivem porque o render
+  recebe a origem EXPLICITA; testado em `TestRenderizarComOrigemAlinhaCorte` (o `-ss` do
+  ffmpeg bate exato nos dois casos) e no fluxo do servidor (`TestFaseHeavyFluxoCompleto`
+  exige origem 0).
+## Limitacao de ORIGEM: a qualidade do Short e limitada pela transmissao, nao pelo pipeline
+
+Dado do dono: as transmissoes da igreja sao no maximo **720p**. Isso poe um teto que NENHUM
+ajuste de codigo remove:
+
+| fonte | pixels reais do corte 9:16 (centro) | saida | ampliacao |
+|---|---|---|---|
+| **720p (hoje)** | **405 x 720** | 1080x1920 | ~2,7x em area |
+| 1080p | 608 x 1080 | 1080x1920 | ~1,2x em area |
+
+O Short e um corte 9:16 do CENTRO do quadro: de 1280x720 sobram so 405x720 pixels reais,
+esticados para 1080x1920 — **mais da metade dos pixels do Short e interpolada**. E o que
+explica a leve moleza percebida nos frames, principalmente no rosto.
+
+- **Mitigacao no codigo (feita):** o escalador passou a ser `flags=lanczos` (o bicubico
+  padrao e mais macio em ampliacao). Custo medido: **zero** — 3,03 s com lanczos contra
+  3,05 s com bicubico, num Short de 40 s. Ganho visivel em traco fino (cabelo, sobrancelha,
+  rugas); ver `frames-teste/comparar_lanczos.png`.
+- **A melhoria de MAIOR impacto esta FORA do codigo: a igreja transmitir em 1080p.** Isso
+  daria 2,25x mais pixels REAIS no corte — muito acima de qualquer ganho de filtro. Fica
+  registrado aqui para nao se perder: quando houver conversa sobre equipamento/OBS da
+  transmissao, esta e a alavanca.
+- O seletor de formato ja esta preparado (`bv*[height<=1080]`, ver `download.FormatoPadrao`):
+  hoje pega 720p porque e o que existe; no dia em que a transmissao subir, o pipeline
+  aproveita sozinho, sem mudar codigo.
+
+### Resolucao de saida: manter 1080x1920 (decidido, com medicao)
+
+Avaliado emitir 720x1280 (mais proximo do nativo) e deixar a plataforma escalar. Medido no
+mesmo Short de 40 s: **720x1280 = 1,66 s** contra **1080x1920 = 3,03 s** (~1,8x mais rapido,
+arquivo 48% menor). Mesmo assim, **manter 1080x1920**:
+
+1. **Legenda e logo NAO sao upscale — sao rasterizados na resolucao de saida.** O video ja
+   perdeu (e upscale de 405px de qualquer forma), mas o TEXTO da legenda e a logo sao
+   desenhados nativamente no frame final. Em 1080x1920 eles saem nitidos de verdade; em
+   720x1280 seriam rasterizados menores e a plataforma os ampliaria — texto borrado, que e
+   o elemento mais visivel do Short. Emitir 1080 preserva a nitidez do que ainda TEMOS em
+   resolucao nativa.
+2. **As plataformas favorecem largura >= 1080** (perfil de entrega/bitrate melhor).
+3. **O custo nao importa no total:** 1,4 s por Short e ruido perto do download; o render
+   inteiro ja e ~3 s.
+
+## Nota do `--force-keyframes-at-cuts`
+
 - **`--force-keyframes-at-cuts` e a origem do arquivo (contrato de tempo, qualquer
   abordagem).** A doc do yt-dlp: com essa flag ele forca keyframes nos pontos de corte AO
   CUSTO DE RECODIFICAR — em troca, o arquivo comeca EXATAMENTE no tempo pedido, entao a
