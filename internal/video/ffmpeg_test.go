@@ -22,6 +22,37 @@ const transcricaoFixture = `[01:30:10] Deus nos criou para viver em comunhão co
 [01:31:16] Por isso descansa e confia no Senhor em toda a tua jornada.
 `
 
+// O -ss tem que vir ANTES do -i. É seek por índice (salta direto); depois do -i, o ffmpeg
+// DECODIFICA tudo até o ponto e descarta. Isso passou a importar muito quando a fase pesada
+// virou "vídeo inteiro + tempo absoluto": o corte de um trecho aos 22 min busca 1318 s
+// dentro de um arquivo de 46 min. Medido no vídeo real: -ss antes = 2,55 s (e 2,52 s aos
+// 40 min — o offset não custa nada); -ss depois = 20,74 s e 183 s de CPU (8x mais lento).
+// É a mesma lição do download (issue #686 do yt-dlp), agora em arquivo local.
+func TestArgsFFmpegSeekAntesDoInput(t *testing.T) {
+	args := ArgsFFmpeg("video.mp4", "logo.png", "out.mp4", 1318000, 32000, "[0:v]null[vout]", true)
+
+	posSS, posI := -1, -1
+	for i, a := range args {
+		if a == "-ss" && posSS == -1 {
+			posSS = i
+		}
+		if a == "-i" && posI == -1 {
+			posI = i
+		}
+	}
+	if posSS == -1 || posI == -1 {
+		t.Fatalf("faltou -ss ou -i nos args: %v", args)
+	}
+	if posSS > posI {
+		t.Errorf("-ss (pos %d) DEPOIS do -i (pos %d): o ffmpeg decodificaria tudo até o ponto "+
+			"em vez de saltar pelo índice — 8x mais lento com offset grande. Args: %v", posSS, posI, args)
+	}
+	// E o valor do -ss é o offset pedido (aqui em tempo absoluto: 1318 s).
+	if args[posSS+1] != "1318.000" {
+		t.Errorf("-ss = %q, quero 1318.000", args[posSS+1])
+	}
+}
+
 func TestArgsFFmpegSemLogoUsaVf(t *testing.T) {
 	args := ArgsFFmpeg("trabalho/x/video.mp4", "", "finalizados/x/short_01.mp4", 65000, 30000, "crop=ih*9/16:ih,scale=1080:1920", false)
 	joined := strings.Join(args, " ")
