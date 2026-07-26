@@ -78,7 +78,7 @@ func TestMontarFiltroSimplesSemLogoNemGradiente(t *testing.T) {
 	if complexo {
 		t.Error("sem logo nem gradiente deveria ser -vf simples")
 	}
-	if !strings.HasPrefix(f, "crop=ih*9/16:ih,scale=1080:1920,setsar=1,drawtext=") {
+	if !strings.HasPrefix(f, "crop=ih*9/16:ih,scale=1080:1920:flags=lanczos,setsar=1,drawtext=") {
 		t.Errorf("cadeia -vf inesperada: %s", f)
 	}
 	if !strings.Contains(f, "y=h-240-text_h") || !strings.Contains(f, "text_align=C") {

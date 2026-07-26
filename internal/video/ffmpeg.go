@@ -404,8 +404,15 @@ type GradConfig struct {
 func (g GradConfig) ativo() bool { return g.Alpha > 0 && g.Altura > 0 }
 
 // filtroBase é o reenquadramento comum: crop central 9:16 + scale para 1080x1920.
+//
+// flags=lanczos, não o bicúbico padrão do swscale: aqui SEMPRE ampliamos. A transmissão da
+// igreja é 720p, e o corte 9:16 do centro rende só 405x720 pixels reais, esticados para
+// 1080x1920 — ~2,7x em área, mais da metade dos pixels do Short é interpolada. O bicúbico
+// é mais macio nessa ampliação (borra traços finos, especialmente o rosto); o lanczos
+// preserva mais detalhe, ao custo desprezível no tempo de render (medido). Ver a nota sobre
+// a limitação de origem na spec-05: o teto de qualidade é a transmissão, não o pipeline.
 func filtroBase() string {
-	return fmt.Sprintf("crop=ih*9/16:ih,scale=%d:%d,setsar=1", larguraSaida, alturaSaida)
+	return fmt.Sprintf("crop=ih*9/16:ih,scale=%d:%d:flags=lanczos,setsar=1", larguraSaida, alturaSaida)
 }
 
 // drawtextFiltros (lógica pura) monta a cadeia de drawtext (um por bloco de legenda),
