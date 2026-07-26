@@ -165,6 +165,99 @@ func TestBaixarTempoInvalido(t *testing.T) {
 	}
 }
 
+// --- Anti-bot / 429: erro nomeado + retry com espera crescente ---
+
+// capturaRetryDownload troca o log e o sleep durante o teste (não espera de verdade) e
+// devolve os logs e as esperas praticadas.
+func capturaRetryDownload(t *testing.T) (*[]string, *[]time.Duration) {
+	t.Helper()
+	var logs []string
+	var esperas []time.Duration
+	logOrig, dormirOrig := LogTentativaDownload, dormir
+	LogTentativaDownload = func(m string) { logs = append(logs, m) }
+	dormir = func(d time.Duration) { esperas = append(esperas, d) }
+	t.Cleanup(func() { LogTentativaDownload, dormir = logOrig, dormirOrig })
+	return &logs, &esperas
+}
+
+func TestBaixarAntiBotRefazComEsperaCrescente(t *testing.T) {
+	_, esperas := capturaRetryDownload(t)
+	base := t.TempDir()
+	n := 0
+	fx := &fakeExec{handler: func(dir string, args []string) ([]byte, error) {
+		if ehLegenda(args) {
+			n++
+			if n < 3 { // 2 primeiras: anti-bot; 3ª: sucesso
+				return []byte("ERROR: [youtube] xyz: Sign in to confirm you’re not a bot."), errors.New("exit status 1")
+			}
+			return nil, os.WriteFile(filepath.Join(dir, "legenda.pt.srt"), []byte(srtExemplo), 0644)
+		}
+		return nil, os.WriteFile(filepath.Join(dir, "video.mp4"), []byte("mp4"), 0644)
+	}}
+	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
+
+	if err := b.Baixar(context.Background(), pedidoTeste("antibot")); err != nil {
+		t.Fatalf("deveria suceder na 3ª tentativa: %v", err)
+	}
+	// Espera CRESCENTE entre as tentativas (30s, 60s) — não insiste rápido demais.
+	if len(*esperas) != 2 || (*esperas)[0] != 30*time.Second || (*esperas)[1] != 60*time.Second {
+		t.Errorf("esperas = %v, quero [30s 60s] (crescente)", *esperas)
+	}
+}
+
+func TestBaixarAntiBotEsgotaComErroNomeado(t *testing.T) {
+	capturaRetryDownload(t)
+	base := t.TempDir()
+	fx := &fakeExec{handler: func(dir string, args []string) ([]byte, error) {
+		return []byte("ERROR: HTTP Error 429: Too Many Requests"), errors.New("exit status 1")
+	}}
+	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
+
+	ped := pedidoTeste("antibot2")
+	err := b.Baixar(context.Background(), ped)
+	if !errors.Is(err, ErrAntiBot) {
+		t.Fatalf("esperava ErrAntiBot, veio: %v", err)
+	}
+	// A mensagem tem que NOMEAR o problema (o operador precisa entender e saber o que fazer).
+	if !strings.Contains(ped.Erro, "anti-robô") || !strings.Contains(ped.Erro, "aguarde") {
+		t.Errorf("mensagem não nomeia o problema nem orienta: %q", ped.Erro)
+	}
+}
+
+// Erro definitivo (vídeo indisponível) NÃO é refeito — insistir não ajudaria.
+func TestBaixarErroDefinitivoNaoRefaz(t *testing.T) {
+	_, esperas := capturaRetryDownload(t)
+	base := t.TempDir()
+	chamadas := 0
+	fx := &fakeExec{handler: func(dir string, args []string) ([]byte, error) {
+		chamadas++
+		return []byte("ERROR: [youtube] xyz: Video unavailable"), errors.New("exit status 1")
+	}}
+	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
+	if err := b.Baixar(context.Background(), pedidoTeste("indisp2")); !errors.Is(err, ErrVideoIndisponivel) {
+		t.Fatalf("esperava ErrVideoIndisponivel, veio: %v", err)
+	}
+	if chamadas != 1 || len(*esperas) != 0 {
+		t.Errorf("erro definitivo não deveria ser refeito: %d chamadas, esperas %v", chamadas, *esperas)
+	}
+}
+
+func TestAntiBotDetecta(t *testing.T) {
+	casos := map[string]bool{
+		"ERROR: HTTP Error 429: Too Many Requests":                         true,
+		"Sign in to confirm you’re not a bot":                              true, // apóstrofo tipográfico
+		"Sign in to confirm you're not a bot":                              true, // apóstrofo simples
+		"WARNING: [youtube] Unable to download webpage: Too Many Requests": true,
+		"ERROR: [youtube] xyz: Video unavailable":                          false,
+		"": false,
+	}
+	for entrada, quer := range casos {
+		if got := antiBot([]byte(entrada)); got != quer {
+			t.Errorf("antiBot(%q) = %v, quero %v", entrada, got, quer)
+		}
+	}
+}
+
 func TestBaixarVideoIndisponivel(t *testing.T) {
 	base := t.TempDir()
 	fx := &fakeExec{handler: func(dir string, args []string) ([]byte, error) {

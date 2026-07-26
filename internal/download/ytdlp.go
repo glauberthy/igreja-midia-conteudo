@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"srtclean/internal/pipeline"
 	"srtclean/internal/transcricao"
@@ -29,7 +30,73 @@ var (
 	ErrSemLegenda        = errors.New("vídeo sem legenda automática pt (DP-001: não transcrevemos localmente)")
 	ErrVideoIndisponivel = errors.New("vídeo indisponível (privado, removido ou restrito)")
 	ErrTempoInvalido     = errors.New("tempos inválidos: use HH:MM:SS com fim maior que início")
+	// ErrAntiBot: o YouTube pediu verificação (HTTP 429 / "Sign in to confirm you're not
+	// a bot"). É temporário e some sozinho depois de alguns minutos — merece uma mensagem
+	// que NOMEIE o problema, senão vira um erro genérico e o operador não sabe o que fazer.
+	ErrAntiBot = errors.New("o YouTube pediu verificação anti-robô (limite de requisições); aguarde alguns minutos e tente novamente")
 )
+
+// Retry do download (independente do retry do modelo, spec-08): o anti-bot do YouTube é
+// TEMPORÁRIO, então esperar e refazer costuma resolver sozinho. Espera CRESCENTE para não
+// insistir rápido demais — insistir prolonga o bloqueio.
+const (
+	maxTentativasDownload = 3
+	esperaBaseDownload    = 30 * time.Second // 1ª espera; dobra a cada tentativa (30s, 60s)
+)
+
+// LogTentativaDownload registra cada tentativa que falhou (visível ao operador). Variável
+// para os testes capturarem; em produção escreve no stderr.
+var LogTentativaDownload = func(msg string) { fmt.Fprintln(os.Stderr, msg) }
+
+// dormir é injetável nos testes (evita esperar de verdade).
+var dormir = time.Sleep
+
+// antiBot procura, no stderr do yt-dlp, as marcas de verificação anti-robô/limite.
+func antiBot(stderr []byte) bool {
+	s := strings.ToLower(string(stderr))
+	for _, marca := range []string{
+		"http error 429",
+		"too many requests",
+		"sign in to confirm you're not a bot",
+		"sign in to confirm you’re not a bot", // apóstrofo tipográfico (o yt-dlp usa este)
+		"confirm you are not a bot",
+	} {
+		if strings.Contains(s, marca) {
+			return true
+		}
+	}
+	return false
+}
+
+// comRetry roda `passo` até maxTentativasDownload, refazendo APENAS quando o erro é
+// anti-bot/429 (temporário), com espera crescente entre as tentativas. Outros erros
+// (vídeo indisponível, tempo inválido) falham na hora — refazer não ajudaria.
+func comRetry(ctx context.Context, rotulo string, passo func() error) error {
+	var err error
+	for tentativa := 1; tentativa <= maxTentativasDownload; tentativa++ {
+		err = passo()
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, ErrAntiBot) {
+			return err // erro definitivo: não insiste
+		}
+		if tentativa == maxTentativasDownload {
+			break
+		}
+		espera := esperaBaseDownload * time.Duration(1<<(tentativa-1)) // 30s, 60s
+		LogTentativaDownload(fmt.Sprintf(
+			"%s: tentativa %d falhou (verificação anti-robô do YouTube); aguardando %s antes de refazer…",
+			rotulo, tentativa, espera))
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		dormir(espera)
+	}
+	return fmt.Errorf("%s: %w (após %d tentativas)", rotulo, ErrAntiBot, maxTentativasDownload)
+}
 
 // Executor roda um comando externo e devolve stdout, stderr e o erro de execução.
 // É a costura que permite injetar um mock nos testes.
@@ -132,13 +199,22 @@ func (b *Baixador) baixarLegenda(ctx context.Context, ped *pipeline.Pedido) erro
 		return fmt.Errorf("criando pasta de trabalho: %w", err)
 	}
 
-	// Legenda automática pt (sem baixar o vídeo ainda).
-	_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsLegenda(ped.YouTubeURL, dir, b.subLangs())...)
-	if err != nil {
-		if indisponivel(stderr) {
-			return ErrVideoIndisponivel
+	// Legenda automática pt (sem baixar o vídeo ainda). Com retry no anti-bot (temporário).
+	err := comRetry(ctx, "baixando legenda", func() error {
+		_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsLegenda(ped.YouTubeURL, dir, b.subLangs())...)
+		if err != nil {
+			if antiBot(stderr) {
+				return ErrAntiBot
+			}
+			if indisponivel(stderr) {
+				return ErrVideoIndisponivel
+			}
+			return fmt.Errorf("baixando legenda: %w", err)
 		}
-		return fmt.Errorf("baixando legenda: %w", err)
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	srt, ok := acharSRT(dir)
@@ -201,14 +277,19 @@ func (b *Baixador) BaixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, 
 
 func (b *Baixador) baixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) error {
 	dir := filepath.Join(b.baseDir(), ped.ID)
-	_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsVideo(ped.YouTubeURL, inicio, fim, dir, b.Formato)...)
-	if err != nil {
-		if indisponivel(stderr) {
-			return ErrVideoIndisponivel
+	return comRetry(ctx, "baixando vídeo", func() error {
+		_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsVideo(ped.YouTubeURL, inicio, fim, dir, b.Formato)...)
+		if err != nil {
+			if antiBot(stderr) {
+				return ErrAntiBot
+			}
+			if indisponivel(stderr) {
+				return ErrVideoIndisponivel
+			}
+			return fmt.Errorf("baixando vídeo: %w", err)
 		}
-		return fmt.Errorf("baixando vídeo: %w", err)
-	}
-	return nil
+		return nil
+	})
 }
 
 // argsLegenda monta o yt-dlp para baixar SÓ a legenda automática (idioma subLangs), em .srt.

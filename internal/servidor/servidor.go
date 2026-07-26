@@ -554,6 +554,8 @@ func querJSON(r *http.Request) bool {
 // mensagemErroDownload traduz os erros do download em mensagens claras para o operador.
 func mensagemErroDownload(err error) string {
 	switch {
+	case errors.Is(err, download.ErrAntiBot):
+		return "o YouTube pediu verificação anti-robô (muitas requisições); aguarde alguns minutos e tente novamente"
 	case errors.Is(err, download.ErrSemLegenda):
 		return "este vídeo não tem legenda automática em português — sem legenda não dá para selecionar (não transcrevemos localmente)"
 	case errors.Is(err, download.ErrVideoIndisponivel):
