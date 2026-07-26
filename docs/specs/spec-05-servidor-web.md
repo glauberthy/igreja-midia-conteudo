@@ -48,9 +48,11 @@ certo, antes do processamento pesado.
      (ex.: "revisar fidelidade") -- o operador julga;
    - botoes **Aprovar** / **Reprovar**.
 4. **Confirmacao**: operador confirma o conjunto aprovado.
-5. **Fase pesada (baixar-video + cortar)**: so agora o sistema baixa o video (idealmente
-   so os trechos aprovados, via --download-sections do yt-dlp, se viavel; senao o video
-   inteiro) e renderiza (corte + 9:16 + legenda + logo). Status: baixando-video,
+5. **Fase pesada (baixar-video + cortar)**: so agora o sistema baixa o video e renderiza
+   (corte + 9:16 + legenda + logo). Baixa o **video INTEIRO** com o downloader nativo
+   paralelo e corta local — decidido POR MEDICAO (baixar so as janelas via
+   `--download-sections` levou 577 s contra 7,3 s do video inteiro; o gargalo e paralelismo,
+   nao volume). Ver "Fase pesada -- estrategia de download". Status: baixando-video,
    renderizando, concluido.
 6. **Entrega**: a pagina lista os Shorts de finalizados/<id>/ para baixar. O operador
    envia por WhatsApp Web (fora do sistema).
@@ -62,7 +64,8 @@ Dentro:
 - Orquestracao em duas fases separadas por aprovacao humana:
   - fase leve: baixar-legenda -> Selecionar (harness);
   - (pausa: aprovacao do operador);
-  - fase pesada: baixar-video (so aprovados, se viavel) -> Renderizar.
+  - fase pesada: baixar-video (o video INTEIRO, downloader nativo paralelo) -> Renderizar
+    (corta local os trechos aprovados, em tempo absoluto).
 - Player YouTube embutido (IFrame Player API) por trecho, tocando de start a end.
 - Maquina de estados do pedido cobrindo as duas fases + o estado de espera por aprovacao.
 - Rotas: GET / (pagina), POST /pedidos (cria; dispara fase leve), GET /pedidos/{id}
@@ -99,7 +102,7 @@ A primeira versao da tela de revisao era uma lista vertical com os 5 players car
 de uma vez. Tres problemas: peso (5 iframes do YouTube nao renderizam -- ficam pretos);
 nenhum estado visivel apos aprovar/reprovar; e o texto do trecho -- o artefato principal
 para julgar doutrina -- ficava abaixo do player. As decisoes abaixo redesenham a tela.
-Referencia visual/codigo: `docs/mockups/revisao-trechos_referecnia.html`.
+Referencia visual/codigo: `docs/mockups/revisao-trechos_referencia.html`.
 
 Decisoes (nao reabrir):
 
@@ -122,7 +125,8 @@ Decisoes (nao reabrir):
   `end-3s` a `end+2s`; inicio de `start-2s` a `start+3s`. Motivo: o corte as vezes termina
   no meio da frase (timestamp da legenda adianta o audio) -- em vez de assistir 46s, o
   operador ouve a emenda em ~5s.
-- **Alerta doutrinario em duas camadas, com tres niveis de intensidade.** Ambar na trilha
+- **Alerta doutrinario em duas camadas, com um tratamento por classe (quatro) em tres
+  niveis de intensidade.** Ambar na trilha
   (o operador ve antes de chegar que o trecho pede atencao) e uma faixa no card com o
   `motivo_revisao` em texto. Nunca esconder trechos marcados. Mas para nao cair em fadiga
   de alerta (⚠ em tudo deixa de ser alerta), a INTENSIDADE segue a classe do confronto
@@ -239,12 +243,12 @@ listar os finais. Decisoes:
     pode ser variacao de rede; uma amostra nao distingue, e a ordem de grandeza ja era a
     mesma. Nao atribuir ao runtime sem mais medicoes.
 
-  **Consequencia para a arquitetura (a decidir, nao implementado):** baixar **o video
-  inteiro com o downloader nativo paralelo** e o mais rapido E o contrato mais simples
-  (origem = inicio do video, tempo absoluto, sem calculo de origem). Baixar por segmento
-  (URLs efemeras do `-g`, mais requisicoes, mais risco de 429) **nao se paga em tempo** — o
-  ganho seria de disco, e disco e problema da **spec-06 (retencao/limpeza)**, que passa a ser
-  prioridade real: ~125 MB por pedido ficariam em `trabalho/<id>/`.
+  **Consequencia para a arquitetura (DECIDIDO e IMPLEMENTADO):** baixar **o video inteiro
+  com o downloader nativo paralelo** e o mais rapido E o contrato mais simples (origem =
+  inicio do video, tempo absoluto, sem calculo de origem). Baixar por segmento (URLs
+  efemeras do `-g`, mais requisicoes, mais risco de 429) **nao se paga em tempo** — o ganho
+  seria de disco, e disco e problema da **spec-06 (retencao/limpeza)**, que passa a ser
+  prioridade real: ~125 MB por pedido ficam em `trabalho/<id>/`.
 
   Riscos ja levantados do colapso download+render numa passada (se um dia for reconsiderado):
   URLs do `-g` sao temporarias e atadas ao IP (usar ja, re-resolver no retry, expiracao =
@@ -252,13 +256,21 @@ listar os finais. Decisoes:
   (perde diagnostico); o ajuste fino da v2 precisa de material em disco; duas entradas (v+a)
   exigem `-map` e `-ss` em cada.
 
-- **`-ss` do render precisa ser PRECISO em (B).** Com (A)+`--force-keyframes-at-cuts`, o
-  arquivo comeca exatamente no start pedido e o corte cai em `-ss` pequeno. Com (B), o render
-  faz `-ss <start absoluto>` sobre o video inteiro: como o `-ss` ANTES do `-i` salta para o
-  keyframe mais proximo, o corte pode comecar ate ~1 GOP (~8 s) antes do pedido. Na
-  implementacao de (B), garantir corte preciso (ex.: seek em dois estagios, ou `-ss` de
-  saida no re-encode que o render ja faz) e cobrir com teste de duracao/posicao. Ver tambem
-  a nota do `--force-keyframes-at-cuts` abaixo.
+- **`-ss` do render: preciso E rapido — MEDIDO, nao ha deslizamento.** O render faz
+  `-ss <start absoluto>` ANTES do `-i` sobre o video inteiro. Duas propriedades, ambas
+  verificadas:
+  - **Preciso.** Existe um mito de que `-ss` antes do `-i` "salta para o keyframe" e o corte
+    comeca ate ~1 GOP antes. Isso vale para **`-c copy`** (sem recodificar). O render
+    **RECODIFICA** (aplica crop/scale/legenda/logo): nesse caminho o ffmpeg faz o seek por
+    keyframe e entao **decodifica ate o instante exato** antes de comecar a codificar. Prova
+    medida: frame do `short_01` em t=0,5 s contra o frame do video original em 1318,5 s
+    (= o start aprovado) deu **PSNR 44,78 dB** (praticamente identico; o residuo e o
+    re-encode), enquanto a contraprova 32 s adiante deu 16,75 dB. **Nao houve deslizamento
+    algum.** NAO "consertar" isto — o comportamento medido esta correto.
+  - **Rapido.** O `-ss` antes do `-i` usa o indice do MP4 e salta: offset 5 s = 2,34 s,
+    offset 1318 s = 2,55 s, offset 2400 s = 2,52 s (o offset nao custa nada). Se alguem
+    mover o `-ss` para DEPOIS do `-i`, o ffmpeg decodifica tudo ate o ponto: 20,74 s / 183 s
+    de CPU — 8x mais lento. Travado por `TestArgsFFmpegSeekAntesDoInput`.
 
 - **Alinhamento de tempo (como ficou).** Servidor: video inteiro -> `origemVideoCompleto = 0`
   -> o render corta em tempo ABSOLUTO. CLI (`cmd/baixar` + `cmd/render`): o video.mp4 e a
@@ -309,18 +321,23 @@ arquivo 48% menor). Mesmo assim, **manter 1080x1920**:
 3. **O custo nao importa no total:** 1,4 s por Short e ruido perto do download; o render
    inteiro ja e ~3 s.
 
-## Nota do `--force-keyframes-at-cuts`
+## Nota historica: `--force-keyframes-at-cuts` (NAO se aplica a fase pesada atual)
 
-- **`--force-keyframes-at-cuts` e a origem do arquivo (contrato de tempo, qualquer
-  abordagem).** A doc do yt-dlp: com essa flag ele forca keyframes nos pontos de corte AO
-  CUSTO DE RECODIFICAR — em troca, o arquivo comeca EXATAMENTE no tempo pedido, entao a
-  origem e conhecida (= start pedido). **Sem a flag**, o corte da secao cai no keyframe mais
-  proximo ANTES do ponto -> a secao comeca antes do tempo pedido e a **origem do arquivo
-  desliza** (fica menor que o start pedido, por ate ~1 GOP). Isso quebraria o contrato: o
-  render assume origem = start pedido; se o arquivo comeca antes, o corte `start - origem`
-  fica deslocado. Consequencia para o desenho: se um dia trocarmos a flag por velocidade
-  (nao recodificar), a origem tem que ser MEDIDA do arquivo (ffprobe do 1o keyframe), nao
-  assumida. Hoje mantemos a flag — a origem e exata.
+**Nao vale mais para o servidor.** A flag so tem efeito quando o yt-dlp corta SECOES
+(`--download-sections`) — ela forca keyframes nos pontos de corte. A fase pesada baixa o
+**video inteiro**: nao ha secoes, nao ha cortes no download, a flag nao faria nada. Estado
+do codigo (conferido): `argsVideoCompleto` (servidor) **nao passa** a flag; `argsVideo`
+(caminho seccionado, usado pelo `cmd/baixar` no fluxo CLI) **passa** — e ali ela faz
+sentido. Nada a remover.
+
+**Registro para o caso de voltarmos a baixar por secao:** com a flag, o arquivo comeca
+EXATAMENTE no tempo pedido (ao custo de recodificar), entao a origem e conhecida (= start
+pedido). SEM a flag, o corte da secao cai no keyframe anterior e a **origem do arquivo
+desliza** (por ate ~1 GOP), quebrando o contrato de tempo — nesse caso a origem teria que
+ser MEDIDA do arquivo (ffprobe do 1o keyframe), nunca assumida.
+
+(Nao confundir com o `-ss` do RENDER, que e outro assunto e esta medido acima: ali o
+re-encode garante corte exato, sem deslizamento.)
 - **Erro nunca trava.** Falha no download ou no render -> pedido vai para `erro` com
   mensagem clara na tela (nunca fica eternamente em baixando-video). Um erro visivel e melhor
   que um spinner infinito.
@@ -338,7 +355,7 @@ arquivo 48% menor). Mesmo assim, **manter 1080x1920**:
 - [ ] A pagina lista os candidatos, cada um com player YouTube embutido tocando de start a
       end, hook/dur/score, alerta de revisao quando marcado, e botoes aprovar/reprovar.
 - [ ] POST /pedidos/{id}/aprovar dispara a fase pesada so para os aprovados.
-- [ ] A fase pesada baixa o video (so aprovados, se viavel) e renderiza; a pagina lista os
+- [ ] A fase pesada baixa o video INTEIRO (nativo paralelo) e renderiza; a pagina lista os
       Shorts finais para baixar.
 - [ ] O start/end do corte corresponde ao mesmo instante mostrado no player.
 - [ ] Erro em qualquer fase aparece na pagina com mensagem clara.

@@ -4,10 +4,11 @@
 
 Transformar a marcação genérica de fidelidade (`requer_revisao_reforcada` com um motivo
 vago) num **veredito focado e citável** para os poucos trechos que a Fase 4 já suspeitou.
-Uma fase nova roda SÓ nesses trechos, confronta cada um com a Declaração Doutrinária e
-classifica: **fiel**, **desalinhamento** (com o ponto citado) ou **provável erro de
-transcrição** (ASR). O resultado **enriquece** a marcação que já vai ao operador — nunca
-descarta.
+Uma fase nova roda SÓ nesses trechos e confronta cada um com a Declaração Doutrinária —
+mas **com o contexto ao redor**, que é o que a Fase 4 não tem. Classifica em quatro:
+**fiel**, **ambíguo isolado** (o sermão resolve → o problema é o CORTE, não a doutrina),
+**desalinhamento** (com o ponto citado) ou **provável erro de transcrição** (ASR). O
+resultado **enriquece** a marcação que já vai ao operador — nunca descarta.
 
 ## Contexto
 
@@ -91,8 +92,6 @@ Fora:
 
 ## Contrato
 
-Saída do modelo por trecho (JSON, validada com retry — spec-08):
-
 Entrada por trecho marcado (o contexto é o que torna esta fase diferente da Fase 4):
 
 ```
@@ -112,9 +111,19 @@ Saída (JSON, validada com retry — spec-08):
 {
   "classe": "fiel" | "ambiguo_isolado" | "desalinhamento" | "provavel_erro_transcricao",
   "ponto_citado": "<ponto/tema da Declaração, obrigatório se desalinhamento; senão vazio>",
+  "onde_resolve": {                    // obrigatório se ambiguo_isolado; senão ausente
+    "frase": "<a frase do CONTEXTO que desambigua — copiada literalmente>",
+    "lado":  "antes" | "depois"
+  },
   "motivo": "<explicação curta e legível para o pastor>"
 }
 ```
+
+**Por que `onde_resolve` é obrigatório em `ambiguo_isolado`:** sem ele, o operador recebe
+"estenda" e precisa **caçar até onde** — e a classe nova vira só marginalmente melhor que o
+⚠ vago que ela veio substituir. O modelo **já leu o contexto**; devolver a frase que resolve
+não custa nada e transforma a mensagem em algo acionável: *"estenda até 'X'"*. O `lado` diz
+se é para estender o início (antes) ou o fim (depois).
 
 As quatro classes, e o que cada uma significa para a AÇÃO do operador:
 
@@ -127,11 +136,13 @@ As quatro classes, e o que cada uma significa para a AÇÃO do operador:
 
 Efeito no candidato (`validacao.Candidato`), mantendo `requer_revisao_reforcada = true`.
 O candidato passa a carregar **a classe do confronto** (`classe_revisao`) além do
-`motivo_revisao` enriquecido — é a classe que dirige a EXIBIÇÃO em três níveis (ver
-abaixo e a spec-05). Sem confronto (não implementado ainda, ou trecho não marcado), a
-classe fica vazia e a exibição cai no comportamento atual (⚠ genérico).
+`motivo_revisao` enriquecido — é a classe que dirige a EXIBIÇÃO (quatro tratamentos: um por
+classe; ver abaixo e a spec-05). Sem confronto (não implementado ainda, ou trecho não
+marcado), a classe fica vazia e a exibição cai no comportamento atual (⚠ genérico).
 - `desalinhamento` → `motivo_revisao = "desalinhamento doutrinário: <ponto_citado> — <motivo>"`.
-- `ambiguo_isolado` → `motivo_revisao = "o corte ficou curto: o sermão esclarece logo depois/antes — considere estender o trecho — <motivo>"`.
+- `ambiguo_isolado` → depende de a extensão CABER na faixa de 30–58 s (cálculo do código,
+  ver seção adiante): cabe → `"o corte ficou curto: estenda até '<frase>' (+Ns, total ~Ms)"`;
+  não cabe → `"ambíguo isolado, mas não dá para consertar por extensão (ficaria ~Ms): reprove ou aceite ciente"`.
 - `provavel_erro_transcricao` → `motivo_revisao = "provável erro de transcrição (não doutrina): <motivo>"`.
 - `fiel` → `motivo_revisao = "conferido: sem problema doutrinário aparente — <motivo>"`.
 
@@ -147,7 +158,29 @@ func Fase6Confronto(ctx, modelo ModeloLLM, declaracao, transcricao string,
     finais []validacao.Candidato) ([]validacao.Candidato, []VeredictoConfronto)
 ```
 
-### Convergência com o ajuste manual do corte (v2 da tela de revisão)
+### Estender CABE na faixa? — isso é CÓDIGO, não modelo
+
+Dizer "estenda" sem verificar se a extensão **cabe** produz um conselho impossível. Se a
+frase que resolve está 40 s adiante, estender jogaria o Short para ~70 s — **fora da faixa
+de 30–58 s** (spec-07/Fase 3). O veredito honesto aí não é "estenda", é "não dá para
+consertar por extensão".
+
+Divisão de trabalho (a mesma que organiza o projeto — regra nº 5):
+- **o modelo diz ONDE resolve** (`onde_resolve.frase` + `lado`) — é julgamento;
+- **o código calcula SE cabe** — é aritmética: localiza a frase no `Frasear` (mesmo
+  casamento do `AcharAncora`), pega o timestamp dela e compara com o `start`/`end` atual:
+  `duracao_estendida = (fim_da_frase_que_resolve) - start` (ou `end - inicio_da_frase`, se
+  `lado = antes`). Cabe se ficar em **30–58 s**.
+
+Os dois desfechos, na mensagem ao operador:
+
+| cabe na faixa? | `motivo_revisao` (mensagem) |
+|---|---|
+| **sim** | "o corte ficou curto: estenda até *'<frase>'* (+Ns, total ~Ms) — o sermão esclarece ali" |
+| **não** | "ambíguo isolado, mas **não dá para consertar por extensão** (ficaria ~Ms, acima de 58 s): reprove, ou aceite ciente da ambiguidade" |
+
+Sem esse cálculo, metade dos `ambiguo_isolado` viraria orientação inexequível — e o operador
+aprenderia a ignorar a classe, exatamente o que a spec quer evitar.
 
 Quando o veredito é `ambiguo_isolado`, a ação natural é **estender o trecho** — que é
 exatamente o **ajuste fino do corte pelo operador**, já registrado como v2 da spec-05. As
@@ -163,8 +196,9 @@ continua com ⚠ forte mesmo depois de conferido, a marcação nunca diminui e o
 entra em **fadiga de alerta**: vê ⚠ em tudo, aprende que quase nunca é nada, e passa a
 ignorar inclusive quando importa. Um alerta que sempre aparece deixa de ser alerta.
 
-Solução: a flag permanece (nada some), mas a **classe do confronto** define **três níveis
-de exibição** — na trilha e no card da tela de revisão (spec-05):
+Solução: a flag permanece (nada some), mas a **classe do confronto** define **um tratamento
+de exibição por classe** (quatro no total) — na trilha e no card da tela de revisão
+(spec-05), em três NÍVEIS de intensidade (alto / médio-com-ação / baixo):
 
 | classe | nível | como aparece |
 |---|---|---|
@@ -214,9 +248,19 @@ isso o prompt do confronto DEVE declarar explicitamente:
 - [ ] Sinalizados persistidos em `trabalho/<id>/revisao-teologica.json`.
 - [ ] Prompt contém a guarda anti-falso-positivo, **incluindo** a instrução explícita de que
       o veredito é sobre o TRECHO e não sobre o sermão (o contexto só desambigua).
+- [ ] **`onde_resolve` obrigatório em `ambiguo_isolado`** (frase copiada do contexto + lado);
+      se o modelo devolver a classe sem a frase, é formato inválido → retry (spec-08).
+- [ ] **A viabilidade da extensão é calculada em CÓDIGO** (localiza a frase no `Frasear`,
+      compara com start/end, checa a faixa de 30–58 s) — o modelo NÃO decide se cabe.
 - [ ] **Teste — ambíguo isolado, resolvido no contexto** (o trecho sozinho sugere algo que o
       pregador esclarece logo em seguida): classe esperada **`ambiguo_isolado`**, **nunca**
       `desalinhamento` — e **nunca** `fiel` (publicar como está ainda é problema, de corte).
+      Com `onde_resolve` preenchido.
+- [ ] **Teste — extensão CABE**: a frase que resolve está logo à frente → mensagem manda
+      estender e cita a frase (e o total estimado fica em 30–58 s).
+- [ ] **Teste — extensão NÃO cabe**: a frase que resolve está longe (o trecho estendido
+      passaria de 58 s) → mensagem diz que **não dá para consertar por extensão** (reprovar
+      ou aceitar ciente), NUNCA "estenda".
 - [ ] **Teste — trecho garbled pelo ASR** (ex.: termo hebraico corrompido tipo "chiva ou
       chuva", mensagem no geral correta): classe esperada `provavel_erro_transcricao`,
       **nunca** `desalinhamento`.
