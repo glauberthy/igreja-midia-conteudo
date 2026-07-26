@@ -32,11 +32,30 @@ doutrinário dos trechos marcados").
 Dentro:
 - Uma **nova fase no harness** (**Fase 6 — Confronto doutrinário**), que roda **só nos
   trechos com `requer_revisao_reforcada = true`** (tipicamente 0–2 por sermão).
-- Por trecho marcado: uma chamada ao modelo com **o texto do trecho + a Declaração
-  Doutrinária**, pedindo uma classificação estruturada (contrato abaixo).
+- Por trecho marcado: uma chamada ao modelo com **o trecho DENTRO do seu contexto**
+  (`contexto-antes → TRECHO → contexto-depois`) + a Declaração Doutrinária, pedindo uma
+  classificação estruturada (contrato abaixo).
 - **Enriquecer** o `motivo_revisao` do candidato com o veredito (específico e citável) e
   **persistir** os sinalizados num arquivo auditável por pedido.
 - Guarda anti-falso-positivo embutida no prompt (obrigatória — ver Decisões).
+
+### Por que CONTEXTO é o ponto central desta spec (correção de desenho)
+
+A primeira versão desta spec mandava ao modelo **apenas o trecho + a Declaração**. Isso era
+um erro: **a Fase 4 já julga o trecho isolado**. Repetir o mesmo material com outro prompt é
+*a mesma lente apontada de novo* — o modelo continua sem saber se o pregador esclareceu a
+questão vinte segundos depois. É exatamente a raiz dos falsos positivos que observamos (o
+caso do João 17).
+
+O que muda o jogo é dar o **entorno**: `±60–90 s` de transcrição antes e depois do trecho
+(algumas centenas de tokens por lado — barato, e roda em 0–2 trechos por sermão). Com o
+entorno, o confronto passa a distinguir duas coisas que hoje chegam como **o mesmo ⚠ vago**:
+
+- o trecho é ambíguo sozinho, **mas o sermão resolve** → o problema é **o CORTE**, não a
+  doutrina. O pregador está certo; a janela ficou curta. Ação: **estender o trecho**.
+- o trecho é problemático **mesmo com o contexto** → preocupação **doutrinária** real.
+
+Essa é a distinção "conteúdo ruim" × "corte ruim", que o sistema hoje não faz.
 
 Fora:
 - **Não** roda nos trechos não marcados (custo e ruído desnecessários).
@@ -58,6 +77,14 @@ Fora:
   humano decide. O que muda é o `motivo_revisao`, que fica específico.
 - **A Declaração já está no cache de prompt da Fase 4** (mesmo prefixo de sistema), então
   o confronto é barato.
+- **Entra com CONTEXTO (±60–90 s de cada lado), não com o trecho isolado** — é o que
+  diferencia esta fase da Fase 4 (ver seção acima). O contexto sai da mesma transcrição
+  desduplicada (`harness.Frasear`/`TranscricaoLinear`), recortado por tempo em torno de
+  `[start, end]`; nas bordas do sermão, o que houver.
+- **O veredito é sobre o TRECHO, não sobre o sermão.** O contexto serve SÓ para desambiguar
+  a intenção do pregador. Um trecho "resolvido no contexto" CONTINUA sendo problema de
+  publicação — só de outro tipo (corte, não conteúdo), porque é o trecho que vai ao ar
+  isolado. Instrução explícita no prompt (ver guarda).
 - **Guarda anti-falso-positivo é obrigatória** (ver seção própria).
 - **É modelo confrontando modelo** — reduz erro com uma lente nova, NÃO adiciona uma fonte
   de verdade. Registrar essa ressalva no output e na doc.
@@ -66,13 +93,37 @@ Fora:
 
 Saída do modelo por trecho (JSON, validada com retry — spec-08):
 
+Entrada por trecho marcado (o contexto é o que torna esta fase diferente da Fase 4):
+
+```
+## CONTEXTO ANTES (não julgar; só para entender a intenção)
+<±60–90 s de transcrição antes do start>
+
+## TRECHO (é ISTO que vai ao ar isolado — o veredito é sobre ele)
+<texto do trecho>
+
+## CONTEXTO DEPOIS (não julgar; só para entender a intenção)
+<±60–90 s de transcrição depois do end>
+```
+
+Saída (JSON, validada com retry — spec-08):
+
 ```
 {
-  "classe": "fiel" | "desalinhamento" | "provavel_erro_transcricao",
+  "classe": "fiel" | "ambiguo_isolado" | "desalinhamento" | "provavel_erro_transcricao",
   "ponto_citado": "<ponto/tema da Declaração, obrigatório se desalinhamento; senão vazio>",
   "motivo": "<explicação curta e legível para o pastor>"
 }
 ```
+
+As quatro classes, e o que cada uma significa para a AÇÃO do operador:
+
+| classe | significado | ação natural |
+|---|---|---|
+| `fiel` | ok isolado e no contexto | aprovar |
+| **`ambiguo_isolado`** | **o sermão resolve, o fragmento sozinho não** → problema de **CORTE** | **estender o trecho** |
+| `desalinhamento` | problemático **mesmo com o contexto** → doutrina | revisar com atenção (ponto citado) |
+| `provavel_erro_transcricao` | ruído de ASR, não doutrina | conferir o texto/legenda |
 
 Efeito no candidato (`validacao.Candidato`), mantendo `requer_revisao_reforcada = true`.
 O candidato passa a carregar **a classe do confronto** (`classe_revisao`) além do
@@ -80,6 +131,7 @@ O candidato passa a carregar **a classe do confronto** (`classe_revisao`) além 
 abaixo e a spec-05). Sem confronto (não implementado ainda, ou trecho não marcado), a
 classe fica vazia e a exibição cai no comportamento atual (⚠ genérico).
 - `desalinhamento` → `motivo_revisao = "desalinhamento doutrinário: <ponto_citado> — <motivo>"`.
+- `ambiguo_isolado` → `motivo_revisao = "o corte ficou curto: o sermão esclarece logo depois/antes — considere estender o trecho — <motivo>"`.
 - `provavel_erro_transcricao` → `motivo_revisao = "provável erro de transcrição (não doutrina): <motivo>"`.
 - `fiel` → `motivo_revisao = "conferido: sem problema doutrinário aparente — <motivo>"`.
 
@@ -87,12 +139,22 @@ Persistência (auditável): `trabalho/<id>/revisao-teologica.json` com a lista
 `{start, end, hook, classe, ponto_citado, motivo}` dos trechos confrontados. Opcional: um
 `.md` legível agregando os sinalizados.
 
-Assinatura sugerida (a confirmar na implementação):
+Assinatura sugerida (a confirmar na implementação) — recebe a transcrição para recortar o
+contexto de cada trecho:
 
 ```
-func Fase6Confronto(ctx, modelo ModeloLLM, declaracao string,
+func Fase6Confronto(ctx, modelo ModeloLLM, declaracao, transcricao string,
     finais []validacao.Candidato) ([]validacao.Candidato, []VeredictoConfronto)
 ```
+
+### Convergência com o ajuste manual do corte (v2 da tela de revisão)
+
+Quando o veredito é `ambiguo_isolado`, a ação natural é **estender o trecho** — que é
+exatamente o **ajuste fino do corte pelo operador**, já registrado como v2 da spec-05. As
+duas frentes se encaixam: **o confronto diz "o corte ficou curto"; o ajuste manual permite
+consertar.** Sem o ajuste, o operador só pode reprovar um trecho cujo conteúdo é bom — o
+que é desperdício. Vale implementar as duas em sequência (ou pelo menos ter o ajuste no
+horizonte quando esta classe começar a aparecer).
 
 ## Exibição por nível de alerta (contra fadiga de alerta)
 
@@ -107,12 +169,14 @@ de exibição** — na trilha e no card da tela de revisão (spec-05):
 | classe | nível | como aparece |
 |---|---|---|
 | `desalinhamento` | **alto** | ⚠ âmbar, destaque forte, **com o ponto citado** da Declaração |
+| `ambiguo_isolado` | **médio, com AÇÃO** | ✂ "o corte ficou curto — o sermão esclarece; considere estender". Não é alerta de doutrina: é convite a ajustar o trecho |
 | `provavel_erro_transcricao` | baixo | ℹ neutro/quieto (cinza): "conferido: provável erro de transcrição" |
 | `fiel` (marcado pela Fase 4, confronto não achou) | baixo | ℹ neutro/quieto (cinza): "conferido: sem problema doutrinário aparente" |
 | (sem confronto ainda) | médio | ⚠ âmbar genérico (comportamento atual) |
 
-O operador continua vendo **todos** os marcados — mas sabe **onde olhar primeiro**. É isso
-que dá utilidade real ao confronto: dirigir a atenção, que era o propósito.
+O operador continua vendo **todos** os marcados — mas sabe **onde olhar primeiro**, e em
+dois casos sabe **o que fazer** (estender o corte; conferir o texto). É isso que dá
+utilidade real ao confronto: dirigir a atenção e apontar a ação.
 
 ## Guarda anti-falso-positivo (obrigatória)
 
@@ -124,37 +188,49 @@ isso o prompt do confronto DEVE declarar explicitamente:
 - que a **maioria dos trechos marcados tende a estar correta**, ou apenas **garbled pelo
   ASR** (erro de transcrição, não de doutrina);
 - que **não se deve forçar** a identificação de um desalinhamento; na dúvida, classificar
-  como `fiel` ou `provavel_erro_transcricao`, nunca `desalinhamento`;
+  como `fiel`, `ambiguo_isolado` ou `provavel_erro_transcricao` — **nunca** `desalinhamento`;
 - que `desalinhamento` exige **citar o ponto específico** da Declaração que é contrariado —
-  sem ponto citável, não é desalinhamento.
+  sem ponto citável, não é desalinhamento;
+- **(por causa do contexto) que o veredito é sobre o TRECHO, não sobre o sermão.** Com
+  contexto grande, o modelo tende a julgar o sermão inteiro — e aí um sermão são "absolve"
+  qualquer recorte. A instrução tem que ser explícita: o contexto serve **apenas** para
+  desambiguar a intenção do pregador; o que vai ao ar é o TRECHO, sozinho, sem o contexto
+  ao redor. Um trecho **resolvido no contexto** NÃO é `fiel` — é `ambiguo_isolado`, porque
+  publicá-lo como está ainda é um problema (de corte).
 
 ## Critérios de aceite
 
 - [ ] Fase nova roda **só** nos trechos `requer_revisao_reforcada = true`; nenhum marcado
       → no-op (zero chamadas ao modelo).
+- [ ] **A entrada inclui o CONTEXTO** (±60–90 s antes e depois), não só o trecho — é o que
+      diferencia esta fase da Fase 4. Nas bordas do sermão, usa o que houver.
 - [ ] Cada trecho marcado gera `{classe, ponto_citado, motivo}` válido (retry da spec-08
-      cobre formato).
+      cobre formato), com `classe` nas QUATRO opções.
 - [ ] `motivo_revisao` é enriquecido conforme a classe; `requer_revisao_reforcada`
       **permanece true** em todos os casos (nunca limpa, nunca descarta).
-- [ ] O candidato carrega a **classe do confronto** (`classe_revisao`), que dirige os três
-      níveis de exibição (spec-05): `desalinhamento` = alto (⚠ âmbar + ponto citado);
-      `provavel_erro_transcricao` e `fiel` = baixo (ℹ neutro "conferido: …").
+- [ ] O candidato carrega a **classe do confronto** (`classe_revisao`), que dirige a
+      exibição (spec-05): `desalinhamento` = alto; `ambiguo_isolado` = médio com AÇÃO
+      ("estender o corte"); `provavel_erro_transcricao` e `fiel` = baixo (ℹ "conferido: …").
 - [ ] Sinalizados persistidos em `trabalho/<id>/revisao-teologica.json`.
-- [ ] Prompt contém a guarda anti-falso-positivo (texto explícito de que "fiel" é esperado
-      e que não se force desalinhamento).
+- [ ] Prompt contém a guarda anti-falso-positivo, **incluindo** a instrução explícita de que
+      o veredito é sobre o TRECHO e não sobre o sermão (o contexto só desambigua).
+- [ ] **Teste — ambíguo isolado, resolvido no contexto** (o trecho sozinho sugere algo que o
+      pregador esclarece logo em seguida): classe esperada **`ambiguo_isolado`**, **nunca**
+      `desalinhamento` — e **nunca** `fiel` (publicar como está ainda é problema, de corte).
 - [ ] **Teste — trecho garbled pelo ASR** (ex.: termo hebraico corrompido tipo "chiva ou
       chuva", mensagem no geral correta): classe esperada `provavel_erro_transcricao`,
       **nunca** `desalinhamento`.
-- [ ] **Teste — trecho fiel** (doutrina sã, sem ruído): classe esperada `fiel`, **sem
-      acusação inventada** (`ponto_citado` vazio).
-- [ ] (Opcional, registrar) Teste — trecho que realmente contradiz a Declaração: classe
-      `desalinhamento` com `ponto_citado` preenchido.
+- [ ] **Teste — trecho fiel** (doutrina sã, sem ruído, contexto coerente): classe esperada
+      `fiel`, **sem acusação inventada** (`ponto_citado` vazio).
+- [ ] (Opcional, registrar) Teste — trecho que contradiz a Declaração **mesmo com o
+      contexto**: classe `desalinhamento` com `ponto_citado` preenchido.
 - [ ] `go build ./...` e `go test ./...` verdes (testes com modelo fake, sem subir o LLM).
 
 ## Como validar
 
 ```bash
 go test ./internal/harness/   # testes da Fase 6 com ModeloLLM fake:
+                              #  - ambíguo isolado (contexto resolve) -> ambiguo_isolado
                               #  - garbled -> provavel_erro_transcricao
                               #  - fiel    -> fiel, sem ponto_citado
                               #  - erro real -> desalinhamento + ponto

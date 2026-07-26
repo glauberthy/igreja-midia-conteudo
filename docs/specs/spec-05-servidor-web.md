@@ -128,13 +128,29 @@ Decisoes (nao reabrir):
   de alerta (⚠ em tudo deixa de ser alerta), a INTENSIDADE segue a classe do confronto
   doutrinario (spec-14):
   - `desalinhamento` -> **alto**: ⚠ ambar, destaque forte, com o ponto citado da Declaracao.
+  - `ambiguo_isolado` -> **medio, com ACAO**: ✂ "o corte ficou curto — o sermao esclarece;
+    considere estender". NAO e alerta de doutrina: e convite a ajustar o trecho (liga com o
+    ajuste fino do corte, v2 abaixo).
   - `provavel_erro_transcricao` -> **baixo**: ℹ neutro/quieto (cinza), "conferido: provavel
     erro de transcricao".
   - `fiel` (marcado pela Fase 4, confronto nao achou) -> **baixo**: ℹ neutro/quieto,
     "conferido: sem problema doutrinario aparente".
   - sem confronto ainda (spec-14 nao implementada) -> ⚠ ambar generico (comportamento atual).
-  O operador ve TODOS os marcados, mas sabe onde olhar primeiro. Enquanto a spec-14 nao
-  existe, so ha o nivel generico; os tres niveis entram junto com ela.
+  O operador ve TODOS os marcados, mas sabe onde olhar primeiro — e em dois casos sabe O QUE
+  FAZER (estender o corte; conferir o texto). Enquanto a spec-14 nao existe, so ha o nivel
+  generico; os niveis entram junto com ela.
+- **Mostrar QUAL criterio afundou o score, em PALAVRAS — nunca a grade crua.** O card exibe
+  um ou dois criterios mais fracos em linguagem natural, ex.: *"o que puxou o score:
+  completude — o trecho nao fecha"*. NAO mostrar a planilha dos cinco numeros
+  (`fidelidade 12/30`, etc.) ao operador: numero convida a **falsa precisao** — parece
+  medicao quando e palpite de modelo, e o pastor pode tratar "12/30" como fato. O que e
+  acionavel nao e o numero, e **o nome do problema**.
+  - Exemplo real observado: um trecho tinha fidelidade baixa E **completude** baixa — o
+    texto terminava pendurado ("Aí foi aí que aconteceu"). A completude e informacao NOVA,
+    acionavel (o corte nao fecha) e **independente de doutrina** — o operador consegue
+    decidir sozinho, sem julgar teologia.
+  - A grade crua continua existindo para DESENVOLVEDOR (`cmd/auditar -criterios`), onde
+    falsa precisao nao e risco: quem le sabe que e saida de modelo.
 - **Rodape fixo** com a contagem ("1 aprovado · 1 reprovado · 3 pendentes") e o botao
   "Confirmar e gerar", sem precisar rolar ate o fim.
 - **CSS na mao, sem Tailwind.** E uma tela so, poucos componentes; Tailwind exigiria build
@@ -341,6 +357,12 @@ para keyframe (nao frame exato) e o player e OUTRO video que nao o arquivo baixa
 preciso garantir que o tempo marcado no player corresponda ao mesmo instante no arquivo
 baixado (mesma origem t=0), senao o corte sai deslocado. Resolve, de forma humana, tanto a
 entonacao (voz que nao fecha) quanto o timestamp impreciso da legenda.
+
+**Convergencia com a spec-14 (confronto doutrinario):** o confronto com contexto produz a
+classe `ambiguo_isolado` — "o trecho e ambiguo sozinho, mas o sermao resolve" —, cuja acao
+natural e **estender o corte**. Ou seja: **o confronto diz que o corte ficou curto; este
+ajuste manual permite consertar.** Sem o ajuste, o operador so pode REPROVAR um trecho cujo
+conteudo e bom, o que e desperdicio. As duas frentes se encaixam e valem em sequencia.
 
 ## Nota
 
