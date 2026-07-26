@@ -16,6 +16,8 @@ package processo
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"os"
 	"os/exec"
 	"time"
 )
@@ -41,3 +43,7 @@ func Rodar(ctx context.Context, nome string, args ...string) ([]byte, []byte, er
 	err := cmd.Run() // Run = Start + Wait: ao retornar, o filho já foi colhido
 	return out.Bytes(), errb.Bytes(), err
 }
+
+// Avisar recebe avisos operacionais do pacote (hoje: a degradação da guarda anti-suicídio
+// do kill em grupo). Padrão: stderr. Substituível para log estruturado ou testes.
+var Avisar = func(msg string) { fmt.Fprintln(os.Stderr, msg) }

@@ -182,10 +182,49 @@ Os dois executores (download e render) passaram a delegar a `internal/processo`,
 - usa `cmd.Run()` (Start + Wait), então **quando `Rodar` retorna o processo já foi
   colhido** — a limpeza de resíduo que vem depois nunca corre contra um processo vivo.
 
-Provado por teste com contraprova: sem o kill de grupo, o neto sobrevive e **60 MB
-continuam alocados no filesystem** mesmo com o arquivo já apagado. O teste mede `statfs`,
-não a presença do arquivo — a primeira versão media a pasta e passava com o bug presente,
-o que é pior que não ter teste.
+**Guarda anti-suicídio.** `kill(-pgid, SIGKILL)` num pgid herdado do servidor mataria o
+**próprio servidor** — falha catastrófica e quase impossível de diagnosticar (o serviço
+morre ao cancelar um download). Antes de sinalizar o grupo, `alvoDoKill` confere via
+`Getpgid` que o grupo do filho não é o nosso **e** que o filho lidera o próprio grupo; em
+qualquer dos dois casos degrada para matar só o PID direto e emite aviso. Perder um neto é
+ruim (espaço preso); derrubar o serviço é pior; falhar em silêncio é o pior de todos. A
+decisão é uma função pura, testada exaustivamente — inclusive uma asserção de que nenhuma
+combinação de PIDs jamais produz o grupo do servidor como alvo.
+
+Provado por teste com contraprova: sem o kill de grupo, o neto sobrevive e a remoção
+devolve **0 MB de 60 MB**. Duas correções de método aqui valem registro, porque as
+primeiras versões passavam **com o bug presente**:
+
+- medir a presença do arquivo não serve — o `unlink` sempre remove o nome. O que se mede é
+  `statfs`.
+- medir `statfs` em valor absoluto (livre no início vs. no fim) também não serve numa
+  máquina em uso: o experimento real acusou "75 MB presos" com resíduo de 9 MB, ou seja,
+  mediu a atividade normal do sistema durante 33 s. O correto é o **delta da remoção**
+  (livre imediatamente antes vs. imediatamente depois), com janela de milissegundos.
+
+### Verificado contra um yt-dlp real, não só contra fakes
+
+Prazo e kill de grupo nasceram testados apenas com dublês. A lacuna foi fechada sem
+simular rede ruim: **`kill -STOP` reproduz "travado" exatamente** — o processo para de
+escrever e não morre. É também o caso que distingue os sinais: a um processo parado o
+SIGTERM não é entregue, o SIGKILL é.
+
+`TestExperimentoRealDownloadTravado` (em `internal/servidor`, pulado por padrão) baixa um
+vídeo de verdade, congela a árvore do yt-dlp com SIGSTOP no grupo depois dos primeiros MB e
+verifica os três elos. Resultado medido:
+
+| Elo | Resultado |
+|---|---|
+| Watchdog dispara por falta de progresso | abortou em 30 s ("ficou 25s sem baixar nada") |
+| Grupo morre, mesmo `STOPPED` | nenhum `yt-dlp`/`ffmpeg` vivo depois |
+| Espaço devolvido | 8 MB devolvidos de 7 MB de resíduo; nenhum descritor aberto em `/proc` |
+
+Para repetir:
+
+```bash
+SHORTS_EXPERIMENTO_REAL=1 SHORTS_EXPERIMENTO_URL=<url> \
+  go test -run ExperimentoReal -timeout 10m -v ./internal/servidor/
+```
 
 **2. Autocura no reinício.** O estado dos pedidos vive **só em memória**: o servidor não
 grava `pedido.json` (só o `cmd/baixar` grava) e `Novo()` não lê nada do disco. Um pedido

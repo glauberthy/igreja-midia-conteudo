@@ -91,8 +91,7 @@ func TestEspacoVoltaAposCancelamento(t *testing.T) {
 	alvo := filepath.Join(dir, "grande.bin")
 	const mb = 60
 
-	livreAntes := livreNoSistema(t, dir)
-	if livreAntes < 500<<20 {
+	if livreNoSistema(t, dir) < 500<<20 {
 		t.Skip("disco muito cheio para medir com confiança")
 	}
 
@@ -109,20 +108,19 @@ func TestEspacoVoltaAposCancelamento(t *testing.T) {
 		t.Skip("o neto não chegou a escrever os 60 MB; nada a medir")
 	}
 
-	// Isto é o que limparResiduoDeErro faz. Sozinho, NÃO prova nada.
+	// A prova: os blocos voltaram ao filesystem? Com o neto vivo, não voltariam.
+	//
+	// Medido como DELTA da remoção, não contra o livre do início do teste: numa máquina em
+	// uso, o valor absoluto capta a atividade de todo o resto (no experimento real isso
+	// acusou "75 MB presos" com resíduo de 9 MB). A janela do delta é de milissegundos.
+	livreAntesDeRemover := livreNoSistema(t, dir)
 	if err := os.Remove(alvo); err != nil {
 		t.Fatalf("removendo o resíduo: %v", err)
 	}
-	if _, err := os.Stat(alvo); !os.IsNotExist(err) {
-		t.Fatal("o arquivo continua listado")
-	}
-
-	// A prova: os blocos voltaram ao filesystem? Com o neto vivo, não voltariam.
-	// Tolerância de 30 MB para ruído de outros processos no mesmo disco.
-	perdido := livreAntes - livreNoSistema(t, dir)
-	if perdido > 30<<20 {
-		t.Fatalf("o arquivo sumiu mas %d MB continuam alocados no filesystem — "+
-			"um processo sobrevivente mantém o descritor aberto", perdido>>20)
+	devolvido := livreNoSistema(t, dir) - livreAntesDeRemover
+	if devolvido < (mb<<20)*8/10 {
+		t.Fatalf("a remoção devolveu %d MB de %d MB — um processo sobrevivente mantém o descritor aberto",
+			devolvido>>20, mb)
 	}
 }
 
