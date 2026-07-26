@@ -122,6 +122,42 @@ oposto (estado terminal É limpável, senão o disco nunca esvazia) e um teste d
 com pedidos nascendo enquanto a limpeza roda — este verifica **sobrevivência do arquivo**,
 não só ausência de corrida de memória.
 
+### O outro lado: "em curso" precisa sempre acabar
+
+Proteger todo pedido não-terminal cria uma dependência nova: se um pedido pudesse ficar
+travado, ele seria **imortal para a limpeza**. Um `yt-dlp` em stall de rede deixaria o
+pedido em `baixando-video` para sempre — os ~900 MB dele protegidos permanentemente, a
+fila bloqueada (um pedido por vez) e o operador com um spinner infinito, exatamente o que
+a spec-05 quis evitar. Duas coisas seguram isso.
+
+**1. Prazo por etapa (`internal/servidor/prazos.go`).** Toda etapa roda sob
+`context.WithTimeout`, então o estado sempre termina:
+
+| Etapa | Prazo | Referência medida |
+|---|---|---|
+| Legenda | 10 min | poucos MB |
+| Seleção | 30 min | ~50s (o harness faz várias chamadas ao modelo) |
+| Vídeo | 20 min | ~86s (900 MB a 750 KB/s ainda cabem) |
+| Render | 15 min | ~3s por Short |
+
+Não são limites de desempenho — são mais de dez vezes o medido, então rede lenta **mas
+viva** não é interrompida; só a rede TRAVADA é. O prazo só funciona porque o `ctx` é
+propagado até a syscall nos três caminhos: download e render via `exec.CommandContext`
+(que mata o processo), e o modelo via `http.NewRequestWithContext`. O backoff do download
+já checava o `ctx`; o do harness passou a abortar cedo em vez de gastar as tentativas
+restantes a seco. Quando o prazo estoura, a mensagem nomeia a etapa e o tempo, e não é
+prefixada com "falha na seleção:" — ela já se explica.
+
+**2. Autocura no reinício.** O estado dos pedidos vive **só em memória**: o servidor não
+grava `pedido.json` (só o `cmd/baixar` grava) e `Novo()` não lê nada do disco. Um pedido
+travado por crash ou `kill -9` — onde o prazo não chega a rodar — some do mapa no
+restart, e o material bruto dele volta a ser limpável.
+
+Consequência prática: **pedido travado é chateação, não vazamento de disco.** No pior caso
+o operador reinicia o servidor. Se algum dia o estado passar a ser persistido, esta
+propriedade se perde e a limpeza vai precisar de um critério de idade para pedidos
+"em curso" — está registrado aqui porque é uma dependência silenciosa.
+
 ## Critérios de aceite
 
 - [x] Bruto removido dos pedidos anteriores; os N mais recentes ficam intactos.
@@ -129,6 +165,8 @@ não só ausência de corrida de memória.
       `pedido.json` preservados; `finalizados/` nunca tocado.
 - [x] Nenhum pedido em curso pode ser enxergado pela limpeza — garantido pela estrutura
       (mesmo mutex cobrindo decisão e remoção), não por checagem posterior.
+- [x] Todo pedido chega a estado terminal: prazo por etapa com `ctx` propagado até a
+      syscall, e autocura no reinício para o que o prazo não alcança (crash).
 - [x] Retenção configurável (`-reter`, padrão 1).
 - [x] `cmd/limpar` roda, tem `-dry-run`, reporta o liberado e é idempotente.
 - [x] Limpeza automática ao concluir um pedido, com o atual intocável.

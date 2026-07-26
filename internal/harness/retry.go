@@ -32,6 +32,11 @@ var LogTentativa = func(msg string) { fmt.Fprintln(os.Stderr, msg) }
 func PedirValidado(ctx context.Context, modelo ModeloLLM, fase, sistema, usuario string, maxTokens int, valida func([]byte) error) (string, error) {
 	var motivo string
 	for tentativa := 1; tentativa <= MaxTentativas; tentativa++ {
+		// Prazo estourado ou chamada cancelada: parar aqui. Sem isto, as tentativas
+		// restantes rodariam a seco (Completar falha na hora) só para poluir o log.
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("%s: %w", fase, err)
+		}
 		conteudo, err := modelo.Completar(ctx, sistema, usuario, maxTokens)
 		if err != nil {
 			motivo = err.Error() // (a) transporte/rede/HTTP

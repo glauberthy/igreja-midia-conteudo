@@ -134,3 +134,37 @@ func TestLimpezaConcorrenteComPedidosNovos(t *testing.T) {
 		}
 	}
 }
+
+// TestReinicioLiberaPedidoOrfao documenta a autocura: o estado dos pedidos vive SÓ em
+// memória (o servidor não grava pedido.json e Novo() não lê nada do disco). Um pedido
+// travado por um crash/kill some do mapa no restart, e o material bruto dele volta a ser
+// limpável — a proteção de "pedido em curso" não vira vazamento permanente de disco.
+func TestReinicioLiberaPedidoOrfao(t *testing.T) {
+	s := servidorPesada(t, candsJanela(), &baixadorVideoFake{}, &renderFake{})
+	base := s.baseDir
+	s.reterPedidos = 1
+
+	orfao := pedidoEmDisco(t, base, "pedido-orfao")
+	registrarEmCurso(s, "pedido-orfao", pipeline.EstadoBaixandoVideo)
+	pedidoEmDisco(t, base, "outro")
+
+	s.limparSobLock()
+	if _, err := os.Stat(filepath.Join(orfao, "video.mp4")); err != nil {
+		t.Fatal("pré-condição: enquanto está em curso, o pedido é intocável")
+	}
+
+	// "Reinício": um Servidor novo sobre a MESMA pasta. Nada é carregado do disco.
+	s2 := Novo(Opcoes{
+		Baixador: &baixadorFake{transc: "x", base: base}, Selecionador: candsJanela(),
+		BaixadorVideo: &baixadorVideoFake{}, Renderizador: &renderFake{outDir: t.TempDir()},
+		BaseDir: base, OutDir: t.TempDir(), ReterPedidos: 1,
+		LogRodadasPath: filepath.Join(base, "r.md"), TemposPath: filepath.Join(base, "t.csv"),
+	})
+	if n := len(s2.pedidos); n != 0 {
+		t.Fatalf("servidor novo carregou %d pedido(s) do disco — a autocura depende de NÃO carregar", n)
+	}
+	s2.limparSobLock()
+	if _, err := os.Stat(filepath.Join(orfao, "video.mp4")); err == nil {
+		t.Error("após o reinício o órfão continua protegido — vazamento permanente de disco")
+	}
+}

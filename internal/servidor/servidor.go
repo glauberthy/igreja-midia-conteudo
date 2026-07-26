@@ -91,6 +91,7 @@ type Servidor struct {
 	reterPedidos     int
 	limpezaDesligada bool
 	logTemposFn      func(string)
+	prazos           Prazos
 	agora            func() time.Time
 	gerarID          func() string
 	mux              *http.ServeMux
@@ -126,8 +127,11 @@ type Opcoes struct {
 	AssetsDir string
 	// LogTempos recebe o resumo de desempenho/limpeza de cada pedido. Nil = stderr.
 	LogTempos func(string)
-	Agora     func() time.Time // injetável para testes
-	GerarID   func() string    // injetável para testes
+	// Prazos limita a duração de cada etapa, garantindo que o pedido SEMPRE termina.
+	// Campos zerados usam PrazosPadrao(). Ver prazos.go.
+	Prazos  Prazos
+	Agora   func() time.Time // injetável para testes
+	GerarID func() string    // injetável para testes
 }
 
 // Novo cria o servidor e registra as rotas.
@@ -145,6 +149,7 @@ func Novo(o Opcoes) *Servidor {
 		reterPedidos:     o.ReterPedidos,
 		limpezaDesligada: o.LimpezaDesligada,
 		logTemposFn:      o.LogTempos,
+		prazos:           o.Prazos.comPadroes(),
 		agora:            o.Agora,
 		gerarID:          o.GerarID,
 		pedidos:          make(map[string]*registro),
@@ -377,7 +382,10 @@ func (s *Servidor) faseHeavy(reg *registro) {
 	// Cópia: o Baixador escreve Status/Erro no Pedido (contrato do cmd/baixar, onde não há
 	// concorrência). Aqui o registro é compartilhado com o handleStatus, então deixá-lo
 	// escrever direto é corrida de verdade (pega pelo -race). O servidor é dono do status.
-	if err := s.baixadorVideo.BaixarVideoCompleto(ctx, s.copiaPedido(reg)); err != nil {
+	err := etapaComPrazo(ctx, "o download do vídeo", s.prazos.Video, func(ctx context.Context) error {
+		return s.baixadorVideo.BaixarVideoCompleto(ctx, s.copiaPedido(reg))
+	})
+	if err != nil {
 		s.setErro(reg, mensagemErroDownload(err))
 		return
 	}
@@ -389,9 +397,14 @@ func (s *Servidor) faseHeavy(reg *registro) {
 
 	s.setStatus(reg, pipeline.EstadoRenderizando)
 	// Origem 0: o video.mp4 é o vídeo inteiro, então t=0 do arquivo == t=0 do vídeo.
-	paths, err := s.renderizador.RenderizarComOrigem(ctx, reg.ped, aprovados, origemVideoCompleto)
+	var paths []string
+	err = etapaComPrazo(ctx, "a renderização", s.prazos.Renderize, func(ctx context.Context) error {
+		var e error
+		paths, e = s.renderizador.RenderizarComOrigem(ctx, s.copiaPedido(reg), aprovados, origemVideoCompleto)
+		return e
+	})
 	if err != nil {
-		s.setErro(reg, "falha ao renderizar os Shorts: "+err.Error())
+		s.setErro(reg, comPrefixo("falha ao renderizar os Shorts: ", err))
 		return
 	}
 
@@ -615,7 +628,9 @@ func (s *Servidor) faseLeve(reg *registro) {
 	// Cópia pelo mesmo motivo da fase pesada: o Baixador escreve no Pedido, e o registro é
 	// compartilhado com os handlers. Aqui a cópia traz de volta o título (do .info.json).
 	copia := s.copiaPedido(reg)
-	if err := s.baixador.BaixarLegenda(ctx, copia); err != nil {
+	if err := etapaComPrazo(ctx, "o download da legenda", s.prazos.Legenda, func(ctx context.Context) error {
+		return s.baixador.BaixarLegenda(ctx, copia)
+	}); err != nil {
 		s.setErro(reg, mensagemErroDownload(err))
 		return
 	}
@@ -628,9 +643,14 @@ func (s *Servidor) faseLeve(reg *registro) {
 	s.setStatus(reg, pipeline.EstadoSelecionando)
 	transc := filepath.Join(s.baseDir, idPedidoLeve, "transcricao.txt")
 	s.metrica(reg, func(m *Metricas) { m.TokensTranscricao = tokensAprox(transc) })
-	cands, err := s.selecionador.Selecionar(ctx, transc)
+	var cands []validacao.Candidato
+	err := etapaComPrazo(ctx, "a seleção dos trechos", s.prazos.Selecao, func(ctx context.Context) error {
+		var e error
+		cands, e = s.selecionador.Selecionar(ctx, transc)
+		return e
+	})
 	if err != nil {
-		s.setErro(reg, "falha na seleção: "+err.Error())
+		s.setErro(reg, comPrefixo("falha na seleção: ", err))
 		return
 	}
 	s.metrica(reg, func(m *Metricas) {
@@ -796,6 +816,8 @@ func querJSON(r *http.Request) bool {
 // mensagemErroDownload traduz os erros do download em mensagens claras para o operador.
 func mensagemErroDownload(err error) string {
 	switch {
+	case errors.Is(err, ErrPrazoEstourado):
+		return err.Error() // já nomeia a etapa e o prazo
 	case errors.Is(err, download.ErrAntiBot):
 		return "o YouTube pediu verificação anti-robô (muitas requisições); aguarde alguns minutos e tente novamente"
 	case errors.Is(err, download.ErrSemLegenda):
