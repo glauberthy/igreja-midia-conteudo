@@ -58,7 +58,7 @@ func servidorComPrazos(t *testing.T, p Prazos, bv BaixadorVideo, sel Selecionado
 // este pedido ficaria em "baixando-video" para sempre: spinner infinito para o operador,
 // fila bloqueada, e ~900 MB permanentemente protegidos da limpeza.
 func TestDownloadTravadoTerminaEmErro(t *testing.T) {
-	s := servidorComPrazos(t, Prazos{Video: 60 * time.Millisecond}, nil, nil)
+	s := servidorComPrazos(t, Prazos{VideoSemProgresso: 250 * time.Millisecond}, nil, nil)
 	s.baixadorVideo = &baixadorVideoTravado{base: s.baseDir}
 
 	criarPedidoOK(t, s)
@@ -80,7 +80,7 @@ func TestDownloadTravadoTerminaEmErro(t *testing.T) {
 // travado em terminal, e só por isso o material bruto dele volta a ser limpável. Sem
 // prazo, a proteção de "pedido em curso" viraria vazamento permanente de disco.
 func TestPedidoTravadoNaoFicaImortal(t *testing.T) {
-	s := servidorComPrazos(t, Prazos{Video: 60 * time.Millisecond}, nil, nil)
+	s := servidorComPrazos(t, Prazos{VideoSemProgresso: 250 * time.Millisecond}, nil, nil)
 	s.baixadorVideo = &baixadorVideoTravado{base: s.baseDir}
 	s.reterPedidos = 1
 
@@ -126,8 +126,15 @@ func TestSelecaoTravadaTerminaEmErro(t *testing.T) {
 // interromper trabalho legítimo. Referência medida: download ~86s, render ~3s/Short.
 func TestPrazosPadraoSaoFolgados(t *testing.T) {
 	p := PrazosPadrao()
-	if p.Video < 15*time.Minute {
-		t.Errorf("prazo do vídeo curto demais (%s): 900 MB em rede lenta precisam de folga", p.Video)
+	// O download não tem teto de tempo: o pior caso é tamanho x throughput, ambos muito
+	// variáveis. O que se exige é que o watchdog dê folga a uma rede lenta mas viva.
+	if p.VideoSemProgresso < 3*time.Minute {
+		t.Errorf("watchdog do vídeo agressivo demais (%s): uma pausa curta do yt-dlp entre "+
+			"fragmentos mataria um download saudável", p.VideoSemProgresso)
+	}
+	if p.VideoTeto < time.Hour {
+		t.Errorf("teto do vídeo curto demais (%s): 1,8 GB a 3,3 MB/s levam ~9min, e ele é só "+
+			"rede de segurança", p.VideoTeto)
 	}
 	if p.Selecao < 20*time.Minute {
 		t.Errorf("prazo da seleção curto demais (%s): o harness faz várias chamadas", p.Selecao)
@@ -136,8 +143,8 @@ func TestPrazosPadraoSaoFolgados(t *testing.T) {
 
 // TestPrazoZeradoUsaPadrao: quem configura só um campo não perde os outros.
 func TestPrazoZeradoUsaPadrao(t *testing.T) {
-	p := Prazos{Video: time.Second}.comPadroes()
-	if p.Video != time.Second {
+	p := Prazos{VideoSemProgresso: time.Second}.comPadroes()
+	if p.VideoSemProgresso != time.Second {
 		t.Error("campo explícito foi sobrescrito")
 	}
 	if p.Selecao != PrazosPadrao().Selecao || p.Legenda != PrazosPadrao().Legenda {
@@ -156,5 +163,90 @@ func TestEtapaComPrazoNaoMascaraErroReal(t *testing.T) {
 	}
 	if errors.Is(err, ErrPrazoEstourado) {
 		t.Error("erro real classificado como estouro de prazo")
+	}
+}
+
+// baixadorVideoLento escreve devagar mas SEM PARAR, e termina. Representa o culto de 2h
+// em rede ruim: o caso que um teto de tempo fixo mataria injustamente.
+type baixadorVideoLento struct {
+	base      string
+	pedacos   int
+	intervalo time.Duration
+}
+
+func (b *baixadorVideoLento) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) error {
+	dir := filepath.Join(b.base, ped.ID)
+	os.MkdirAll(dir, 0755)
+	f, err := os.Create(filepath.Join(dir, "video.mp4"))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	for i := 0; i < b.pedacos; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(b.intervalo):
+		}
+		if _, err := f.Write(make([]byte, 1024)); err != nil {
+			return err
+		}
+		f.Sync()
+	}
+	return nil
+}
+
+// TestDownloadLentoMasVivoNaoEhMorto é o outro lado do watchdog, e o motivo de ele existir:
+// um download que progride devagar precisa CHEGAR AO FIM. Aqui ele leva bem mais do que a
+// janela sem-progresso no total, e ainda assim não pode ser interrompido.
+func TestDownloadLentoMasVivoNaoEhMorto(t *testing.T) {
+	s := servidorComPrazos(t, Prazos{VideoSemProgresso: 200 * time.Millisecond}, nil, nil)
+	// 12 escritas a cada 60ms = ~720ms totais, 3,6x a janela sem-progresso.
+	s.baixadorVideo = &baixadorVideoLento{base: s.baseDir, pedacos: 12, intervalo: 60 * time.Millisecond}
+
+	criarPedidoOK(t, s)
+	esperarStatus(t, s, "teste-1", pipeline.EstadoAguardandoAprovacao)
+	aprovarJSON(t, s, "teste-1", []int{0})
+	esperarStatus(t, s, "teste-1", pipeline.EstadoConcluido)
+}
+
+// TestWatchdogNomeiaFaltaDeProgresso: a mensagem tem de dizer que travou, não que "passou
+// do tempo" — são diagnósticos diferentes para o operador.
+func TestWatchdogNomeiaFaltaDeProgresso(t *testing.T) {
+	s := servidorComPrazos(t, Prazos{VideoSemProgresso: 200 * time.Millisecond}, nil, nil)
+	s.baixadorVideo = &baixadorVideoTravado{base: s.baseDir}
+
+	criarPedidoOK(t, s)
+	esperarStatus(t, s, "teste-1", pipeline.EstadoAguardandoAprovacao)
+	aprovarJSON(t, s, "teste-1", []int{0})
+	esperarStatus(t, s, "teste-1", pipeline.EstadoErro)
+
+	s.mu.Lock()
+	msg := s.pedidos["teste-1"].ped.Erro
+	s.mu.Unlock()
+	if !strings.Contains(msg, "sem baixar nada") {
+		t.Errorf("mensagem não diz que travou por falta de progresso: %q", msg)
+	}
+}
+
+// TestTetoAbsolutoDoVideo: a rede de segurança funciona mesmo com progresso constante
+// (yt-dlp patológico escrevendo lixo para sempre).
+func TestTetoAbsolutoDoVideo(t *testing.T) {
+	s := servidorComPrazos(t, Prazos{
+		VideoSemProgresso: time.Hour,              // watchdog nunca dispara
+		VideoTeto:         300 * time.Millisecond, // só o teto pode agir
+	}, nil, nil)
+	s.baixadorVideo = &baixadorVideoLento{base: s.baseDir, pedacos: 10000, intervalo: 10 * time.Millisecond}
+
+	criarPedidoOK(t, s)
+	esperarStatus(t, s, "teste-1", pipeline.EstadoAguardandoAprovacao)
+	aprovarJSON(t, s, "teste-1", []int{0})
+	esperarStatus(t, s, "teste-1", pipeline.EstadoErro)
+
+	s.mu.Lock()
+	msg := s.pedidos["teste-1"].ped.Erro
+	s.mu.Unlock()
+	if !strings.Contains(msg, "passou de") {
+		t.Errorf("mensagem não indica o teto absoluto: %q", msg)
 	}
 }

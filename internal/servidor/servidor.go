@@ -382,14 +382,19 @@ func (s *Servidor) faseHeavy(reg *registro) {
 	// Cópia: o Baixador escreve Status/Erro no Pedido (contrato do cmd/baixar, onde não há
 	// concorrência). Aqui o registro é compartilhado com o handleStatus, então deixá-lo
 	// escrever direto é corrida de verdade (pega pelo -race). O servidor é dono do status.
-	err := etapaComPrazo(ctx, "o download do vídeo", s.prazos.Video, func(ctx context.Context) error {
-		return s.baixadorVideo.BaixarVideoCompleto(ctx, s.copiaPedido(reg))
-	})
+	// Progresso, não tempo total: ver Prazos.VideoSemProgresso. O tamanho do culto varia
+	// demais (994 MB visto; 2h dariam ~1,8 GB) para um teto fixo ter margem honesta.
+	dirPedido := filepath.Join(s.baseDir, idPedido)
+	err := etapaComProgresso(ctx, "o download do vídeo", dirPedido,
+		s.prazos.VideoSemProgresso, s.prazos.VideoTeto,
+		func(ctx context.Context) error {
+			return s.baixadorVideo.BaixarVideoCompleto(ctx, s.copiaPedido(reg))
+		})
 	if err != nil {
 		s.setErro(reg, mensagemErroDownload(err))
 		return
 	}
-	videoPath := filepath.Join(s.baseDir, idPedido, "video.mp4")
+	videoPath := filepath.Join(dirPedido, "video.mp4")
 	s.metrica(reg, func(m *Metricas) {
 		m.BaixarVideoMs = m.marcar(s.agora())
 		m.BytesVideo = tamanhoArquivo(videoPath)

@@ -137,16 +137,55 @@ a spec-05 quis evitar. Duas coisas seguram isso.
 |---|---|---|
 | Legenda | 10 min | poucos MB |
 | Seleção | 30 min | ~50s (o harness faz várias chamadas ao modelo) |
-| Vídeo | 20 min | ~86s (900 MB a 750 KB/s ainda cabem) |
 | Render | 15 min | ~3s por Short |
+| **Vídeo** | **5 min sem progresso** (teto de 2 h) | ver abaixo |
 
-Não são limites de desempenho — são mais de dez vezes o medido, então rede lenta **mas
-viva** não é interrompida; só a rede TRAVADA é. O prazo só funciona porque o `ctx` é
+Nas três primeiras a folga é de mais de dez vezes o medido, então rede lenta **mas viva**
+não é interrompida; só a TRAVADA é.
+
+**O download é dimensionado por progresso, não por tempo.** Ali o pior caso não é o máximo
+medido: é o produto de duas variáveis que já vimos variar muito — tamanho (maior visto:
+994 MB; um culto de 2 h daria ~1,8 GB) e throughput (3,3 a 23,4 MB/s, uma razão de 7×).
+1,8 GB a 3,3 MB/s levam ~9 minutos, então um teto fixo de 15–20 min daria margem de ~2×, e
+não 10× — apertado o bastante para matar um download legítimo de culto longo em rede ruim.
+
+Medir progresso é **imune ao tamanho do arquivo**: um download vivo, mesmo a 10 KB/s,
+escreve alguma coisa a cada minuto; só o travado fica 5 minutos sem escrever nada. O
+watchdog soma o tamanho da pasta do pedido (e não de um arquivo só, porque o yt-dlp baixa
+em 8 fragmentos paralelos). O teto de 2 h continua existindo apenas como rede de segurança
+contra patologia do próprio watchdog. As duas condições geram mensagens diferentes —
+"ficou 5min sem baixar nada" e "passou de 2h" são diagnósticos distintos para o operador.
+
+O prazo só funciona porque o `ctx` é
 propagado até a syscall nos três caminhos: download e render via `exec.CommandContext`
 (que mata o processo), e o modelo via `http.NewRequestWithContext`. O backoff do download
 já checava o `ctx`; o do harness passou a abortar cedo em vez de gastar as tentativas
 restantes a seco. Quando o prazo estoura, a mensagem nomeia a etapa e o tempo, e não é
 prefixada com "falha na seleção:" — ela já se explica.
+
+**1b. O cancelamento mata o GRUPO de processos (`internal/processo`).** Um prazo que só
+"interrompe" não basta. O yt-dlp cria um `ffmpeg` filho; `exec.CommandContext` mata apenas
+o processo direto, e o neto sobrevive. Isso quebra a limpeza de um jeito silencioso: no
+Linux, apagar um arquivo que um processo mantém aberto remove o nome mas **não devolve os
+blocos** — só quando o descritor fecha. O `GarantirEspaco` reportaria "liberei 900 MB" e o
+`df` continuaria cheio, fazendo o pedido seguinte falhar por espaço que deveria existir.
+
+Há ainda uma armadilha do `os/exec`: com `Stdout` num `bytes.Buffer`, o `Wait()` só retorna
+quando todos os escritores do pipe fecham — **inclusive os netos**. Um neto vivo trava o
+`Wait()` e o prazo não resolve nada. Medido na contraprova: 8,3 s em vez de 0,3 s.
+
+Os dois executores (download e render) passaram a delegar a `internal/processo`, que:
+
+- põe o comando num grupo próprio (`Setpgid`) e faz o cancelamento enviar `SIGKILL` ao
+  grupo inteiro (PID negativo), alcançando os filhos;
+- define `WaitDelay` como rede contra o pipe preso;
+- usa `cmd.Run()` (Start + Wait), então **quando `Rodar` retorna o processo já foi
+  colhido** — a limpeza de resíduo que vem depois nunca corre contra um processo vivo.
+
+Provado por teste com contraprova: sem o kill de grupo, o neto sobrevive e **60 MB
+continuam alocados no filesystem** mesmo com o arquivo já apagado. O teste mede `statfs`,
+não a presença do arquivo — a primeira versão media a pasta e passava com o bug presente,
+o que é pior que não ter teste.
 
 **2. Autocura no reinício.** O estado dos pedidos vive **só em memória**: o servidor não
 grava `pedido.json` (só o `cmd/baixar` grava) e `Novo()` não lê nada do disco. Um pedido

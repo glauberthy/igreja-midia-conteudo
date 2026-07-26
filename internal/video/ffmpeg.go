@@ -17,17 +17,16 @@
 package video
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"srtclean/internal/harness"
 	"srtclean/internal/pipeline"
+	"srtclean/internal/processo"
 	"srtclean/internal/transcricao"
 	"srtclean/internal/validacao"
 )
@@ -75,16 +74,13 @@ type Executor interface {
 	Rodar(ctx context.Context, nome string, args ...string) (stdout, stderr []byte, err error)
 }
 
-// ExecutorReal executa de fato o comando no sistema.
+// ExecutorReal executa de fato o comando no sistema. Delega a internal/processo, que
+// mata o GRUPO no cancelamento — sem isso o ffmpeg neto sobreviveria segurando o arquivo
+// parcial, e o espaço em disco não voltaria mesmo depois da limpeza apagar o arquivo.
 type ExecutorReal struct{}
 
 func (ExecutorReal) Rodar(ctx context.Context, nome string, args ...string) ([]byte, []byte, error) {
-	cmd := exec.CommandContext(ctx, nome, args...)
-	var out, errb bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
-	err := cmd.Run()
-	return out.Bytes(), errb.Bytes(), err
+	return processo.Rodar(ctx, nome, args...)
 }
 
 // Renderizador orquestra a geração dos Shorts. BaseDir é a raiz de trabalho
