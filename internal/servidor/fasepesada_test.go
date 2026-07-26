@@ -18,15 +18,14 @@ import (
 // --- Mocks da fase pesada ---
 
 type baixadorVideoFake struct {
-	erro        error
-	inicio, fim string
-	chamado     bool
-	mu          sync.Mutex
+	erro    error
+	chamado bool
+	mu      sync.Mutex
 }
 
-func (b *baixadorVideoFake) BaixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) error {
+func (b *baixadorVideoFake) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) error {
 	b.mu.Lock()
-	b.inicio, b.fim, b.chamado = inicio, fim, true
+	b.chamado = true
 	b.mu.Unlock()
 	if b.erro != nil {
 		ped.Status = pipeline.EstadoErro
@@ -87,28 +86,8 @@ func candsJanela() *selecionadorFake {
 	}}
 }
 
-// TestJanelaDownload: a janela contígua vai do menor start (piso ao seg) ao maior end
-// (teto ao seg); a origem é o piso do menor start. É a correspondência de tempo do lado
-// do servidor.
-func TestJanelaDownload(t *testing.T) {
-	aprovados := []validacao.Candidato{
-		{Start: "01:45:25.800", End: "01:46:10.200"}, // menor start
-		{Start: "02:04:03.000", End: "02:04:37.500"}, // maior end
-	}
-	ini, fim, origem := janelaDownload(aprovados)
-	if ini != "01:45:25" {
-		t.Errorf("início = %q, quero 01:45:25 (piso ao segundo do menor start)", ini)
-	}
-	if fim != "02:04:38" {
-		t.Errorf("fim = %q, quero 02:04:38 (teto ao segundo do maior end)", fim)
-	}
-	if origem != 6325000 {
-		t.Errorf("origem = %d ms, quero 6325000 (= 01:45:25)", origem)
-	}
-}
-
-// Fluxo completo: aprovar dispara a fase pesada; download recebe a janela contígua, render
-// recebe a origem certa, e os Shorts ficam disponíveis para download.
+// Fluxo completo: aprovar dispara a fase pesada; baixa o vídeo INTEIRO, o render recebe
+// origem ZERO (tempo absoluto) e os Shorts ficam disponíveis para download.
 func TestFaseHeavyFluxoCompleto(t *testing.T) {
 	bv := &baixadorVideoFake{}
 	rf := &renderFake{}
@@ -120,19 +99,20 @@ func TestFaseHeavyFluxoCompleto(t *testing.T) {
 	aprovarJSON(t, s, "teste-1", []int{0, 2})
 	esperarStatus(t, s, "teste-1", pipeline.EstadoConcluido)
 
-	// Download da janela contígua [01:45:25, 02:04:38].
+	// Baixou o vídeo inteiro (sem janela a calcular).
 	bv.mu.Lock()
-	ini, fim := bv.inicio, bv.fim
+	baixou := bv.chamado
 	bv.mu.Unlock()
-	if ini != "01:45:25" || fim != "02:04:38" {
-		t.Errorf("janela de download = [%s, %s], quero [01:45:25, 02:04:38]", ini, fim)
+	if !baixou {
+		t.Error("a fase pesada deveria ter baixado o vídeo")
 	}
-	// Render com a origem = menor start aprovado (01:45:25 = 6325000 ms), 2 candidatos.
+	// CONTRATO DE TEMPO: com o vídeo inteiro, a origem é ZERO — o render corta em tempo
+	// absoluto. Origem != 0 aqui significaria corte no lugar errado.
 	rf.mu.Lock()
 	origem, n := rf.origemMs, rf.nCands
 	rf.mu.Unlock()
-	if origem != 6325000 {
-		t.Errorf("origem do render = %d, quero 6325000 (o corte seria no lugar errado)", origem)
+	if origem != 0 {
+		t.Errorf("origem do render = %d, quero 0 (vídeo inteiro = tempo absoluto)", origem)
 	}
 	if n != 2 {
 		t.Errorf("render recebeu %d candidatos, quero 2 (os aprovados)", n)

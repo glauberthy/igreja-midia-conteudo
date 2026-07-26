@@ -49,9 +49,11 @@ type Selecionador interface {
 	Selecionar(ctx context.Context, transcricaoPath string) ([]validacao.Candidato, error)
 }
 
-// BaixadorVideo baixa APENAS a janela [inicio, fim] do vídeo (fase pesada, spec-05 parte 3).
+// BaixadorVideo baixa o vídeo do pedido para a fase pesada (spec-05 parte 3). Baixa o
+// vídeo INTEIRO com o downloader nativo paralelo — medido como ~79x mais rápido que baixar
+// só a janela dos aprovados (o gargalo é paralelismo, não volume; ver spec-05).
 type BaixadorVideo interface {
-	BaixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) error
+	BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) error
 }
 
 // RenderizadorVideo renderiza os candidatos aprovados a partir do video.mp4 baixado, com a
@@ -313,10 +315,11 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 // faseHeavy é a máquina de estados da fase pesada (spec-05 parte 3): baixando-video →
 // renderizando → concluido (ou erro, com mensagem clara — nunca trava). Roda em goroutine.
 //
-// Alinhamento de tempo (cuidado crítico da spec): baixa APENAS a janela contígua que cobre
-// todos os trechos aprovados — [menor start, maior end] — via --download-sections. O
-// arquivo resultante começa em t=0 no MENOR start (origemMs); o render recebe essa MESMA
-// origem (RenderizarComOrigem), então cada corte é (start - origemMs), casando exatamente.
+// Alinhamento de tempo: baixa o vídeo INTEIRO (downloader nativo paralelo), então o arquivo
+// começa no início do vídeo e a origem é ZERO — o corte de cada trecho usa o start/end
+// ABSOLUTO, sem nenhum cálculo de origem a propagar. Isso substituiu a janela contígua
+// (origem = menor start): além de ~79x mais rápido (577 s → 7,3 s, medido), elimina a
+// classe de bug de "origem trocada" entre download e render.
 func (s *Servidor) faseHeavy(reg *registro) {
 	ctx := context.Background()
 
@@ -328,18 +331,15 @@ func (s *Servidor) faseHeavy(reg *registro) {
 		return
 	}
 
-	// Janela de download = [menor start, maior end] dos aprovados; origem = menor start
-	// (piso ao segundo, o que o yt-dlp recebe). Ver janelaDownload.
-	iniHms, fimHms, origemMs := janelaDownload(aprovados)
-
 	s.setStatus(reg, pipeline.EstadoBaixandoVideo)
-	if err := s.baixadorVideo.BaixarVideoJanela(ctx, reg.ped, iniHms, fimHms); err != nil {
+	if err := s.baixadorVideo.BaixarVideoCompleto(ctx, reg.ped); err != nil {
 		s.setErro(reg, mensagemErroDownload(err))
 		return
 	}
 
 	s.setStatus(reg, pipeline.EstadoRenderizando)
-	paths, err := s.renderizador.RenderizarComOrigem(ctx, reg.ped, aprovados, origemMs)
+	// Origem 0: o video.mp4 é o vídeo inteiro, então t=0 do arquivo == t=0 do vídeo.
+	paths, err := s.renderizador.RenderizarComOrigem(ctx, reg.ped, aprovados, origemVideoCompleto)
 	if err != nil {
 		s.setErro(reg, "falha ao renderizar os Shorts: "+err.Error())
 		return

@@ -165,6 +165,43 @@ func TestBaixarTempoInvalido(t *testing.T) {
 	}
 }
 
+// A fase pesada baixa o vídeo INTEIRO com o downloader NATIVO em paralelo — é o que
+// destrava a velocidade (~79x vs a janela contígua; ver spec-05). Este teste fixa as
+// escolhas que dão essa velocidade, para não regredirem sem querer.
+func TestArgsVideoCompletoUsaDownloaderNativoParalelo(t *testing.T) {
+	args := argsVideoCompleto("URL", "trabalho/x", FormatoPadrao)
+
+	if !contem(args, "--concurrent-fragments") || !contem(args, "8") {
+		t.Errorf("faltou o paralelismo de fragmentos (o que dá a velocidade): %v", args)
+	}
+	// NÃO pode voltar a entregar o download ao ffmpeg: é o caminho lento (1 conexão).
+	if contem(args, "--download-sections") {
+		t.Errorf("--download-sections entrega o download ao ffmpeg (lento, 1 conexão): %v", args)
+	}
+	if contem(args, "--downloader-args") {
+		t.Errorf("--downloader-args (ffmpeg) não se aplica ao downloader nativo: %v", args)
+	}
+	if !contem(args, "--force-overwrites") {
+		t.Errorf("sem --force-overwrites o yt-dlp reaproveita o vídeo de outro pedido: %v", args)
+	}
+}
+
+// O teto de formato é 1080, NÃO 720: hoje a transmissão é 720p (e é isso que vem), mas
+// quando subir para 1080p o pipeline aproveita sozinho. O teto evita baixar 4K à toa.
+func TestFormatoPadraoTeto1080(t *testing.T) {
+	if !strings.Contains(FormatoPadrao, "height<=1080") {
+		t.Errorf("FormatoPadrao deveria limitar a 1080: %q", FormatoPadrao)
+	}
+	if strings.Contains(FormatoPadrao, "height<=720") {
+		t.Errorf("NÃO fixe em 720 — quando a igreja subir para 1080p o pipeline deve aproveitar sozinho: %q", FormatoPadrao)
+	}
+	// Sem formato explícito, o Baixador usa o padrão (nunca "melhor disponível", que pegaria 4K).
+	b := &Baixador{}
+	if b.formato() != FormatoPadrao {
+		t.Errorf("formato() sem configuração = %q, quero o padrão", b.formato())
+	}
+}
+
 // --- Anti-bot / 429: erro nomeado + retry com espera crescente ---
 
 // capturaRetryDownload troca o log e o sleep durante o teste (não espera de verdade) e

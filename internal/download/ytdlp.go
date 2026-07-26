@@ -152,6 +152,24 @@ func (b *Baixador) baseDir() string {
 	return b.BaseDir
 }
 
+// FormatoPadrao é o seletor de formato do yt-dlp quando nenhum é informado.
+//
+// NÃO troque para <=720 "para economizar banda". As transmissões da igreja HOJE são 720p,
+// então este seletor já baixa 720p — é o que existe. O teto em 1080 é intencional e
+// preparatório: no dia em que a transmissão subir para 1080p, o pipeline aproveita
+// sozinho, sem ninguém precisar lembrar de mudar este código. Isso importa porque o Short
+// é um corte 9:16 do CENTRO: de uma fonte 720p sobram só 405x720 pixels reais (ampliados
+// para 1080x1920), enquanto de 1080p sobrariam 608x1080 — 2,25x mais pixels reais. O teto
+// existe para NÃO baixar 4K à toa (custo sem ganho para o nosso corte).
+const FormatoPadrao = "bv*[height<=1080]+ba/b[height<=1080]"
+
+func (b *Baixador) formato() string {
+	if b.Formato == "" {
+		return FormatoPadrao
+	}
+	return b.Formato
+}
+
 // Baixar executa o fluxo completo para o pedido. Em qualquer falha, preenche
 // ped.Status = erro e ped.Erro com a mensagem, e devolve o erro nomeado.
 //
@@ -255,11 +273,51 @@ func (b *Baixador) baixarVideo(ctx context.Context, ped *pipeline.Pedido) error 
 	return b.baixarVideoJanela(ctx, ped, ped.Inicio, ped.Fim)
 }
 
-// BaixarVideoJanela baixa APENAS a janela [inicio, fim] do vídeo (via --download-sections),
-// não a pregação inteira — é a fase pesada do fluxo invertido (spec-05 parte 3): baixa só o
-// necessário para os trechos aprovados. O video.mp4 resultante começa em t=0 em `inicio`
-// (o render tem que usar essa MESMA origem — ver video.RenderizarComOrigem). Em falha,
-// preenche ped.Status = erro e ped.Erro.
+// BaixarVideoCompleto baixa o vídeo INTEIRO com o downloader NATIVO do yt-dlp em paralelo
+// (--concurrent-fragments), sem --download-sections. É a fase pesada do servidor (spec-05
+// parte 3).
+//
+// Por que o vídeo inteiro, e não só as janelas aprovadas (medido, ver spec-05): o gargalo é
+// PARALELISMO, não volume. Todo caminho que usa o ffmpeg como downloader (--download-sections,
+// ou -ss numa URL) abre UMA conexão e o YouTube estrangula a ~84-174 KiB/s; o downloader
+// nativo abre N fragmentos em paralelo e atinge ~26 MiB/s. Medição no mesmo vídeo: janela
+// contígua de 18 min = 577 s; vídeo inteiro (46 min) = 7,3 s — ~79x mais rápido baixando
+// MAIS bytes. De quebra, o contrato de tempo fica trivial: o arquivo começa no início do
+// vídeo, então a origem é 0 e o corte de cada trecho usa o start/end ABSOLUTO.
+//
+// Em falha, preenche ped.Status = erro e ped.Erro.
+func (b *Baixador) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) error {
+	dir := filepath.Join(b.baseDir(), ped.ID)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		ped.Status = pipeline.EstadoErro
+		ped.Erro = err.Error()
+		return fmt.Errorf("criando pasta de trabalho: %w", err)
+	}
+	err := comRetry(ctx, "baixando vídeo", func() error {
+		_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsVideoCompleto(ped.YouTubeURL, dir, b.formato())...)
+		if err != nil {
+			if antiBot(stderr) {
+				return ErrAntiBot
+			}
+			if indisponivel(stderr) {
+				return ErrVideoIndisponivel
+			}
+			return fmt.Errorf("baixando vídeo: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		ped.Status = pipeline.EstadoErro
+		ped.Erro = err.Error()
+		return err
+	}
+	return nil
+}
+
+// BaixarVideoJanela baixa APENAS a janela [inicio, fim] do vídeo (via --download-sections).
+// MANTIDO para o cmd/baixar (CLI) e compatibilidade; a fase pesada do servidor usa
+// BaixarVideoCompleto, que é ~79x mais rápido (ver a nota lá). Em falha, preenche
+// ped.Status = erro e ped.Erro.
 func (b *Baixador) BaixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) error {
 	dir := filepath.Join(b.baseDir(), ped.ID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -278,7 +336,7 @@ func (b *Baixador) BaixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, 
 func (b *Baixador) baixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) error {
 	dir := filepath.Join(b.baseDir(), ped.ID)
 	return comRetry(ctx, "baixando vídeo", func() error {
-		_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsVideo(ped.YouTubeURL, inicio, fim, dir, b.Formato)...)
+		_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsVideo(ped.YouTubeURL, inicio, fim, dir, b.formato())...)
 		if err != nil {
 			if antiBot(stderr) {
 				return ErrAntiBot
@@ -305,6 +363,28 @@ func argsLegenda(url, dir, subLangs string) []string {
 		"--sub-langs", subLangs,
 		"--convert-subs", "srt",
 		"-o", filepath.Join(dir, "legenda.%(ext)s"),
+		url,
+	}
+}
+
+// fragmentosParalelos é quantos fragmentos o downloader nativo puxa ao mesmo tempo. É o
+// que destrava a velocidade: 1 conexão é estrangulada pelo YouTube (~174 KiB/s), 8 em
+// paralelo atingem ~26 MiB/s (medido — ver spec-05).
+const fragmentosParalelos = "8"
+
+// argsVideoCompleto monta o yt-dlp para baixar o vídeo INTEIRO com o downloader NATIVO em
+// paralelo. Sem --download-sections e sem --downloader-args de ffmpeg justamente porque
+// esses caminhos entregam o download ao ffmpeg (conexão única, lenta); aqui queremos o
+// downloader nativo com fragmentos concorrentes.
+func argsVideoCompleto(url, dir, formato string) []string {
+	return []string{
+		"--no-playlist",
+		// --force-overwrites: nunca reaproveitar silenciosamente um video.mp4 de outro pedido.
+		"--force-overwrites",
+		"--concurrent-fragments", fragmentosParalelos,
+		"--merge-output-format", "mp4",
+		"-f", formato,
+		"-o", filepath.Join(dir, "video.%(ext)s"),
 		url,
 	}
 }
