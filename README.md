@@ -219,6 +219,24 @@ go run ./cmd/auditar -id <pedido> -texto
   "Rodada N" com os candidatos ordenados por score, o título do vídeo e a janela — para
   comparar variância entre sermões/execuções. Configurável com `-log`.
 
+### Auditoria de desempenho
+
+- **Tempos por pedido** (`resultados/tempos.csv`, configurável com `-tempos`): uma linha
+  por pedido, em append, com a duração de **cada etapa** (baixar legenda, selecionar,
+  validar, baixar vídeo, renderizar, e a média por Short) e o **contexto que explica a
+  variação** (duração do sermão, tokens da transcrição, nº de candidatos, nº de aprovados,
+  tamanho do vídeo, retries). Ao final de cada pedido o servidor também imprime um resumo
+  no log.
+- O **tempo aguardando aprovação** é medido, mas fica em coluna separada e **fora do total
+  de máquina**: é tempo humano (o operador revisando), não desempenho do sistema —
+  misturar faria um pedido revisado no dia seguinte parecer uma falha de performance.
+- Como é CSV, dá para agregar direto:
+  ```bash
+  # média e variação do total de máquina, depois de alguns pedidos
+  awk -F, 'NR>1{s+=$16; n++; if($16>max)max=$16; if(min==""||$16<min)min=$16}
+           END{printf "n=%d  média=%.1fs  min=%.1fs  max=%.1fs\n", n, s/n, min, max}' resultados/tempos.csv
+  ```
+
 ## Como executar as ferramentas
 
 Todas são binários Go (`go run ./cmd/<nome>`). As que falam com o modelo esperam o
