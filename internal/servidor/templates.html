@@ -96,19 +96,22 @@
     .reprovar { flex: 1; }
     .atalhos { font-size: 12px; color: var(--tinta-tenue); margin: 10px 0 0; }
 
-    /* Item 4: vídeo de um lado, texto+controles do outro — tudo numa tela, sem rolar.
-       Abaixo de 900px volta a empilhar (o operador às vezes revisa no notebook pequeno). */
-    .duas-colunas { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    /* Layout: vídeo + CONTROLES à esquerda (onde havia espaço morto sob o player), faixa de
+       frases à direita com rolagem própria. A divisão 46/54 é do mockup: a esquerda cabe os
+       controles sem quebrar linha, a direita fica com o texto, que é o que ocupa espaço. */
+    .duas-colunas { display: grid; grid-template-columns: minmax(0, 46fr) minmax(0, 54fr);
       gap: 18px; align-items: start; }
-    @media (max-width: 900px) { .duas-colunas { grid-template-columns: 1fr; } }
-    .coluna-video { position: sticky; top: 12px; }
+    @media (max-width: 760px) { .duas-colunas { grid-template-columns: 1fr; } }
 
     /* ajuste manual do corte (spec-05 v2, redesenho) — CSS do mockup de referência */
     .rotulo-secao { font-size: 13px; color: var(--tinta-fraca); margin: 0 0 8px; }
 
-    /* faixa de frases clicável: a mudança principal do redesenho */
+    /* faixa de frases clicável: a mudança principal do redesenho.
+       max-height + rolagem própria porque a faixa tem uma dúzia de frases e, sem isso, empurra
+       os controles para fora da tela. */
+    .instrucao { font-size: 13px; font-weight: 600; color: var(--sel-tinta); margin: 0 0 6px; }
     .frases { background: var(--papel); border: 1px solid var(--linha);
-      border-radius: var(--raio); padding: 6px; margin-bottom: 18px; }
+      border-radius: var(--raio); padding: 6px; max-height: 420px; overflow-y: auto; }
     .frase { display: block; width: 100%; text-align: left; font-family: inherit;
       font-size: 13.5px; line-height: 1.5; padding: 7px 10px; margin: 0;
       border: 1px solid transparent; border-radius: var(--raio); background: transparent;
@@ -119,18 +122,21 @@
       font-variant-numeric: tabular-nums; }
     .frase.dentro .t { color: var(--sel-tinta); opacity: 0.75; }
 
-    /* linhas de controle: o número que muda fica ENTRE os botões que o mudam */
-    .linha-ctrl { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
-    .campo { font-size: 13px; color: var(--tinta-fraca); width: 46px; flex: none; }
-    .valor { font-size: 16px; font-weight: 600; min-width: 86px; text-align: center;
+    /* Setas em volta do valor: « ‹ 00:04:13 › ». Esquerda = mais cedo, direita = mais tarde,
+       dupla = 1s, simples = 0,25s. Ocupa um quinto do espaço dos botões rotulados e a direção
+       é auto-evidente — não exige a tradução mental que "−1s"/"+1s" exigia. */
+    .linha-ctrl { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+    .campo { font-size: 13px; color: var(--tinta-fraca); width: 44px; flex: none; }
+    .valor { font-size: 16px; font-weight: 600; min-width: 78px; text-align: center;
       font-variant-numeric: tabular-nums; }
-    .linha-ctrl button { font-size: 13px; padding: 7px 12px; }
-    button.quieto { color: var(--tinta-fraca); }
-    button.ouvir { background: var(--sel-bg); border-color: var(--sel-linha);
-      color: var(--sel-tinta); font-weight: 600; }
-    button.fino { font-size: 12px; padding: 4px 10px; }
-    .fino-linha { display: flex; align-items: center; gap: 8px; margin: 0 0 16px 56px; }
-    .fino-rotulo { font-size: 12px; color: var(--tinta-tenue); }
+    button.seta-t { font-size: 13px; padding: 5px 9px; min-width: 30px; }
+    .dica-passos { font-size: 11px; color: var(--tinta-tenue); margin: 0 0 14px 48px; }
+    .grupo-play { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+    .grupo-play button { font-size: 12px; padding: 5px 9px; }
+    /* Selo "tocando a emenda…": o operador precisa saber que o som veio do sistema, não de um
+       clique acidental dele. */
+    .selo-toque { font-size: 12px; color: var(--sel-tinta); background: var(--sel-bg);
+      padding: 3px 8px; border-radius: var(--raio); margin-left: 8px; }
 
     .ajuste-rodape { display: flex; align-items: center; justify-content: space-between;
       gap: 12px; padding-top: 12px; border-top: 1px solid var(--linha); }
@@ -200,7 +206,11 @@
               // viz[i] guarda a vizinhança de frases do trecho SEM ajuste, para a faixa
               // clicável já abrir preenchida.
               viz: dados.trechos.map(function(){ return null; }),
-              debounce: null, meia: false, relogio: null, ultimaPonta: 'fim' };
+              debounce: null, meia: false, relogio: null, ultimaPonta: 'fim',
+              // Fluxo de DOIS CLIQUES (substitui a heurística do meio do trecho): o primeiro
+              // clique define o início, o segundo o fim, o terceiro recomeça. Por trecho,
+              // para trocar de trecho não herdar o estado do anterior.
+              proximoClique: dados.trechos.map(function(){ return 'ini'; }) };
       ligarControles();
       desenhar();
       criarPlayer();
@@ -254,6 +264,17 @@
     function doInicio() { tocarIntervalo(efetivoAtual().iniMs / MS, limiteFim); }
 
     // ouvirInicio: os primeiros segundos DO CORTE — começa no start, não antes dele.
+    // avisarToque mostra de onde veio o som: a emenda toca sozinha, e sem aviso o operador não
+    // sabe se foi o sistema ou um clique acidental dele.
+    function avisarToque(qual) {
+      var el = document.getElementById('aj-tocando');
+      if (!el) return;
+      el.textContent = qual === 'inicio' ? 'tocando a emenda do início…' : 'tocando a emenda do fim…';
+      el.hidden = false;
+      clearTimeout(REV.seloToque);
+      REV.seloToque = setTimeout(function () { el.hidden = true; }, (SEG_EMENDA + 1) * 1000);
+    }
+
     function ouvirInicio() {
       var e = efetivoAtual();
       var fim = Math.min(e.iniMs / MS + SEG_EMENDA, e.fimMs / MS);
@@ -339,28 +360,48 @@
       else moverPara(e.iniMs, e.fimMs + deltaMs, 'fim');
     }
 
-    // usarTempoDoPlayer é o antigo "marcar aqui", agora com o tempo VISÍVEL no rótulo do
-    // botão — o operador vê que tempo vai usar antes de clicar, em vez de clicar às cegas.
-    // Só o Fim o usa: no Início, clicar na frase é mais preciso (item 2).
-    function usarTempoDoPlayer(qual) {
-      if (!REV.prontoPlayer) return;
+    // clicarFrase é a operação nativa do ajuste: o servidor já encaixa o corte em fronteira de
+    // fala, então apontar uma frase é dizer exatamente onde o corte deve cair.
+    //
+    // DETERMINÍSTICO, por dois cliques. Antes o sistema adivinhava a ponta comparando o clique
+    // com o meio do trecho — e quando errava, o operador não tinha como entender por quê.
+    // Agora: 1º clique = início, 2º = fim, 3º recomeça, com a instrução visível ANTES do
+    // clique. Ele sabe o que vai acontecer em vez de descobrir depois.
+    function clicarFrase(f, fs) {
       var e = efetivoAtual();
-      var ms = Math.round(REV.player.getCurrentTime() * MS);
-      if (qual === 'inicio') moverPara(ms, e.fimMs, 'inicio'); else moverPara(e.iniMs, ms, 'fim');
+      var i = REV.atual;
+
+      if (REV.proximoClique[i] === 'ini') {
+        var fim = e.fimMs;
+        // Início depois do fim atual: empurra o fim para a frase seguinte, senão o corte
+        // ficaria invertido e o operador levaria um erro por um clique legítimo.
+        if (fim <= f.inicio_ms) fim = fimDaFraseSeguinte(fs, f);
+        REV.proximoClique[i] = 'fim';
+        moverPara(f.inicio_ms, fim, 'inicio');
+        return;
+      }
+      // O fim do trecho é onde a PRÓXIMA fala começa — é isso que o operador quer dizer ao
+      // apontar a última frase que deve entrar.
+      var novoFim = fimDaFraseSeguinte(fs, f);
+      var ini = e.iniMs;
+      if (novoFim <= ini) ini = f.inicio_ms;
+      REV.proximoClique[i] = 'ini';
+      moverPara(ini, novoFim, 'fim');
     }
 
-    // clicarFrase é a operação nativa do ajuste: o servidor já encaixa o corte em fronteira
-    // de fala, então apontar uma frase é dizer exatamente onde o corte deve cair. Antes do
-    // meio do trecho move o início; depois, o fim.
-    function clicarFrase(f) {
-      var e = efetivoAtual();
-      var meio = (e.iniMs + e.fimMs) / 2;
-      if (f.inicio_ms < meio) moverPara(f.inicio_ms, e.fimMs, 'inicio');
-      else moverPara(e.iniMs, f.fim_ms, 'fim');
+    // fimDaFraseSeguinte: o começo da próxima fala da faixa; sem próxima, o fim da própria.
+    function fimDaFraseSeguinte(fs, f) {
+      if (fs) {
+        for (var k = 0; k < fs.length; k++) {
+          if (fs[k].inicio_ms > f.inicio_ms) return fs[k].inicio_ms;
+        }
+      }
+      return f.fim_ms > f.inicio_ms ? f.fim_ms : f.inicio_ms + 15000;
     }
 
     function restaurar() {
       REV.ajustes[REV.atual] = null;
+      REV.proximoClique[REV.atual] = 'ini'; // recomeça o fluxo de dois cliques
       clearTimeout(REV.debounce);
       desenhar();
     }
@@ -388,6 +429,7 @@
           if (ouvir && resp.aprovavel) {
             // O seekTo(true) acontece dentro do tocarIntervalo, que é onde a busca de verdade
             // é necessária.
+            avisarToque(REV.ultimaPonta);
             if (REV.ultimaPonta === 'inicio') ouvirInicio(); else ouvirFim();
           } else if (REV.prontoPlayer) {
             // Debounce assentou sem tocar: ainda vale buscar de verdade (allowSeekAhead=true).
@@ -423,25 +465,26 @@
                '<span class="t">' + f.rotulo + '</span>' + escapar(f.texto) + marca + '</button>';
       }).join('');
       wrap.querySelectorAll('.frase').forEach(function (b) {
-        b.addEventListener('click', function () { clicarFrase(fs[+b.dataset.i]); });
+        b.addEventListener('click', function () { clicarFrase(fs[+b.dataset.i], fs); });
       });
+      rolarAteSelecionadas(wrap);
+    }
+
+    // rolarAteSelecionadas põe as frases do corte à vista. Sem isto, ao trocar de trecho a
+    // faixa (que agora tem rolagem própria) abre no topo e o operador não vê onde está o corte.
+    function rolarAteSelecionadas(wrap) {
+      var primeira = wrap.querySelector('.frase.dentro');
+      if (!primeira) return;
+      // scrollTop direto em vez de scrollIntoView: este último rolaria a PÁGINA também,
+      // desfazendo o ganho de caber numa tela.
+      var alvo = primeira.offsetTop - wrap.offsetTop - 8;
+      wrap.scrollTop = Math.max(0, alvo);
     }
 
     function escapar(txt) {
       var d = document.createElement('div');
       d.textContent = txt || '';
       return d.innerHTML;
-    }
-
-    // atualizarRotuloDoPlayer mantém o tempo VISÍVEL no botão — "usar 00:05:13" em vez de
-    // "marcar aqui", que não dizia aqui onde. Rótulo curto (sem "do player") para caber na
-    // linha do Fim, que já tem quatro controles.
-    function atualizarRotuloDoPlayer() {
-      var b = document.getElementById('aj-usar-fim');
-      if (!b) return;
-      if (!REV || !REV.prontoPlayer) { b.textContent = 'usar —'; return; }
-      b.textContent = 'usar ' + rotulo(REV.player.getCurrentTime() * MS);
-      b.title = 'usa o tempo atual do player como fim do corte';
     }
 
     function desenharAjuste() {
@@ -451,8 +494,6 @@
 
       document.getElementById('aj-v-ini').textContent = rotulo(e.iniMs);
       document.getElementById('aj-v-fim').textContent = rotulo(e.fimMs);
-
-      atualizarRotuloDoPlayer();
 
       // Resumo em linguagem natural, não dois timestamps com milissegundos.
       var dur = Math.round(e.durMs / MS);
@@ -468,6 +509,12 @@
                 : (-d) + 's a menos que o original';
         r.textContent = txt + ' · fica com ' + dur + 's';
         r.classList.add('mudou');
+      }
+
+      var instr = document.getElementById('aj-instrucao');
+      if (instr) {
+        instr.textContent = (REV.proximoClique[REV.atual] === 'ini')
+          ? '1. clique onde COMEÇA' : '2. agora clique onde TERMINA';
       }
 
       var inv = document.getElementById('aj-invalido');
@@ -623,24 +670,17 @@
       ligar('btn-play', playPause);
       ligar('btn-inicio', doInicio);
       ligar('btn-meia', meiaVelocidade);
-      // Rótulos pelo EFEITO ("mais cedo"/"mais tarde"), não por sinal: "−1s" no início deixa
-      // o trecho MAIS longo e "+1s" no fim também, então o mesmo rótulo produzia efeitos
-      // opostos por linha e exigia tradução mental a cada clique.
-      ligar('aj-ini-cedo', function () { empurrar('inicio', -1000); });
-      ligar('aj-ini-tarde', function () { empurrar('inicio', 1000); });
-      ligar('aj-fim-cedo', function () { empurrar('fim', -1000); });
-      ligar('aj-fim-tarde', function () { empurrar('fim', 1000); });
-      // Ajuste fino SÓ no fim, e subordinado: no início o encaixe em fronteira de fala (1s)
-      // torna o passo menor inócuo. Como linha subordinada, a assimetria lê como recurso
-      // extra do fim, não como falta no início.
-      ligar('aj-fim-m025', function () { empurrar('fim', -250); });
-      ligar('aj-fim-p025', function () { empurrar('fim', 250); });
-      // Item 2: o "usar o tempo do player" do Início saiu — com a faixa de frases, clicar na
-      // frase é melhor e mais preciso. Ficou só o do Fim, dentro da linha do Fim.
-      ligar('aj-usar-fim', function () { usarTempoDoPlayer('fim'); });
-      // Item 5: uma escuta de cada, junto dos controles a que pertence.
-      ligar('aj-ouvir-ini', ouvirInicio);
-      ligar('aj-ouvir-fim', ouvirFim);
+      // Setas em volta do valor: esquerda = mais cedo, direita = mais tarde, dupla = 1s,
+      // simples = 0,25s. A direção é auto-evidente, sem a tradução mental que "−1s"/"+1s"
+      // exigia (lá, "−1s" no início ALONGAVA o trecho).
+      ligar('aj-ini-mm', function () { empurrar('inicio', -1000); });
+      ligar('aj-ini-m', function () { empurrar('inicio', -250); });
+      ligar('aj-ini-p', function () { empurrar('inicio', 250); });
+      ligar('aj-ini-pp', function () { empurrar('inicio', 1000); });
+      ligar('aj-fim-mm', function () { empurrar('fim', -1000); });
+      ligar('aj-fim-m', function () { empurrar('fim', -250); });
+      ligar('aj-fim-p', function () { empurrar('fim', 250); });
+      ligar('aj-fim-pp', function () { empurrar('fim', 1000); });
       ligar('aj-restaurar', restaurar);
       ligar('aprovar', function () { decidir('aprovado'); });
       ligar('reprovar', function () { decidir('reprovado'); });
@@ -648,7 +688,6 @@
       ligar('proximo', function () { irPara(REV.atual + 1); });
       // Relógio do rótulo "usar HH:MM:SS do player": sem ele o tempo mostrado envelhece e o
       // operador volta a clicar às cegas.
-      REV.relogio = setInterval(atualizarRotuloDoPlayer, 500);
       ligar('gerar', confirmar);
     }
 
@@ -661,7 +700,6 @@
       else if (e.key === 'ArrowLeft') irPara(REV.atual - 1);
       else if (e.key === 'ArrowRight') irPara(REV.atual + 1);
       else if (e.key === ' ') { e.preventDefault(); playPause(); }
-      else if (k === 'f') usarTempoDoPlayer('fim');
     });
 
     // A tela de revisão chega via HTMX; inicia quando o fragmento com os dados aparece.
@@ -707,6 +745,7 @@
   <div class="trilha" id="trilha"></div>
   <div class="carta">
     <p class="meta" id="meta"></p>
+    <p style="margin:0 0 10px"><span class="selo-toque" id="aj-tocando" hidden>tocando a emenda…</span></p>
     <div class="faixa-aviso" id="faixa-aviso" hidden>
       <p id="aviso-titulo"></p>
       <p id="aviso-motivo"></p>
@@ -715,39 +754,31 @@
     <div class="duas-colunas">
       <div class="coluna-video">
         <div class="palco"><div id="palco">player</div></div>
-        <div class="controles">
-          <button type="button" id="btn-play">▶ / ⏸ Tocar</button>
-          <button type="button" id="btn-inicio">↻ Do início</button>
-          <button type="button" id="btn-meia">🐢 Meia velocidade</button>
-        </div>
-      </div>
 
-      <div class="coluna-ajuste">
-        <p class="rotulo-secao">Clique numa frase para mover o início ou o fim — as destacadas estão dentro do corte</p>
-        <div class="frases" id="aj-frases"></div>
+        <div class="grupo-play">
+          <button type="button" id="btn-play">▶ / ⏸ tocar</button>
+          <button type="button" id="btn-inicio">↻ do início</button>
+          <button type="button" id="btn-meia">🐢 ½ velocidade</button>
+        </div>
 
         <div class="linha-ctrl">
           <span class="campo">Início</span>
-          <button type="button" id="aj-ini-cedo">‹ mais cedo</button>
+          <button type="button" class="seta-t" id="aj-ini-mm" title="1 segundo mais cedo">&laquo;</button>
+          <button type="button" class="seta-t" id="aj-ini-m" title="0,25 segundo mais cedo">&lsaquo;</button>
           <span class="valor" id="aj-v-ini">—</span>
-          <button type="button" id="aj-ini-tarde">mais tarde ›</button>
-          <button type="button" class="ouvir" id="aj-ouvir-ini">▶ ouvir o início</button>
+          <button type="button" class="seta-t" id="aj-ini-p" title="0,25 segundo mais tarde">&rsaquo;</button>
+          <button type="button" class="seta-t" id="aj-ini-pp" title="1 segundo mais tarde">&raquo;</button>
         </div>
 
-        <div class="linha-ctrl" style="margin-bottom:4px">
+        <div class="linha-ctrl">
           <span class="campo">Fim</span>
-          <button type="button" id="aj-fim-cedo">‹ mais cedo</button>
+          <button type="button" class="seta-t" id="aj-fim-mm" title="1 segundo mais cedo">&laquo;</button>
+          <button type="button" class="seta-t" id="aj-fim-m" title="0,25 segundo mais cedo">&lsaquo;</button>
           <span class="valor" id="aj-v-fim">—</span>
-          <button type="button" id="aj-fim-tarde">mais tarde ›</button>
-          <button type="button" class="ouvir" id="aj-ouvir-fim">▶ ouvir o fim</button>
-          <button type="button" class="quieto" id="aj-usar-fim">usar —</button>
+          <button type="button" class="seta-t" id="aj-fim-p" title="0,25 segundo mais tarde">&rsaquo;</button>
+          <button type="button" class="seta-t" id="aj-fim-pp" title="1 segundo mais tarde">&raquo;</button>
         </div>
-
-        <div class="fino-linha">
-          <span class="fino-rotulo">ajuste fino</span>
-          <button type="button" class="fino" id="aj-fim-m025">−0,25s</button>
-          <button type="button" class="fino" id="aj-fim-p025">+0,25s</button>
-        </div>
+        <p class="dica-passos">&lsaquo; 0,25s · &laquo; 1s — toca a emenda sozinho</p>
 
         <p class="ajuste-encaixe" id="aj-encaixe" hidden></p>
         <div class="ajuste-invalido" id="aj-invalido" hidden></div>
@@ -757,6 +788,11 @@
           <button type="button" id="aj-restaurar">↻ restaurar</button>
         </div>
       </div>
+
+      <div class="coluna-frases">
+        <p class="instrucao" id="aj-instrucao">1. clique onde COMEÇA</p>
+        <div class="frases" id="aj-frases"></div>
+      </div>
     </div>
 
     <div class="decisao">
@@ -765,7 +801,7 @@
       <button type="button" class="reprovar" id="reprovar">Reprovar</button>
       <button type="button" class="seta" id="proximo" aria-label="Próximo trecho">›</button>
     </div>
-    <p class="atalhos">Atalhos: A aprova · R reprova · ← → navega · espaço toca · F usa o tempo do player como fim</p>
+    <p class="atalhos">Atalhos: A aprova · R reprova · ← → navega · espaço toca</p>
   </div>
   <div class="rodape"><div class="rodape-conteudo">
     <span class="resumo" id="resumo">—</span>

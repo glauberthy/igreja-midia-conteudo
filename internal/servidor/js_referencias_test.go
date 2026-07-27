@@ -159,9 +159,9 @@ func TestFuncoesEssenciaisDaTelaExistem(t *testing.T) {
 		"playPause", "doInicio", "ouvirInicio", "ouvirFim", "meiaVelocidade", "limiteFim",
 		// ajuste (spec-05 v2)
 		"efetivo", "efetivoAtual", "origMs", "rotulo", "moverPara", "empurrar",
-		"usarTempoDoPlayer", "clicarFrase", "restaurar", "pedirRecalculo",
+		"clicarFrase", "fimDaFraseSeguinte", "restaurar", "pedirRecalculo",
 		"desenharFrases", "desenharAjuste", "garantirVizinhanca", "escapar",
-		"atualizarRotuloDoPlayer", "ligar",
+		"ligar", "avisarToque", "rolarAteSelecionadas",
 	}
 	for _, f := range essenciais {
 		if !decl[f] {

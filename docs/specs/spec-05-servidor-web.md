@@ -577,6 +577,43 @@ corte aquelas falas sao um bloco indivisivel, e a faixa passa a dizer isso ("2 f
 segundo"). A perda e real e aceitavel — ele nao pode comecar na segunda frase do bloco, mas nao
 podia antes tampouco; antes a interface **fingia** que podia.
 
+### Terceira rodada: tela simplificada (mockup `revisao-simplificada_referencia.html`)
+
+O layout lado a lado da rodada anterior criou um desperdicio: a coluna esquerda quase vazia (o
+video ocupava um terco, o resto era espaco morto) enquanto os controles se espremiam na direita e
+quebravam em duas linhas. Tres mudancas.
+
+**Fluxo de DOIS CLIQUES, no lugar da heuristica do meio.** O sistema adivinhava qual ponta mover
+comparando o clique com o meio do trecho — e quando errava, o operador nao tinha como entender
+por que. Agora e deterministico: **1º clique define o inicio, 2º define o fim, 3º recomeca**, com
+a instrucao visivel no topo da faixa (`1. clique onde COMECA` / `2. agora clique onde TERMINA`).
+Ele sabe o que vai acontecer **antes** de clicar, em vez de descobrir depois.
+
+O estado e por trecho, nao global: trocar de trecho nao herda o passo do anterior. "Restaurar"
+recomeca o ciclo. Ao clicar no fim, o corte termina onde a **proxima fala comeca** — e isso que o
+operador quer dizer ao apontar a ultima frase que deve entrar. Se o inicio escolhido passar do
+fim atual, o fim e empurrado para a frase seguinte em vez de o operador levar um erro por um
+clique legitimo.
+
+**Setas em volta do valor:** `« ‹ 00:04:13 › »`. Esquerda = mais cedo, direita = mais tarde,
+dupla = 1 s, simples = 0,25 s, com legenda pequena embaixo. Ocupa **um quinto** do espaco dos
+botoes rotulados e a direcao e auto-evidente — nem "±1s" (que exigia traduzir o sinal em efeito)
+nem "mais cedo/mais tarde" escrito (que ocupava a linha inteira). O texto migrou para o `title`
+de cada seta, onde serve de dica sem gastar espaco.
+
+Sairam: o "usar o tempo do player" (a faixa de frases faz melhor e mais preciso) e os botoes
+separados de "ouvir inicio/fim" (a escuta automatica cobre).
+
+**Layout invertido em relacao a rodada anterior:** controles a **esquerda, sob o video**, onde
+havia o espaco morto e onde eles cabem sem quebrar; faixa de frases a **direita, com rolagem
+propria** (`max-height` + `overflow-y`). A faixa tem uma duzia de frases e, sem rolagem interna,
+empurrava o painel para fora da tela — que era o problema original. A faixa **rola sozinha ate as
+frases selecionadas** ao trocar de trecho, com `scrollTop` e nao `scrollIntoView`: este ultimo
+rolaria a pagina inteira e desfaria o ganho de caber numa tela.
+
+Um selo `tocando a emenda…` avisa quando o som veio do sistema — a emenda toca sozinha, e sem
+aviso o operador nao sabe se foi ele que clicou em algo por acidente.
+
 ### Registro dos cortes: acumular o dado, sem agir sobre ele
 
 Cada ajuste manual e uma **medicao** do desvio da legenda: o operador, ao empurrar as pontas ate

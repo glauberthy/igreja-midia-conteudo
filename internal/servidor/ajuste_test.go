@@ -482,60 +482,16 @@ func TestTelaTrazControlesDeAjuste(t *testing.T) {
 	corpo := htmlDaRevisao(t)
 	for _, quer := range []string{
 		`id="aj-frases"`,                 // a faixa de frases clicável
-		`id="aj-v-ini"`, `id="aj-v-fim"`, // o valor ENTRE os botões que o mudam
-		`id="aj-ini-cedo"`, `id="aj-ini-tarde"`, `id="aj-fim-cedo"`, `id="aj-fim-tarde"`,
-		`id="aj-usar-fim"`,                       // "usar <tempo>", só no Fim (item 2)
-		`id="aj-ouvir-ini"`, `id="aj-ouvir-fim"`, // uma escuta de cada, junto do seu controle
+		`id="aj-instrucao"`,              // o passo do fluxo de dois cliques, ANTES do clique
+		`id="aj-v-ini"`, `id="aj-v-fim"`, // o valor ENTRE as setas que o mudam
+		`id="aj-ini-mm"`, `id="aj-ini-m"`, `id="aj-ini-p"`, `id="aj-ini-pp"`,
+		`id="aj-fim-mm"`, `id="aj-fim-m"`, `id="aj-fim-p"`, `id="aj-fim-pp"`,
 		`id="aj-restaurar"`, `id="aj-resumo"`, `id="aj-invalido"`, `id="btn-meia"`,
-		`class="duas-colunas"`, // layout numa tela (item 4)
+		`id="aj-tocando"`,      // selo: de onde veio o som
+		`class="duas-colunas"`, // layout numa tela
 	} {
 		if !strings.Contains(corpo, quer) {
 			t.Errorf("o fragmento de revisão não trouxe %q", quer)
-		}
-	}
-}
-
-// TestRotulosPeloEfeito trava a correção do principal ponto de confusão: "−1s" e "+1s" não
-// diziam o que faziam — "−1s" no início deixa o trecho MAIS longo, e "+1s" no fim também, o
-// que fazia o mesmo rótulo produzir efeitos opostos por linha.
-func TestRotulosPeloEfeito(t *testing.T) {
-	corpo := htmlDaRevisao(t)
-	for _, quer := range []string{"mais cedo", "mais tarde"} {
-		if !strings.Contains(corpo, quer) {
-			t.Errorf("os controles precisam ser rotulados pelo efeito: falta %q", quer)
-		}
-	}
-	// Os rótulos por sinal não podem voltar nos botões de 1s (o ajuste fino de 0,25s no fim
-	// segue com sinal, e ali é adequado: é um passo fino, subordinado e explícito).
-	for _, naoQuer := range []string{">−1s<", ">+1s<"} {
-		if strings.Contains(corpo, naoQuer) {
-			t.Errorf("rótulo por sinal voltou (%s): exige tradução mental a cada clique", naoQuer)
-		}
-	}
-	// "Marcar aqui" não dizia AQUI ONDE. O botão agora nomeia o tempo do player.
-	if strings.Contains(corpo, "Marcar aqui") || strings.Contains(corpo, "⤓ Marcar") {
-		t.Error(`"Marcar aqui" voltou: o operador não vê que tempo está capturando`)
-	}
-	if !strings.Contains(corpo, "do player") {
-		t.Error("o botão precisa nomear o tempo do player")
-	}
-}
-
-// TestAjusteFinoSoNoFimESubordinado: a assimetria (Fim com passo fino, Início sem) parecia
-// defeito. Como linha subordinada e rotulada "ajuste fino", lê como recurso extra do fim.
-func TestAjusteFinoSoNoFimESubordinado(t *testing.T) {
-	corpo := htmlDaRevisao(t)
-	if !strings.Contains(corpo, "ajuste fino") {
-		t.Error("o passo fino precisa estar rotulado como subordinado")
-	}
-	for _, quer := range []string{`id="aj-fim-m025"`, `id="aj-fim-p025"`} {
-		if !strings.Contains(corpo, quer) {
-			t.Errorf("o fim precisa do passo fino: falta %q", quer)
-		}
-	}
-	for _, naoQuer := range []string{`id="aj-ini-m025"`, `id="aj-ini-p025"`} {
-		if strings.Contains(corpo, naoQuer) {
-			t.Errorf("o início NÃO deve ter passo de 0,25s (%s): o encaixe de 1s o torna inócuo", naoQuer)
 		}
 	}
 }
@@ -1040,24 +996,6 @@ func TestNenhumaEscutaPassaDoCorte(t *testing.T) {
 	}
 }
 
-// TestBotaoUsarTempoSoNoFim é o item 2: havia dois "usar <tempo> do player", um no Início e um
-// solto abaixo do Fim. Com a faixa de frases, clicar na frase é melhor no Início.
-func TestBotaoUsarTempoSoNoFim(t *testing.T) {
-	corpo := htmlDaRevisao(t)
-	if strings.Contains(corpo, `id="aj-usar-ini"`) {
-		t.Error("o botão 'usar o tempo' do Início voltou: duplica a faixa de frases")
-	}
-	if strings.Count(corpo, "aj-usar-") != 1 {
-		t.Errorf("esperava exatamente um botão 'usar o tempo', achei %d", strings.Count(corpo, "aj-usar-"))
-	}
-	// Dentro da linha do Fim, não solto abaixo dela.
-	linhaFim := corpo[strings.Index(corpo, `<span class="campo">Fim</span>`):]
-	linhaFim = linhaFim[:strings.Index(linhaFim, "</div>")]
-	if !strings.Contains(linhaFim, `id="aj-usar-fim"`) {
-		t.Error("o botão 'usar o tempo' não está dentro da linha do Fim")
-	}
-}
-
 // TestTocaAEmendaAoAjustar é o item 3, o que derruba as 8 a 10 escutas: conferir tocando o
 // trecho inteiro custa ~50s por iteração; ouvir só a ponta mexida custa ~5s.
 func TestTocaAEmendaAoAjustar(t *testing.T) {
@@ -1071,23 +1009,6 @@ func TestTocaAEmendaAoAjustar(t *testing.T) {
 	// Depois do debounce, não a cada clique.
 	if !strings.Contains(js, "pedirRecalculo(i, true)") {
 		t.Error("a escuta automática deveria estar atrelada ao debounce")
-	}
-}
-
-// TestUmaEscutaDeCadaJuntoDoSeuControle é o item 5: havia "ouvir a emenda do início/fim" no
-// grupo de cima E "ouvir o fim" dentro do painel — os mesmos comandos em dois lugares.
-func TestUmaEscutaDeCadaJuntoDoSeuControle(t *testing.T) {
-	corpo := htmlDaRevisao(t)
-	for _, naoQuer := range []string{`id="btn-emenda-ini"`, `id="btn-emenda-fim"`, "Ouvir a emenda"} {
-		if strings.Contains(corpo, naoQuer) {
-			t.Errorf("escuta duplicada no grupo de cima (%s)", naoQuer)
-		}
-	}
-	if n := strings.Count(corpo, "ouvir o início"); n != 1 {
-		t.Errorf("esperava uma escuta do início, achei %d", n)
-	}
-	if n := strings.Count(corpo, "ouvir o fim"); n != 1 {
-		t.Errorf("esperava uma escuta do fim, achei %d", n)
 	}
 }
 
@@ -1194,5 +1115,151 @@ func TestFaixaMostraQuantasFalasNoBloco(t *testing.T) {
 	}
 	if !strings.Contains(js, "falas no mesmo segundo") {
 		t.Error("o aviso do bloco deveria explicar o motivo em palavras")
+	}
+}
+
+// --- Terceira rodada: tela simplificada ---
+
+// TestFluxoDeDoisCliquesEhDeterministico é o item 1. A heurística do meio do trecho adivinhava
+// a ponta, e quando errava o operador não tinha como entender por quê. Agora: 1º clique define
+// o início, 2º o fim, 3º recomeça — e a instrução aparece ANTES do clique.
+func TestFluxoDeDoisCliquesEhDeterministico(t *testing.T) {
+	js := jsDaPagina(t)
+
+	// A heurística não pode voltar: era a fonte da confusão.
+	for _, proibido := range []string{"var meio = (e.iniMs + e.fimMs) / 2", "f.inicio_ms < meio"} {
+		if strings.Contains(js, proibido) {
+			t.Errorf("a heurística do meio do trecho voltou (%q): adivinhar a ponta confunde", proibido)
+		}
+	}
+	// O estado é por trecho: trocar de trecho não pode herdar o passo do anterior.
+	if !strings.Contains(js, "proximoClique: dados.trechos.map") {
+		t.Error("o passo do fluxo deveria ser por trecho, não global")
+	}
+	// Os três movimentos do ciclo.
+	for _, quer := range []string{
+		"REV.proximoClique[i] === 'ini'", // decide pelo estado, não por posição
+		"REV.proximoClique[i] = 'fim'",   // 1º clique avança para o fim
+		"REV.proximoClique[i] = 'ini'",   // 2º clique recomeça
+	} {
+		if !strings.Contains(js, quer) {
+			t.Errorf("o ciclo de dois cliques está incompleto: falta %q", quer)
+		}
+	}
+	// A instrução tem de dizer o que vai acontecer, nos dois estados.
+	for _, quer := range []string{"1. clique onde COMEÇA", "2. agora clique onde TERMINA"} {
+		if !strings.Contains(js, quer) {
+			t.Errorf("a instrução não cobre um dos passos: falta %q", quer)
+		}
+	}
+	// Restaurar volta ao primeiro clique, senão o operador fica num estado que não pediu.
+	// (jsDaPagina remove comentários, então a busca é pelo código puro.)
+	if !strings.Contains(js, "REV.proximoClique[REV.atual] = 'ini'") {
+		t.Error("restaurar deveria recomeçar o fluxo de dois cliques")
+	}
+}
+
+// TestSetasEmVoltaDoValor é o item 5: « ‹ 00:04:13 › ». A direção é auto-evidente e ocupa um
+// quinto do espaço dos botões rotulados.
+func TestSetasEmVoltaDoValor(t *testing.T) {
+	corpo := htmlDaRevisao(t)
+
+	// Cada linha tem duas setas de cada lado do valor: dupla (1s) e simples (0,25s).
+	for _, ponta := range []string{"ini", "fim"} {
+		for _, suf := range []string{"mm", "m", "p", "pp"} {
+			if !strings.Contains(corpo, `id="aj-`+ponta+`-`+suf+`"`) {
+				t.Errorf("falta a seta aj-%s-%s", ponta, suf)
+			}
+		}
+	}
+	// Os botões rotulados saíram (ocupavam cinco vezes o espaço). Confere pelos IDS: o texto
+	// "mais cedo"/"mais tarde" segue legítimo nos title das setas, como dica de acessibilidade.
+	for _, naoQuer := range []string{
+		`id="aj-ini-cedo"`, `id="aj-ini-tarde"`, `id="aj-fim-cedo"`, `id="aj-fim-tarde"`,
+		`id="aj-usar-fim"`, `id="aj-ouvir-ini"`, `id="aj-ouvir-fim"`,
+	} {
+		if strings.Contains(corpo, naoQuer) {
+			t.Errorf("controle antigo ainda na tela: %q", naoQuer)
+		}
+	}
+	// As setas precisam de title: sozinhas elas são mudas para leitor de tela.
+	if n := strings.Count(corpo, `title="1 segundo`) + strings.Count(corpo, `title="0,25 segundo`); n != 8 {
+		t.Errorf("esperava 8 setas com title explicativo, achei %d", n)
+	}
+	// Uma legenda pequena explica os passos, senão as setas ficam mudas.
+	if !strings.Contains(corpo, "0,25s") || !strings.Contains(corpo, "1s") {
+		t.Error("falta a legenda explicando os passos das setas")
+	}
+	// E a ordem visual: « ‹ valor › » — mais cedo à esquerda.
+	pos := func(id string) int { return strings.Index(corpo, `id="aj-`+id+`"`) }
+	if !(pos("ini-mm") < pos("ini-m") && pos("ini-m") < strings.Index(corpo, `id="aj-v-ini"`) &&
+		strings.Index(corpo, `id="aj-v-ini"`) < pos("ini-p") && pos("ini-p") < pos("ini-pp")) {
+		t.Error("a ordem visual das setas não é « ‹ valor › »")
+	}
+}
+
+// TestFaixaTemRolagemPropria é o item 4: com uma dúzia de frases, sem max-height a faixa empurra
+// os controles para fora da tela — que era o problema original.
+func TestFaixaTemRolagemPropria(t *testing.T) {
+	pagina := htmlDaPagina(t)
+	bloco := pagina[strings.Index(pagina, ".frases {"):]
+	bloco = bloco[:strings.Index(bloco, "}")]
+	for _, quer := range []string{"max-height", "overflow-y: auto"} {
+		if !strings.Contains(bloco, quer) {
+			t.Errorf("a faixa de frases precisa de %q: %s", quer, bloco)
+		}
+	}
+	// E rola até as selecionadas ao trocar de trecho.
+	js := jsDaPagina(t)
+	if !strings.Contains(js, "rolarAteSelecionadas") {
+		t.Error("a faixa não rola até as frases do corte")
+	}
+	// scrollTop, não scrollIntoView: este último rolaria a PÁGINA e desfaria o ganho.
+	if strings.Contains(js, "scrollIntoView") {
+		t.Error("scrollIntoView rolaria a página inteira, desfazendo o layout de uma tela")
+	}
+}
+
+// TestControlesFicamNaColunaDoVideo é o item 4 do outro lado: a esquerda tinha espaço morto sob
+// o player e é onde os controles cabem sem quebrar em duas linhas.
+func TestControlesFicamNaColunaDoVideo(t *testing.T) {
+	corpo := htmlDaRevisao(t)
+	iVideo := strings.Index(corpo, `class="coluna-video"`)
+	iFrases := strings.Index(corpo, `class="coluna-frases"`)
+	if iVideo < 0 || iFrases < 0 {
+		t.Fatal("as duas colunas deveriam existir")
+	}
+	if iVideo > iFrases {
+		t.Error("o vídeo deveria vir antes (esquerda) e as frases depois (direita)")
+	}
+	// Os controles de tempo ficam na coluna do vídeo, entre ela e a das frases.
+	iCtrl := strings.Index(corpo, `id="aj-v-ini"`)
+	if !(iVideo < iCtrl && iCtrl < iFrases) {
+		t.Error("os controles de tempo deveriam estar na coluna do vídeo, sob o player")
+	}
+}
+
+// TestSeloDizQueOSomVeioDoSistema: a emenda toca sozinha; sem aviso o operador não sabe se foi o
+// sistema ou um clique acidental dele.
+func TestSeloDizQueOSomVeioDoSistema(t *testing.T) {
+	js := jsDaPagina(t)
+	if !strings.Contains(js, "avisarToque(REV.ultimaPonta)") {
+		t.Error("o selo não é acionado quando a emenda toca sozinha")
+	}
+	corpo := htmlDaRevisao(t)
+	if !strings.Contains(corpo, "tocando a emenda") {
+		t.Error("falta o selo na tela")
+	}
+}
+
+// TestCliqueNoFimUsaOComecoDaProximaFala: o fim do trecho é onde a próxima fala começa — é o que
+// o operador quer dizer ao apontar a última frase que deve entrar.
+func TestCliqueNoFimUsaOComecoDaProximaFala(t *testing.T) {
+	js := jsDaPagina(t)
+	if !strings.Contains(js, "function fimDaFraseSeguinte") {
+		t.Error("o clique no fim deveria usar o começo da fala seguinte")
+	}
+	if !strings.Contains(js, "if (fs[k].inicio_ms > f.inicio_ms) return fs[k].inicio_ms") {
+		t.Error("fimDaFraseSeguinte não procura a próxima fala da faixa")
 	}
 }

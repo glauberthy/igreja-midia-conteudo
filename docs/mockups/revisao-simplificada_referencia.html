@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup — tela de revisão simplificada (dois cliques)</title>
+<style>
+  @font-face {
+    font-family: "Google Sans Flex";
+    src: url("../../assets/fontes/static/GoogleSansFlex_36pt-Regular.ttf") format("truetype");
+    font-weight: 400; font-display: swap;
+  }
+  @font-face {
+    font-family: "Google Sans Flex";
+    src: url("../../assets/fontes/static/GoogleSansFlex_36pt-Bold.ttf") format("truetype");
+    font-weight: 600; font-display: swap;
+  }
+  :root {
+    --lima: #CDDC39; --lima-escura: #7d8a13;
+    --tinta: #1c1c1a; --tinta-fraca: #6a6a64; --tinta-tenue: #9a9a92;
+    --papel: #f6f6f2; --carta: #ffffff;
+    --linha: #e2e2da; --linha-forte: #c9c9bf;
+    --sel-bg: #eef3d9; --sel-tinta: #4a5510; --sel-linha: #c3d22f;
+    --aviso-bg: #faeeda; --aviso-tinta: #854f0b; --aviso-linha: #ef9f27;
+    --ok-bg: #eaf3de; --ok-tinta: #3b6d11; --ok-linha: #97c459;
+    --raio: 8px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 16px 40px; background: var(--papel); color: var(--tinta);
+    font-family: "Google Sans Flex", system-ui, sans-serif; font-size: 15px; line-height: 1.6;
+  }
+  .folha { max-width: 980px; margin: 0 auto; }
+  .meta { font-size: 13px; color: var(--tinta-fraca); margin: 0 0 10px; }
+
+  .cartao {
+    background: var(--carta); border: 1px solid var(--linha); border-radius: 12px; padding: 16px;
+    display: grid; grid-template-columns: minmax(0, 46fr) minmax(0, 54fr); gap: 18px;
+  }
+  @media (max-width: 760px) { .cartao { grid-template-columns: 1fr; } }
+
+  .palco {
+    background: #000; border-radius: var(--raio); aspect-ratio: 16/9;
+    display: flex; align-items: center; justify-content: center;
+    color: #8a8a82; font-size: 13px; margin-bottom: 10px;
+  }
+
+  button {
+    font-family: inherit; border-radius: var(--raio);
+    border: 1px solid var(--linha-forte); background: var(--carta); color: var(--tinta);
+    cursor: pointer; font-size: 13px; padding: 6px 11px;
+  }
+  button:hover { background: var(--papel); }
+  button:active { transform: scale(0.98); }
+  button:focus-visible { outline: 2px solid var(--lima-escura); outline-offset: 2px; }
+  .mini { font-size: 12px; padding: 5px 9px; }
+  .seta { font-size: 13px; padding: 5px 9px; min-width: 30px; }
+
+  .grupo-play { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+
+  .linha-t { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+  .rot { font-size: 13px; color: var(--tinta-fraca); width: 44px; flex: none; }
+  .val {
+    font-size: 16px; font-weight: 600; min-width: 78px; text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .dica { font-size: 11px; color: var(--tinta-tenue); margin: 0 0 14px 48px; }
+
+  .aviso {
+    background: var(--aviso-bg); border-left: 3px solid var(--aviso-linha);
+    padding: 8px 10px; margin-bottom: 12px;
+  }
+  .aviso p { margin: 0; font-size: 12px; color: var(--aviso-tinta); }
+
+  .resumo { font-size: 12.5px; color: var(--tinta-fraca); margin: 0 0 12px; }
+  .resumo.mudou { color: var(--sel-tinta); font-weight: 600; }
+
+  .decidir { display: flex; gap: 8px; }
+  .decidir button { flex: 1; }
+  .aprovar { background: var(--ok-bg); border-color: var(--ok-linha); color: var(--ok-tinta); font-weight: 600; }
+
+  .instrucao { font-size: 13px; font-weight: 600; color: var(--sel-tinta); margin: 0 0 6px; }
+  .frases {
+    background: var(--papel); border: 1px solid var(--linha); border-radius: var(--raio);
+    padding: 6px; max-height: 400px; overflow-y: auto;
+  }
+  .frase {
+    display: block; width: 100%; text-align: left; font-family: inherit;
+    font-size: 13px; line-height: 1.5; padding: 6px 9px; margin: 0;
+    border: 1px solid transparent; border-radius: var(--raio);
+    background: transparent; color: var(--tinta-tenue); cursor: pointer;
+  }
+  .frase:hover { border-color: var(--linha-forte); color: var(--tinta); }
+  .frase.dentro { background: var(--sel-bg); color: var(--sel-tinta); border-color: var(--sel-linha); }
+  .frase .t { font-size: 11px; color: var(--tinta-tenue); margin-right: 7px; font-variant-numeric: tabular-nums; }
+  .frase.dentro .t { color: var(--sel-tinta); opacity: .7; }
+
+  .nota {
+    max-width: 980px; margin: 24px auto 0; padding-top: 14px;
+    border-top: 1px solid var(--linha); font-size: 13px; color: var(--tinta-fraca);
+  }
+  .toque {
+    font-size: 12px; color: var(--sel-tinta); background: var(--sel-bg);
+    padding: 4px 9px; border-radius: var(--raio); display: inline-block; margin-left: 8px;
+  }
+</style>
+</head>
+<body>
+
+<div class="folha">
+  <p class="meta">Trecho 1 de 5 · <span id="meta-t"></span> · score 92 <span class="toque" id="tocando" hidden>tocando a emenda…</span></p>
+
+  <div class="cartao">
+
+    <div>
+      <div class="palco">player do YouTube</div>
+
+      <div class="grupo-play">
+        <button type="button" class="mini">tocar</button>
+        <button type="button" class="mini">do início</button>
+        <button type="button" class="mini">&frac12; velocidade</button>
+      </div>
+
+      <div class="linha-t">
+        <span class="rot">Início</span>
+        <button type="button" class="seta" data-mov="ini,-1">&laquo;</button>
+        <button type="button" class="seta" data-mov="ini,-0.25">&lsaquo;</button>
+        <span class="val" id="v-ini">00:04:13</span>
+        <button type="button" class="seta" data-mov="ini,0.25">&rsaquo;</button>
+        <button type="button" class="seta" data-mov="ini,1">&raquo;</button>
+      </div>
+
+      <div class="linha-t">
+        <span class="rot">Fim</span>
+        <button type="button" class="seta" data-mov="fim,-1">&laquo;</button>
+        <button type="button" class="seta" data-mov="fim,-0.25">&lsaquo;</button>
+        <span class="val" id="v-fim">00:05:14</span>
+        <button type="button" class="seta" data-mov="fim,0.25">&rsaquo;</button>
+        <button type="button" class="seta" data-mov="fim,1">&raquo;</button>
+      </div>
+      <p class="dica">&lsaquo; 0,25s · &laquo; 1s — toca a emenda sozinho</p>
+
+      <div class="aviso" id="aviso" hidden><p id="aviso-txt"></p></div>
+
+      <p class="resumo" id="resumo"></p>
+
+      <div class="decidir">
+        <button type="button" class="aprovar" id="aprovar">aprovar</button>
+        <button type="button">reprovar</button>
+      </div>
+    </div>
+
+    <div>
+      <p class="instrucao" id="instrucao"></p>
+      <div class="frases" id="frases"></div>
+    </div>
+
+  </div>
+
+  <p class="nota">
+    Mockup de referência da tela de revisão simplificada (spec-05). Fluxo de dois cliques:
+    o primeiro clique define o início, o segundo define o fim, o terceiro recomeça — sem
+    heurística de "metade do trecho". Após cada ajuste a emenda correspondente toca sozinha.
+    Controles ficam sob o vídeo (onde havia espaço morto); a faixa de frases tem rolagem
+    própria para o painel caber numa tela.
+  </p>
+</div>
+
+<script>
+  const ORIG = { ini: 253, fim: 314 };
+  const MIN = 30, MAX = 58;
+
+  const frases = [
+    { t: 240, txt: "Fala o nosso coração em nome de Jesus." },
+    { t: 242, txt: "Amém." },
+    { t: 247, txt: "Os puritanos, eles enfatizaram o valor e a importância do ministério pastoral familiar." },
+    { t: 253, txt: "A família cristã é uma das marcas dos tempos dos puritanos." },
+    { t: 261, txt: "Isso é um dos seus maiores alegados. Os puritanos acreditavam que a sua casa era a extensão da sua igreja." },
+    { t: 267, txt: "E não somente isto, ele entendia que a sua casa era a sua primeira igreja, era o seu primeiro ministério." },
+    { t: 279, txt: "Eles sabiam que a comissão para fazer discípulos começa em casa." },
+    { t: 285, txt: "Em seu sermão de despedida, o puritano inglês Jonathan Edwards disse, abre aspas, toda a família cristã deve ser como uma pequena igreja." },
+    { t: 303, txt: "A educação e a ordem na família são alguns dos principais meios de graça." },
+    { t: 311, txt: "Fecha aspas." },
+    { t: 315, txt: "Os pais, especialmente, tinham uma responsabilidade espiritual para pastorear e educar." },
+    { t: 328, txt: "O que é que isso significa?" },
+    { t: 330, txt: "Afinal, significa que a casa era o principal onde se devia aprender sobre a Bíblia." }
+  ];
+
+  let ini = ORIG.ini, fim = ORIG.fim;
+  let proximoClique = "ini";
+  const $ = id => document.getElementById(id);
+
+  const hms = s => {
+    s = Math.max(0, s);
+    const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), r = Math.floor(s%60);
+    return [h,m,r].map(n => String(n).padStart(2,"0")).join(":");
+  };
+
+  function tocarEmenda(qual) {
+    const el = $("tocando");
+    el.textContent = qual === "ini" ? "tocando a emenda do início…" : "tocando a emenda do fim…";
+    el.hidden = false;
+    clearTimeout(tocarEmenda._t);
+    tocarEmenda._t = setTimeout(function () { el.hidden = true; }, 1600);
+  }
+
+  function desenharFrases() {
+    $("frases").innerHTML = frases.map(function (f, i) {
+      const dentro = f.t >= ini && f.t < fim;
+      return '<button type="button" class="frase' + (dentro ? ' dentro' : '') + '" data-i="' + i + '">' +
+             '<span class="t">' + hms(f.t) + '</span>' + f.txt + '</button>';
+    }).join("");
+    $("frases").querySelectorAll(".frase").forEach(function (b) {
+      b.addEventListener("click", function () {
+        const f = frases[+b.dataset.i];
+        if (proximoClique === "ini") {
+          ini = f.t;
+          if (fim <= ini) {
+            const p = frases.find(function (x) { return x.t > ini; });
+            fim = p ? p.t : ini + 40;
+          }
+          proximoClique = "fim";
+          tocarEmenda("ini");
+        } else {
+          const p = frases.find(function (x) { return x.t > f.t; });
+          fim = p ? p.t : f.t + 15;
+          if (fim <= ini) { ini = f.t; }
+          proximoClique = "ini";
+          tocarEmenda("fim");
+        }
+        desenhar();
+      });
+    });
+  }
+
+  function desenhar() {
+    $("v-ini").textContent = hms(ini);
+    $("v-fim").textContent = hms(fim);
+    $("meta-t").textContent = hms(ini) + " \u2192 " + hms(fim) + " \u00b7 " + Math.round(fim - ini) + "s";
+
+    $("instrucao").textContent = proximoClique === "ini"
+      ? "1. clique onde COMEÇA"
+      : "2. agora clique onde TERMINA";
+
+    const dur = Math.round(fim - ini);
+    const fora = dur > MAX || dur < MIN;
+    $("aviso").hidden = !fora;
+    if (fora) {
+      $("aviso-txt").textContent = dur > MAX
+        ? "ficaria " + dur + "s \u00b7 m\u00e1ximo " + MAX + "s — encurte " + (dur - MAX) + "s"
+        : "ficaria " + dur + "s \u00b7 m\u00ednimo " + MIN + "s — estenda " + (MIN - dur) + "s";
+    }
+    $("aprovar").disabled = fora;
+    $("aprovar").style.opacity = fora ? .5 : 1;
+
+    const d = dur - (ORIG.fim - ORIG.ini);
+    const r = $("resumo");
+    if (d === 0 && ini === ORIG.ini) {
+      r.textContent = "igual ao original \u00b7 " + dur + "s";
+      r.classList.remove("mudou");
+    } else {
+      const t = d === 0 ? "mesmo tamanho, deslocado"
+              : (d > 0 ? d + "s a mais" : (-d) + "s a menos") + " que o original";
+      r.textContent = t + " \u00b7 fica com " + dur + "s";
+      r.classList.add("mudou");
+    }
+    desenharFrases();
+  }
+
+  document.querySelectorAll("[data-mov]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      const parts = b.dataset.mov.split(",");
+      const qual = parts[0], p = parseFloat(parts[1]);
+      if (qual === "ini") { const n = ini + p; if (n < fim - 5) { ini = n; tocarEmenda("ini"); } }
+      else { const n = fim + p; if (n > ini + 5) { fim = n; tocarEmenda("fim"); } }
+      desenhar();
+    });
+  });
+
+  desenhar();
+</script>
+
+</body>
+</html>
