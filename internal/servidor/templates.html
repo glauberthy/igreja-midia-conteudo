@@ -94,6 +94,20 @@
     .reprovar { flex: 1; }
     .atalhos { font-size: 12px; color: var(--tinta-tenue); margin: 10px 0 0; }
 
+    /* ajuste manual do corte (spec-05 v2) */
+    .ajuste { border: 1px solid var(--linha); border-radius: var(--raio); padding: 12px 14px; margin: 0 0 16px; }
+    .ajuste > summary { cursor: pointer; font-size: 14px; font-weight: 600; }
+    .ajuste-linha { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+    .ajuste-rotulo { font-size: 13px; color: var(--tinta-tenue); min-width: 54px; }
+    .ajuste-linha button { font-size: 13px; padding: 5px 9px; }
+    .ajuste-marcar { font-weight: 600; }
+    .ajuste-nudge { min-width: 46px; }
+    .ajuste-estado { font-size: 13px; margin: 10px 0 0; }
+    .ajuste-invalido { background: var(--aviso-bg); border-left: 3px solid var(--aviso-linha);
+      padding: 10px 12px; margin-top: 10px; font-size: 13px; color: var(--aviso-tinta); }
+    .ajuste-encaixe { font-size: 12px; color: var(--tinta-tenue); margin-top: 6px; }
+    .editado { font-size: 12px; color: var(--aviso-tinta); font-weight: 600; }
+
     /* rodapé fixo */
     .rodape { position: fixed; left: 0; right: 0; bottom: 0; background: var(--carta);
       border-top: 1px solid var(--linha); padding: 12px 16px; }
@@ -145,7 +159,11 @@
       if (!dados.trechos || !dados.trechos.length) return;
       var ent = document.getElementById('entrada'); if (ent) ent.style.display = 'none';
       REV = { dados: dados, atual: 0, estado: dados.trechos.map(function(){ return 'pendente'; }),
-              player: null, prontoPlayer: false, timer: null };
+              player: null, prontoPlayer: false, timer: null,
+              // ajustes[i] = {startSeg, endSeg, resposta} — resposta é o que o servidor
+              // recalculou (hook, texto, duração, aprovável). null = usa o original.
+              ajustes: dados.trechos.map(function(){ return null; }),
+              debounce: null, meia: false };
       ligarControles();
       desenhar();
       criarPlayer();
@@ -173,15 +191,136 @@
       }, 200);
     }
     function trechoAtual() { return REV.dados.trechos[REV.atual]; }
+
+    // ===== Ajuste manual do corte (spec-05 v2) =====
+    //
+    // Contrato de tempo: getCurrentTime() do player JÁ É o tempo que o corte usa. O vídeo
+    // baixado é o inteiro, com origem 0, e o player também conta do início do vídeo — os
+    // dois relógios são o mesmo, sem conversão.
+
+    // efetivo devolve o que a tela deve MOSTRAR para o trecho i: o ajuste recalculado pelo
+    // servidor quando existe, o original quando não. Uma fonte só, para o player, a emenda
+    // e o texto nunca discordarem entre si.
+    function efetivo(i) {
+      var t = REV.dados.trechos[i], a = REV.ajustes[i];
+      if (!a) return { startSeg: t.startSeg, endSeg: t.endSeg, dur: t.dur, hook: t.hook,
+                       texto: t.texto, inicio: t.inicio, fim: t.fim, ajustado: false, ok: true };
+      var r = a.resposta;
+      if (!r) { // ainda esperando o servidor: mostra os tempos marcados, sem texto novo
+        return { startSeg: a.startSeg, endSeg: a.endSeg, dur: (a.endSeg - a.startSeg).toFixed(1),
+                 hook: t.hook, texto: t.texto, inicio: hhmmss(a.startSeg), fim: hhmmss(a.endSeg),
+                 ajustado: true, ok: true, esperando: true };
+      }
+      return { startSeg: r.start_seg, endSeg: r.end_seg, dur: r.duration_seconds,
+               hook: r.hook, texto: r.texto_falado, inicio: r.start, fim: r.end,
+               ajustado: true, ok: r.aprovavel, motivo: r.motivo,
+               moveuIni: r.ajustado_start, moveuFim: r.ajustado_end };
+    }
+    function efetivoAtual() { return efetivo(REV.atual); }
+
+    function hhmmss(seg) {
+      var s = Math.max(0, Math.round(seg));
+      return [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60]
+        .map(function (n) { return String(n).padStart(2, '0'); }).join(':');
+    }
+
+    // marcar captura o instante EXATO do clique. É o gesto principal: o operador ouve, e no
+    // ponto onde a fala deveria começar/terminar, clica.
+    function marcar(qual) {
+      if (!REV.prontoPlayer) return;
+      var e = efetivoAtual();
+      var t = REV.player.getCurrentTime();
+      if (qual === 'inicio') propor(t, e.endSeg); else propor(e.startSeg, t);
+    }
+
+    // empurrar move um dos lados. Granularidade ASSIMÉTRICA de propósito: no início o
+    // servidor encaixa em fronteira de fala (passo de 1s), então empurrão fino não muda
+    // nada — só no fim, que é livre para frente, os 0,25s têm efeito.
+    function empurrar(qual, delta) {
+      var e = efetivoAtual();
+      if (qual === 'inicio') propor(e.startSeg + delta, e.endSeg);
+      else propor(e.startSeg, e.endSeg + delta);
+    }
+
+    function restaurar() {
+      REV.ajustes[REV.atual] = null;
+      clearTimeout(REV.debounce);
+      desenhar();
+    }
+
+    // propor grava os tempos e pede o recálculo ao servidor com DEBOUNCE: uma rajada de
+    // empurrõezinhos gera uma chamada, não seis. Sem o recálculo o operador ajustaria às
+    // cegas — o texto falado novo é justamente o que ele está julgando.
+    function propor(ini, fim) {
+      var i = REV.atual;
+      REV.ajustes[i] = { startSeg: Math.max(0, ini), endSeg: Math.max(0, fim), resposta: null };
+      desenhar();
+      clearTimeout(REV.debounce);
+      REV.debounce = setTimeout(function () { pedirRecalculo(i); }, 350);
+    }
+
+    function pedirRecalculo(i) {
+      var a = REV.ajustes[i];
+      if (!a) return;
+      fetch('/pedidos/' + REV.dados.pedidoId + '/ajustar', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ indice: i, start: a.startSeg, end: a.endSeg })
+      }).then(function (r) { return r.ok ? r.json() : null; }).then(function (resp) {
+        if (!resp || !REV || !REV.ajustes[i]) return;
+        REV.ajustes[i].resposta = resp;
+        // Adota os tempos que o servidor DE FATO usará (pode ter encaixado ou clampado),
+        // senão o próximo empurrão partiria de um número que não existe mais.
+        REV.ajustes[i].startSeg = resp.start_seg;
+        REV.ajustes[i].endSeg = resp.end_seg;
+        if (i === REV.atual) desenhar();
+      }).catch(function () { /* rede: mantém o que está na tela */ });
+    }
+
+    function meiaVelocidade() {
+      if (!REV.prontoPlayer) return;
+      REV.meia = !REV.meia;
+      REV.player.setPlaybackRate(REV.meia ? 0.5 : 1);
+      var b = document.getElementById('btn-meia');
+      if (b) b.textContent = REV.meia ? '🐇 Velocidade normal' : '🐢 Meia velocidade';
+    }
+
+    function desenharAjuste() {
+      var e = efetivoAtual();
+      var est = document.getElementById('aj-estado');
+      var inv = document.getElementById('aj-invalido');
+      var enc = document.getElementById('aj-encaixe');
+      if (!est) return;
+
+      if (!e.ajustado) {
+        est.textContent = 'Sem ajuste: o corte é o original.';
+        inv.hidden = true; enc.hidden = true;
+        return;
+      }
+      var t = REV.dados.trechos[REV.atual];
+      est.innerHTML = '<span class="editado">✎ ajustado</span> · ' + e.inicio + ' → ' + e.fim +
+        ' · ' + e.dur + 's <span class="ajuste-rotulo">(original: ' + t.inicio + ' → ' + t.fim + ' · ' + t.dur + 's)</span>';
+
+      if (e.esperando) { inv.hidden = true; enc.hidden = true; return; }
+      if (!e.ok) { inv.hidden = false; inv.textContent = '⚠ ' + (e.motivo || 'ajuste inválido') + '. Não dá para aprovar assim.'; }
+      else { inv.hidden = true; }
+
+      // Encaixe do início: o operador precisa saber que o ponto foi movido, e por quê.
+      if (e.moveuIni) {
+        enc.hidden = false;
+        enc.textContent = 'O início foi encaixado no começo da fala (' + e.inicio + ') — é o que mantém o hook casando com o corte.';
+      } else { enc.hidden = true; }
+    }
+    // Tocar e ouvir a emenda usam os tempos EFETIVOS (ajustados, se houver): o operador
+    // precisa conferir o corte NOVO, senão ele ajusta e continua ouvindo o antigo.
     function playPause() {
       if (!REV.prontoPlayer) return;
-      var t = trechoAtual();
+      var e = efetivoAtual();
       if (REV.player.getPlayerState() === YT.PlayerState.PLAYING) { REV.player.pauseVideo(); clearInterval(REV.timer); }
-      else { tocarIntervalo(t.startSeg, t.endSeg); }
+      else { tocarIntervalo(e.startSeg, e.endSeg); }
     }
-    function doInicio() { var t = trechoAtual(); tocarIntervalo(t.startSeg, t.endSeg); }
-    function emendaInicio() { var t = trechoAtual(); tocarIntervalo(t.startSeg - 2, t.startSeg + 3); }
-    function emendaFim() { var t = trechoAtual(); tocarIntervalo(t.endSeg - 3, t.endSeg + 2); }
+    function doInicio() { var e = efetivoAtual(); tocarIntervalo(e.startSeg, e.endSeg); }
+    function emendaInicio() { var e = efetivoAtual(); tocarIntervalo(e.startSeg - 2, e.startSeg + 3); }
+    function emendaFim() { var e = efetivoAtual(); tocarIntervalo(e.endSeg - 3, e.endSeg + 2); }
 
     function desenharTrilha() {
       var wrap = document.getElementById('trilha');
@@ -202,8 +341,11 @@
 
     function desenhar() {
       var t = trechoAtual();
-      document.getElementById('texto').textContent = t.texto || t.hook;
-      document.getElementById('meta').textContent = t.inicio + ' → ' + t.fim + ' · ' + t.dur + 's · score ' + t.score + (t.melhorScore ? ' · ★ maior score' : '');
+      var e = efetivoAtual();
+      // Texto e tempos EFETIVOS: é o texto da janela nova que o operador está julgando.
+      document.getElementById('texto').textContent = e.texto || e.hook;
+      document.getElementById('meta').textContent = e.inicio + ' → ' + e.fim + ' · ' + e.dur + 's · score ' + t.score +
+        (t.melhorScore ? ' · ★ maior score' : '') + (e.ajustado ? ' · ✎ corte ajustado' : '');
       var fa = document.getElementById('faixa-aviso');
       if (t.revisar) {
         fa.hidden = false;
@@ -219,20 +361,35 @@
       var reprov = REV.estado.filter(function (e) { return e === 'reprovado'; }).length;
       var pend = REV.dados.trechos.length - aprov - reprov;
       document.getElementById('resumo').textContent = aprov + ' aprovados · ' + reprov + ' reprovados · ' + pend + ' pendentes';
-      document.getElementById('gerar').disabled = aprov === 0;
+      // "Confirmar e gerar" também bloqueia se algum trecho APROVADO tem ajuste inválido:
+      // é o mesmo critério do servidor, antecipado para não frustrar no último clique.
+      var pendenciaAjuste = REV.estado.some(function (st, i) {
+        return st === 'aprovado' && !efetivo(i).ok;
+      });
+      var gerar = document.getElementById('gerar');
+      gerar.disabled = aprov === 0 || pendenciaAjuste;
+      gerar.title = pendenciaAjuste ? 'Há trecho aprovado com ajuste fora da faixa válida' : '';
 
       var pedem = REV.dados.trechos.filter(function (x) { return x.revisar; }).length;
       var ca = document.getElementById('contagem-aviso');
       ca.hidden = pedem === 0;
       ca.textContent = pedem + (pedem === 1 ? ' pede revisão' : ' pedem revisão');
 
+      // Trecho com ajuste inválido não pode ser aprovado — a guarda está no servidor, mas
+      // desabilitar aqui evita o operador levar um erro depois de decidir.
+      var btnAprovar = document.getElementById('aprovar');
+      btnAprovar.disabled = !e.ok;
+      btnAprovar.title = e.ok ? '' : (e.motivo || 'ajuste fora da faixa válida');
+
+      desenharAjuste();
       desenharTrilha();
       // Player cueado no início do trecho atual (spec: seekTo(start) ao trocar).
-      if (REV.prontoPlayer) { clearInterval(REV.timer); REV.player.seekTo(t.startSeg, true); REV.player.pauseVideo(); }
+      if (REV.prontoPlayer) { clearInterval(REV.timer); REV.player.seekTo(e.startSeg, true); REV.player.pauseVideo(); }
     }
 
     function irPara(i) { REV.atual = Math.max(0, Math.min(REV.dados.trechos.length - 1, i)); desenhar(); }
     function decidir(valor) {
+      if (valor === 'aprovado' && !efetivoAtual().ok) return; // guarda: ajuste inválido
       REV.estado[REV.atual] = valor;
       var prox = REV.estado.findIndex(function (e, i) { return e === 'pendente' && i > REV.atual; });
       var qq = REV.estado.indexOf('pendente');
@@ -243,7 +400,14 @@
     function confirmar() {
       var aprov = [];
       REV.estado.forEach(function (e, i) { if (e === 'aprovado') aprov.push(i); });
-      var body = aprov.map(function (i) { return 'aprovados=' + i; }).join('&');
+      // Manda os ajustes dos trechos APROVADOS. O servidor recalcula e revalida tudo — o
+      // que vai aqui é a intenção do operador, não a verdade final.
+      var partes = aprov.map(function (i) { return 'aprovados=' + i; });
+      aprov.forEach(function (i) {
+        var a = REV.ajustes[i];
+        if (a) partes.push('ajuste_' + i + '=' + encodeURIComponent(a.startSeg + ',' + a.endSeg));
+      });
+      var body = partes.join('&');
       fetch('/pedidos/' + REV.dados.pedidoId + '/aprovar', {
         method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'text/html' }, body: body
       }).then(function (r) { return r.text(); }).then(function (html) {
@@ -263,6 +427,18 @@
       document.getElementById('btn-inicio').addEventListener('click', doInicio);
       document.getElementById('btn-emenda-ini').addEventListener('click', emendaInicio);
       document.getElementById('btn-emenda-fim').addEventListener('click', emendaFim);
+      document.getElementById('btn-meia').addEventListener('click', meiaVelocidade);
+      // Ajuste: início só com passos de 1s (o encaixe em fronteira de fala absorve menos que
+      // isso); fim com 0,25s e 1s, porque lá o tempo é livre para frente.
+      document.getElementById('aj-marcar-ini').addEventListener('click', function () { marcar('inicio'); });
+      document.getElementById('aj-marcar-fim').addEventListener('click', function () { marcar('fim'); });
+      document.getElementById('aj-ini-m1').addEventListener('click', function () { empurrar('inicio', -1); });
+      document.getElementById('aj-ini-p1').addEventListener('click', function () { empurrar('inicio', 1); });
+      document.getElementById('aj-fim-m1').addEventListener('click', function () { empurrar('fim', -1); });
+      document.getElementById('aj-fim-m025').addEventListener('click', function () { empurrar('fim', -0.25); });
+      document.getElementById('aj-fim-p025').addEventListener('click', function () { empurrar('fim', 0.25); });
+      document.getElementById('aj-fim-p1').addEventListener('click', function () { empurrar('fim', 1); });
+      document.getElementById('aj-restaurar').addEventListener('click', restaurar);
       document.getElementById('aprovar').addEventListener('click', function () { decidir('aprovado'); });
       document.getElementById('reprovar').addEventListener('click', function () { decidir('reprovado'); });
       document.getElementById('anterior').addEventListener('click', function () { irPara(REV.atual - 1); });
@@ -279,6 +455,8 @@
       else if (e.key === 'ArrowLeft') irPara(REV.atual - 1);
       else if (e.key === 'ArrowRight') irPara(REV.atual + 1);
       else if (e.key === ' ') { e.preventDefault(); playPause(); }
+      else if (k === 'i') marcar('inicio');
+      else if (k === 'f') marcar('fim');
     });
 
     // A tela de revisão chega via HTMX; inicia quando o fragmento com os dados aparece.
@@ -335,14 +513,38 @@
       <button type="button" id="btn-inicio">↻ Do início</button>
       <button type="button" id="btn-emenda-ini">✂ Ouvir a emenda do início</button>
       <button type="button" id="btn-emenda-fim">✂ Ouvir a emenda do fim</button>
+      <button type="button" id="btn-meia">🐢 Meia velocidade</button>
     </div>
+    <details class="ajuste" id="ajuste">
+      <summary>✎ Ajustar o corte deste trecho</summary>
+      <div class="ajuste-linha">
+        <span class="ajuste-rotulo">Início</span>
+        <button type="button" class="ajuste-marcar" id="aj-marcar-ini">⤓ Marcar aqui</button>
+        <button type="button" class="ajuste-nudge" id="aj-ini-m1">−1s</button>
+        <button type="button" class="ajuste-nudge" id="aj-ini-p1">+1s</button>
+      </div>
+      <div class="ajuste-linha">
+        <span class="ajuste-rotulo">Fim</span>
+        <button type="button" class="ajuste-marcar" id="aj-marcar-fim">⤓ Marcar aqui</button>
+        <button type="button" class="ajuste-nudge" id="aj-fim-m1">−1s</button>
+        <button type="button" class="ajuste-nudge" id="aj-fim-m025">−0,25s</button>
+        <button type="button" class="ajuste-nudge" id="aj-fim-p025">+0,25s</button>
+        <button type="button" class="ajuste-nudge" id="aj-fim-p1">+1s</button>
+      </div>
+      <div class="ajuste-linha">
+        <button type="button" id="aj-restaurar">↺ Restaurar original</button>
+      </div>
+      <p class="ajuste-estado" id="aj-estado">Sem ajuste: o corte é o original.</p>
+      <p class="ajuste-encaixe" id="aj-encaixe" hidden></p>
+      <div class="ajuste-invalido" id="aj-invalido" hidden></div>
+    </details>
     <div class="decisao">
       <button type="button" class="seta" id="anterior" aria-label="Trecho anterior">‹</button>
       <button type="button" class="aprovar" id="aprovar">✓ Aprovar</button>
       <button type="button" class="reprovar" id="reprovar">Reprovar</button>
       <button type="button" class="seta" id="proximo" aria-label="Próximo trecho">›</button>
     </div>
-    <p class="atalhos">Atalhos: A aprova · R reprova · ← → navega · espaço toca</p>
+    <p class="atalhos">Atalhos: A aprova · R reprova · ← → navega · espaço toca · I marca início · F marca fim</p>
   </div>
   <div class="rodape"><div class="rodape-conteudo">
     <span class="resumo" id="resumo">—</span>

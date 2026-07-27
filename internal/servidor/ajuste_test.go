@@ -403,3 +403,104 @@ func TestAprovarIgnoraAjusteDeTrechoNaoAprovado(t *testing.T) {
 	// t.TempDir falha ao limpar.
 	esperarStatus(t, s, "teste-1", "concluido")
 }
+
+// --- Cliente (estrutura servida) ---
+//
+// Não há navegador nos testes, então o que se verifica aqui é o CONTRATO da tela: os
+// controles existem, a granularidade é a combinada e o JS aponta para o endpoint certo. É o
+// que pega uma regressão de renomeação ou de rota, que quebraria o ajuste em silêncio.
+
+func htmlDaRevisao(t *testing.T) string {
+	t.Helper()
+	s := servidorPesada(t, candsJanela(), &baixadorVideoFake{}, &renderFake{})
+	criarPedidoOK(t, s)
+	esperarStatus(t, s, "teste-1", "aguardando-aprovacao")
+	req := httptest.NewRequest(http.MethodGet, "/pedidos/teste-1", nil)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	return w.Body.String()
+}
+
+// htmlDaPagina devolve a página inteira (GET /), onde vive o JS.
+func htmlDaPagina(t *testing.T) string {
+	t.Helper()
+	s := servidorPesada(t, candsJanela(), &baixadorVideoFake{}, &renderFake{})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	return w.Body.String()
+}
+
+func TestTelaTrazControlesDeAjuste(t *testing.T) {
+	corpo := htmlDaRevisao(t)
+	for _, quer := range []string{
+		`id="ajuste"`, `id="aj-marcar-ini"`, `id="aj-marcar-fim"`, `id="aj-restaurar"`,
+		`id="aj-estado"`, `id="aj-invalido"`, `id="btn-meia"`,
+	} {
+		if !strings.Contains(corpo, quer) {
+			t.Errorf("o fragmento de revisão não trouxe %q", quer)
+		}
+	}
+}
+
+// TestJSChamaOEndpointDeAjuste: o JS mora no template da página, não no fragmento. Uma rota
+// renomeada de um lado só quebraria o ajuste em silêncio — a tela apareceria inteira e o
+// feedback ao vivo simplesmente não voltaria.
+func TestJSChamaOEndpointDeAjuste(t *testing.T) {
+	corpo := htmlDaPagina(t)
+	for _, quer := range []string{
+		"/ajustar",        // a rota
+		"getCurrentTime",  // captura o instante do clique
+		"setPlaybackRate", // meia velocidade
+		"REV.debounce",    // feedback ao vivo com debounce
+		"texto_falado",    // consome o texto novo do servidor
+		"aprovavel",       // respeita a guarda do servidor
+	} {
+		if !strings.Contains(corpo, quer) {
+			t.Errorf("o JS da página não contém %q", quer)
+		}
+	}
+}
+
+// TestGranularidadeAssimetrica trava a decisão: no início o encaixe em fronteira de fala
+// absorve qualquer coisa menor que 1 s, então empurrão fino ali seria botão que não faz nada.
+// No fim, que é livre para frente, os 0,25 s têm efeito real.
+func TestGranularidadeAssimetrica(t *testing.T) {
+	corpo := htmlDaRevisao(t)
+
+	for _, quer := range []string{`id="aj-fim-m025"`, `id="aj-fim-p025"`, `id="aj-fim-m1"`, `id="aj-fim-p1"`} {
+		if !strings.Contains(corpo, quer) {
+			t.Errorf("o fim precisa de passo fino e de 1s: falta %q", quer)
+		}
+	}
+	for _, quer := range []string{`id="aj-ini-m1"`, `id="aj-ini-p1"`} {
+		if !strings.Contains(corpo, quer) {
+			t.Errorf("o início precisa dos passos de 1s: falta %q", quer)
+		}
+	}
+	for _, naoQuer := range []string{`id="aj-ini-m025"`, `id="aj-ini-p025"`} {
+		if strings.Contains(corpo, naoQuer) {
+			t.Errorf("o início NÃO deve ter passo de 0,25s (%s): o encaixe de 1s o torna inócuo", naoQuer)
+		}
+	}
+}
+
+// TestEndpointAjustarAceitaFimComFolga é o caminho completo do caso de uso, pelo HTTP: o
+// operador estende 2 s além da fronteira e o servidor aceita, devolvendo o texto novo.
+func TestEndpointAjustarAceitaFimComFolga(t *testing.T) {
+	s := servidorAjuste(t)
+
+	code, got := postAjustar(t, s, 0, 36, 80) // fronteiras de 6 em 6: 78 + 2 s de folga
+	if code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	if got.EndSeg != 80 {
+		t.Errorf("o servidor moveu o fim para %.2f — a folga de 2s deveria ser aceita", got.EndSeg)
+	}
+	if !got.Aprovavel {
+		t.Errorf("deveria ser aprovável: %s", got.Motivo)
+	}
+	if got.TextoFalado == "" {
+		t.Error("sem texto falado o operador ajusta às cegas")
+	}
+}
