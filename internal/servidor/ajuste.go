@@ -23,25 +23,48 @@ import (
 	"srtclean/internal/validacao"
 )
 
+// FraseVizinha é uma frase em volta do trecho, para a FAIXA DE FRASES CLICÁVEL da tela.
+//
+// É a peça central do redesenho: clicar numa frase troca "empurrar até acertar" por
+// "apontar onde é". E não é recurso novo — o servidor já encaixa o corte em fronteira de
+// fala usando o Frasear, então a frase É a unidade nativa do ajuste. A faixa só expõe o que
+// já existia escondido.
+type FraseVizinha struct {
+	InicioMs int    `json:"inicio_ms"`
+	FimMs    int    `json:"fim_ms"`
+	Rotulo   string `json:"rotulo"` // HH:MM:SS, sem milissegundos (ver comentário em rotulo)
+	Texto    string `json:"texto"`
+	Dentro   bool   `json:"dentro"` // está dentro do corte atual? (destaque na tela)
+}
+
 // TrechoAjustado é o resultado do recálculo de um trecho com tempos novos. É o que o
 // operador vê ANTES de aprovar: ele está julgando o texto, não os números.
+//
+// Tempos em MILISSEGUNDOS INTEIROS. Não em float de segundos: uma sequência de empurrões de
+// 0,25 s acumularia erro de ponto flutuante, e o tempo é a chave do corte. Não em string
+// tampouco — string é formato de saída, não de cálculo. As strings Start/End existem só
+// porque o Candidato (contrato do JSON de candidatos) as usa.
 type TrechoAjustado struct {
 	Indice int `json:"indice"`
 
-	// Start/End efetivos, JÁ ENCAIXADOS em fronteira de fala (ver encaixar). Podem diferir
-	// do que o operador marcou — por isso voltam, para ele ver onde caiu de fato.
-	Start    string  `json:"start"`
-	End      string  `json:"end"`
-	StartSeg float64 `json:"start_seg"`
-	EndSeg   float64 `json:"end_seg"`
+	// Start/End efetivos, já encaixados/clampados. Podem diferir do que o operador marcou —
+	// por isso voltam, para ele ver onde caiu de fato.
+	StartMs int    `json:"start_ms"`
+	EndMs   int    `json:"end_ms"`
+	Start   string `json:"start"` // HH:MM:SS.000 — formato do Candidato
+	End     string `json:"end"`
 
 	// Hook RECALCULADO: a primeira frase a partir do start. Não é opcional — ao estender
 	// para trás, o hook deixa de ser a frase-âncora e passa a ser a abertura de fato.
-	Hook          string  `json:"hook"`
-	DuracaoSeg    float64 `json:"duration_seconds"`
-	TextoFalado   string  `json:"texto_falado"`
-	AjustadoStart bool    `json:"ajustado_start"` // o encaixe moveu o que o operador marcou?
-	AjustadoEnd   bool    `json:"ajustado_end"`
+	Hook          string `json:"hook"`
+	DuracaoMs     int    `json:"duracao_ms"`
+	TextoFalado   string `json:"texto_falado"`
+	AjustadoStart bool   `json:"ajustado_start"` // o encaixe moveu o que o operador marcou?
+	AjustadoEnd   bool   `json:"ajustado_end"`
+
+	// Vizinhanca são as frases dentro do corte mais algumas de cada lado, para a faixa
+	// clicável. O cliente não precisa (nem deve) refrasear nada: uma fonte só.
+	Vizinhanca []FraseVizinha `json:"vizinhanca"`
 
 	// Aprovavel diz se este trecho pode ir ao render. Falso => Motivo explica o que falta,
 	// em palavras e com números ("ficaria 64s, o máximo é 58s").
@@ -66,70 +89,123 @@ type LimitesPregacao struct {
 // ajustado à mão, e a saída seria ensinar uma exceção ao auditor — pior remédio que a
 // doença. De quebra, dispensa precisão do operador: ele julga de ouvido, e a fronteira de
 // fala é um evento de 0,1–0,3 s.
-func recalcularTrecho(frases []harness.Frase, indice int, startSeg, endSeg float64, lim LimitesPregacao) TrechoAjustado {
+func recalcularTrecho(frases []harness.Frase, indice, startMs, endMs int, lim LimitesPregacao) TrechoAjustado {
 	t := TrechoAjustado{Indice: indice}
+	brutoIni, brutoFim := clampar(startMs, endMs, lim)
 
-	brutoIni := int(math.Round(startSeg * 1000))
-	brutoFim := int(math.Round(endSeg * 1000))
-	brutoIni, brutoFim = clampar(brutoIni, brutoFim, lim)
+	// falhar preenche o mínimo para a tela continuar coerente mesmo com ajuste inválido: o
+	// operador precisa ver a faixa de frases para saber como consertar.
+	falhar := func(ini, fim int, motivo string) TrechoAjustado {
+		t.StartMs, t.EndMs = ini, fim
+		t.Start, t.End = hms(ini), hms(fim)
+		t.DuracaoMs = fim - ini
+		t.Motivo = motivo
+		t.Vizinhanca = vizinhanca(frases, ini, fim)
+		return t
+	}
 
 	if brutoFim <= brutoIni {
-		t.StartSeg, t.EndSeg = float64(brutoIni)/1000, float64(brutoFim)/1000
-		t.Start, t.End = hms(brutoIni), hms(brutoFim)
-		t.Motivo = "o fim precisa vir depois do início"
-		return t
+		return falhar(brutoIni, brutoFim, "o fim precisa vir depois do início")
 	}
 
 	iniIdx, okI := encaixarInicio(frases, brutoIni)
 	fimMs, okF := encaixarFim(frases, brutoFim)
 	if !okI || !okF {
-		t.StartSeg, t.EndSeg = float64(brutoIni)/1000, float64(brutoFim)/1000
-		t.Start, t.End = hms(brutoIni), hms(brutoFim)
-		t.Motivo = "não há fala transcrita nessa faixa para ancorar o corte"
-		return t
+		return falhar(brutoIni, brutoFim, "não há fala transcrita nessa faixa para ancorar o corte")
 	}
 
 	iniMs := frases[iniIdx].InicioMs
 	t.AjustadoStart = iniMs != brutoIni
 	t.AjustadoEnd = fimMs != brutoFim
-
 	if fimMs <= iniMs {
-		t.StartSeg, t.EndSeg = float64(iniMs)/1000, float64(fimMs)/1000
-		t.Start, t.End = hms(iniMs), hms(fimMs)
-		t.Motivo = "início e fim caíram na mesma fala; separe mais os dois pontos"
-		return t
+		return falhar(iniMs, fimMs, "início e fim caíram na mesma fala; separe mais os dois pontos")
 	}
 
-	t.StartSeg, t.EndSeg = float64(iniMs)/1000, float64(fimMs)/1000
+	t.StartMs, t.EndMs = iniMs, fimMs
 	t.Start, t.End = hms(iniMs), hms(fimMs)
-	t.DuracaoSeg = float64(fimMs-iniMs) / 1000
+	t.DuracaoMs = fimMs - iniMs
 
 	// Hook = a primeira frase real a partir do start final. MESMA regra da Fase 3
 	// (fase3.go: "hook = a PRIMEIRA frase real a partir do start final"), reusada de
 	// propósito: é o que faz a invariante do auditor valer por construção.
 	t.Hook = frases[iniIdx].Texto
 	t.TextoFalado = textoDoTrechoMs(frases, iniMs, fimMs)
+	t.Vizinhanca = vizinhanca(frases, iniMs, fimMs)
 
-	t.Aprovavel, t.Motivo = duracaoAceitavel(fimMs - iniMs)
+	t.Aprovavel, t.Motivo = duracaoAceitavel(t.DuracaoMs)
 	return t
+}
+
+// vizinhaAoRedor é quantas frases mostrar de cada lado do corte na faixa clicável. Poucas o
+// bastante para caber na tela sem rolagem, muitas o bastante para o operador ver onde a ideia
+// começa e termina.
+const vizinhaAoRedor = 3
+
+// vizinhanca devolve as frases DENTRO do corte mais algumas de cada lado. É o que alimenta a
+// faixa clicável — a mudança principal do redesenho, porque troca "empurrar até acertar" por
+// "apontar onde é".
+func vizinhanca(frases []harness.Frase, iniMs, fimMs int) []FraseVizinha {
+	if len(frases) == 0 {
+		return nil
+	}
+	// Primeira e última frase que tocam o corte. Se o corte for degenerado (inválido), cai
+	// no ponto mais próximo, para a faixa aparecer de todo modo.
+	primeiro, ultimo := -1, -1
+	for i, f := range frases {
+		if f.InicioMs >= iniMs && f.InicioMs < fimMs {
+			if primeiro < 0 {
+				primeiro = i
+			}
+			ultimo = i
+		}
+	}
+	if primeiro < 0 {
+		primeiro, _ = encaixarInicio(frases, iniMs)
+		ultimo = primeiro
+	}
+
+	de := max(0, primeiro-vizinhaAoRedor)
+	ate := min(len(frases)-1, ultimo+vizinhaAoRedor)
+
+	out := make([]FraseVizinha, 0, ate-de+1)
+	for i := de; i <= ate; i++ {
+		f := frases[i]
+		out = append(out, FraseVizinha{
+			InicioMs: f.InicioMs,
+			FimMs:    f.FimMs,
+			Rotulo:   rotulo(f.InicioMs),
+			Texto:    f.Texto,
+			Dentro:   f.InicioMs >= iniMs && f.InicioMs < fimMs,
+		})
+	}
+	return out
 }
 
 // duracaoAceitavel aplica a faixa de CONSTRUÇÃO (a mesma da Fase 3 — harness.DuracaoMinMs/
 // MaxMs, um lugar só) e explica em palavras o que falta, com os números. "Fora da faixa"
 // não ajuda ninguém a consertar; "ficaria 64s, o máximo é 58s" ajuda.
+// As mensagens usam segundos INTEIROS. Exibir "64.75s" anuncia uma precisão que o sistema
+// não tem — a mesma falsa precisão já rejeitada na grade de critérios. Arredonda para cima o
+// que falta/sobra, para o operador não seguir a instrução e continuar fora da faixa.
 func duracaoAceitavel(durMs int) (bool, string) {
-	seg := float64(durMs) / 1000
 	switch {
 	case durMs < harness.DuracaoMinMs:
-		falta := float64(harness.DuracaoMinMs-durMs) / 1000
-		return false, fmt.Sprintf("ficaria %.1fs, o mínimo é %ds — estenda %.1fs",
-			seg, harness.DuracaoMinMs/1000, falta)
+		return false, fmt.Sprintf("ficaria %ds, o mínimo é %ds — estenda %ds",
+			durMs/1000, harness.DuracaoMinMs/1000, arredondarParaCima(harness.DuracaoMinMs-durMs))
 	case durMs > harness.DuracaoMaxMs:
-		sobra := float64(durMs-harness.DuracaoMaxMs) / 1000
-		return false, fmt.Sprintf("ficaria %.1fs, o máximo é %ds — encurte %.1fs",
-			seg, harness.DuracaoMaxMs/1000, sobra)
+		return false, fmt.Sprintf("ficaria %ds, o máximo é %ds — encurte %ds",
+			durMs/1000, harness.DuracaoMaxMs/1000, arredondarParaCima(durMs-harness.DuracaoMaxMs))
 	}
 	return true, ""
+}
+
+// arredondarParaCima converte ms em segundos arredondando para cima: dizer "encurte 6s"
+// quando faltam 6,2 s deixaria o operador fora da faixa depois de obedecer.
+func arredondarParaCima(ms int) int {
+	if ms <= 0 {
+		return 0
+	}
+	return (ms + 999) / 1000
 }
 
 // clampar mantém o ajuste dentro da pregação informada no pedido.
@@ -206,11 +282,14 @@ func encaixarFim(frases []harness.Frase, ms int) (int, bool) {
 	return 0, false
 }
 
-// hms formata no MESMO formato da Fase 3 ("HH:MM:SS.000"). Não há perda: a transcrição
-// limpa tem timestamps em segundos inteiros ([HH:MM:SS]), então toda fronteira de fala é
-// múltiplo de 1000 ms. É também por isso que empurrão de ±0,25s no player não precisa de
-// precisão: o encaixe absorve a diferença.
+// hms formata no MESMO formato da Fase 3 ("HH:MM:SS.000") — é o contrato do Candidato, que o
+// render consome. Não há perda: a transcrição limpa tem timestamps em segundos inteiros
+// ([HH:MM:SS]), então toda fronteira de fala é múltiplo de 1000 ms.
 func hms(ms int) string { return validacao.MsParaHms(ms) + ".000" }
+
+// rotulo é o tempo COMO SE MOSTRA a uma pessoa: "00:39:18", sem os milissegundos. O ".000" do
+// contrato interno anuncia uma precisão que o sistema não tem, e na tela isso só polui.
+func rotulo(ms int) string { return validacao.MsParaHms(ms) }
 
 func abs(n int) int {
 	if n < 0 {
@@ -226,7 +305,9 @@ func aplicarAjuste(c validacao.Candidato, t TrechoAjustado) validacao.Candidato 
 	c.Start = t.Start
 	c.End = t.End
 	c.Hook = t.Hook
-	c.DurationSeconds = t.DuracaoSeg
+	// DurationSeconds é o contrato do Candidato (float, em segundos). Internamente o ajuste
+	// trabalha em ms inteiros; a conversão acontece só aqui, na saída.
+	c.DurationSeconds = float64(t.DuracaoMs) / 1000
 	return c
 }
 
@@ -246,10 +327,12 @@ func (s *Servidor) handleAjustar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Tempos em MILISSEGUNDOS INTEIROS, não em segundos float: uma rajada de empurrões de
+	// 0,25 s em float acumula erro, e o tempo é a chave do corte.
 	var corpo struct {
-		Indice int     `json:"indice"`
-		Start  float64 `json:"start"`
-		End    float64 `json:"end"`
+		Indice  int `json:"indice"`
+		StartMs int `json:"start_ms"`
+		EndMs   int `json:"end_ms"`
 	}
 	defer r.Body.Close()
 	if err := json.NewDecoder(r.Body).Decode(&corpo); err != nil {
@@ -273,7 +356,7 @@ func (s *Servidor) handleAjustar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t := recalcularTrecho(frases, corpo.Indice, corpo.Start, corpo.End, lim)
+	t := recalcularTrecho(frases, corpo.Indice, corpo.StartMs, corpo.EndMs, lim)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(t)
 }
@@ -338,7 +421,7 @@ func (s *Servidor) validarAjustes(reg *registro, aprovados []int, recebidos []aj
 		if !aprovado[a.Indice] {
 			continue
 		}
-		t := recalcularTrecho(frases, a.Indice, a.Start, a.End, lim)
+		t := recalcularTrecho(frases, a.Indice, a.StartMs, a.EndMs, lim)
 		if !t.Aprovavel {
 			return nil, fmt.Sprintf("o trecho %d foi ajustado mas %s", a.Indice+1, t.Motivo)
 		}

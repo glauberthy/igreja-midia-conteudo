@@ -440,17 +440,52 @@ limites da pregacao informada. O cliente repete a regra apenas para nao frustrar
 no ultimo clique (botoes "Aprovar" e "Confirmar e gerar" desabilitados com o motivo no
 `title`).
 
-### Cliente
+### Cliente -- REDESENHADO apos teste com o operador
 
-"Marcar inicio/fim aqui" captura `getCurrentTime()` no instante do clique; empurroezinhos na
-granularidade acima; "restaurar original"; meia velocidade (`setPlaybackRate(0.5)`); atalhos
-`I` e `F`. Feedback ao vivo com debounce de 350 ms -- uma rajada de cliques gera uma chamada,
-nao seis.
+A primeira versao funcionava e o operador nao entendeu. O diagnostico do dono, com a resposta
+de cada ponto (mockup em `docs/mockups/ajuste-corte_referencia.html`):
 
-Dois detalhes que decidem se funciona na pratica: (a) `efetivo(i)` e a fonte unica da tela,
-entao player, "ouvir a emenda" e texto usam os tempos ajustados -- senao o operador ajusta e
-continua ouvindo o corte antigo; (b) o cliente adota os tempos que o servidor DE FATO usara
-(apos encaixe/clamp), senao o empurrao seguinte partiria de um numero que nao existe mais.
+| O que confundia | Correcao |
+|---|---|
+| "Marcar aqui" nao dizia **aqui onde** -- clique as cegas | botao passa a nomear o tempo: **"usar 00:39:24 do player"**, com relogio ao vivo |
+| "−1s"/"+1s" nao diziam o que fazem: "−1s" no inicio deixa o trecho MAIS longo, "+1s" no fim tambem -- o mesmo rotulo com efeitos opostos por linha | rotulo pelo **efeito**: "‹ mais cedo" / "mais tarde ›" |
+| o numero que muda ficava numa linha embaixo, longe dos botoes que o mudam | o valor fica **entre** as duas setas |
+| a assimetria (Fim com 5 botoes, Inicio com 3) parecia defeito | passo fino rebaixado a **linha subordinada, rotulada "ajuste fino", so no Fim** -- le como recurso extra, nao como falta |
+| "54.75s" e "00:40:12.000" exibiam precisao que o sistema nao tem | segundos inteiros e `HH:MM:SS` na tela; o `.000` fica so no contrato interno do Candidato |
+| "ouvir o fim" longe dos controles do fim | movido para a linha do Fim, destacado |
+| resumo com dois timestamps | **linguagem natural**: "1s a menos que o original · fica com 54s" |
+
+**A mudanca principal: faixa de frases clicavel.** Acima dos controles, as frases em volta do
+trecho (as de dentro destacadas). Clicar move o inicio (se a frase estiver antes do meio do
+trecho) ou o fim (se depois). Troca **"empurrar ate acertar" por "apontar onde e"**.
+
+E nao e recurso novo: o servidor **ja** encaixa o corte em fronteira de fala usando o
+`Frasear`, entao a frase e a unidade nativa do ajuste -- a faixa expoe o que existia
+escondido. O servidor passou a devolver a vizinhanca (`vizinhanca[]` com `inicio_ms`,
+`fim_ms`, `rotulo`, `texto`, `dentro`) junto do recalculo, do mesmo `Frasear`: uma fonte so,
+o cliente nao refraseia nada. A faixa vem **inclusive quando o ajuste e invalido** -- e
+justamente quando o operador precisa dela para se orientar.
+
+Dois detalhes que decidem se funciona na pratica, mantidos do desenho anterior: (a) `efetivo(i)`
+e a fonte unica da tela, entao player, "ouvir a emenda" e texto usam os tempos ajustados --
+senao o operador ajusta e continua ouvindo o corte antigo; (b) o cliente adota os tempos que o
+servidor DE FATO usara (apos encaixe/clamp), senao o empurrao seguinte partiria de um numero
+que nao existe mais. Mantidos tambem: bloqueio de aprovar com ajuste invalido, restaurar
+original, meia velocidade, atalhos e o debounce de 350 ms.
+
+### Dois cuidados tecnicos do estudo de bibliotecas
+
+O estudo foi descartado no geral (as bibliotecas exigem midia local, que a revisao nao tem --
+ali o video e o player do YouTube). Duas recomendacoes valeram:
+
+- **`seekTo(t, false)` durante os empurroes e `seekTo(t, true)` quando o debounce assenta.**
+  E recomendacao da documentacao do player: `allowSeekAhead=false` so reposiciona, sem disparar
+  requisicao de video. Sem isso, uma rajada de cliques dispara uma requisicao por clique.
+- **Tempos guardados como inteiros em milissegundos**, nunca strings nem floats. Uma sequencia
+  de empurroes de 0,25 s em float de segundos acumula erro, e o tempo e a chave do corte. O
+  contrato do endpoint passou a ser `start_ms`/`end_ms` inteiros; a conversao para o formato
+  `HH:MM:SS.000` do Candidato acontece so na saida. Um teste simula 8 empurroes de 250 ms e
+  exige o valor exato.
 
 ### Convergencia com a spec-14 (confronto doutrinario) -- REGISTRADO, nao implementado
 
@@ -481,11 +516,18 @@ preenchimento do mesmo fluxo, e a decisao continua sendo do operador.
       invariante do `cmd/auditar` continua valendo por construcao (spec-16).
 - [x] Guardas no SERVIDOR: faixa de duracao (fonte unica na `harness`), `end <= start`, clamp
       nos limites da pregacao; mensagens com os numeros.
-- [x] Controles: marcar inicio/fim pelo `getCurrentTime()`, passos de 1 s no inicio e de
-      ±0,25s/±1s no fim, restaurar original, meia velocidade.
+- [x] Controles: faixa de frases clicavel; botao que NOMEIA o tempo do player; rotulos pelo
+      efeito ("mais cedo"/"mais tarde") com o valor entre as setas; ajuste fino subordinado so
+      no Fim; "ouvir o fim" junto dos controles do Fim; restaurar original; meia velocidade.
+- [x] Sem falsa precisao na tela: segundos inteiros e `HH:MM:SS`, nunca `54.75s` nem `.000`.
+- [x] `seekTo(t, false)` nos empurroes e `seekTo(t, true)` ao assentar o debounce.
+- [x] Tempos internos em milissegundos INTEIROS, no cliente e no servidor.
 - [x] Feedback ao vivo com debounce atualizando duracao, hook e texto falado no card.
 - [x] Testes: recalculo, `/aprovar` usando os ajustados e nao os originais, guardas de faixa
-      e de `end <= start`, e fluxo ponta a ponta no formato que o cliente envia.
+      e de `end <= start`, fluxo ponta a ponta no formato que o cliente envia, e o contrato da
+      tela redesenhada (rotulos pelo efeito, ausencia de "Marcar aqui", vizinhanca com contexto
+      dos dois lados e presente mesmo no ajuste invalido, sem falsa precisao, `seekTo` correto,
+      tempos em ms).
 - [x] `go build`, `go vet` e `go test -race ./...` verdes.
 
 ## Nota

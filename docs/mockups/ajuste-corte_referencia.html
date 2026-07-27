@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup — painel de ajuste de corte</title>
+<style>
+  @font-face {
+    font-family: "Google Sans Flex";
+    src: url("../../assets/fontes/static/GoogleSansFlex_36pt-Regular.ttf") format("truetype");
+    font-weight: 400; font-display: swap;
+  }
+  @font-face {
+    font-family: "Google Sans Flex";
+    src: url("../../assets/fontes/static/GoogleSansFlex_36pt-Bold.ttf") format("truetype");
+    font-weight: 600; font-display: swap;
+  }
+
+  :root {
+    --lima: #CDDC39;
+    --lima-escura: #7d8a13;
+    --tinta: #1c1c1a;
+    --tinta-fraca: #6a6a64;
+    --tinta-tenue: #9a9a92;
+    --papel: #f6f6f2;
+    --carta: #ffffff;
+    --linha: #e2e2da;
+    --linha-forte: #c9c9bf;
+    --sel-bg: #eef3d9;
+    --sel-tinta: #4a5510;
+    --sel-linha: #c3d22f;
+    --raio: 8px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0; padding: 24px 16px 48px;
+    background: var(--papel); color: var(--tinta);
+    font-family: "Google Sans Flex", system-ui, -apple-system, sans-serif;
+    font-size: 16px; line-height: 1.6;
+  }
+  .folha { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .subtitulo { color: var(--tinta-fraca); font-size: 14px; margin: 0 0 24px; }
+
+  .painel {
+    background: var(--carta); border: 1px solid var(--linha);
+    border-radius: 12px; padding: 18px 20px;
+  }
+  .rotulo-secao { font-size: 13px; color: var(--tinta-fraca); margin: 0 0 8px; }
+
+  /* faixa de frases */
+  .frases {
+    background: var(--papel); border: 1px solid var(--linha);
+    border-radius: var(--raio); padding: 6px; margin-bottom: 18px;
+  }
+  .frase {
+    display: block; width: 100%; text-align: left;
+    font-family: inherit; font-size: 13.5px; line-height: 1.5;
+    padding: 7px 10px; margin: 0; border: 1px solid transparent;
+    border-radius: var(--raio); background: transparent;
+    color: var(--tinta-tenue); cursor: pointer;
+  }
+  .frase:hover { border-color: var(--linha-forte); color: var(--tinta); }
+  .frase.dentro { background: var(--sel-bg); color: var(--sel-tinta); border-color: var(--sel-linha); }
+  .frase .t { font-size: 11.5px; color: var(--tinta-tenue); margin-right: 8px; }
+  .frase.dentro .t { color: var(--sel-tinta); opacity: 0.75; }
+
+  /* linhas de controle */
+  .linha-ctrl { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .campo { font-size: 13px; color: var(--tinta-fraca); width: 46px; flex: none; }
+  .valor {
+    font-size: 16px; font-weight: 600; min-width: 86px; text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  button {
+    font-family: inherit; font-size: 13px; padding: 7px 12px;
+    border-radius: var(--raio); border: 1px solid var(--linha-forte);
+    background: var(--carta); color: var(--tinta); cursor: pointer;
+  }
+  button:hover { background: var(--papel); }
+  button:active { transform: scale(0.98); }
+  button:focus-visible { outline: 2px solid var(--lima-escura); outline-offset: 2px; }
+  button.quieto { color: var(--tinta-fraca); }
+  button.ouvir { background: var(--sel-bg); border-color: var(--sel-linha); color: var(--sel-tinta); font-weight: 600; }
+  button.fino { font-size: 12px; padding: 4px 10px; }
+
+  .fino-linha { display: flex; align-items: center; gap: 8px; margin: 0 0 16px 56px; }
+  .fino-rotulo { font-size: 12px; color: var(--tinta-tenue); }
+
+  .rodape {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding-top: 12px; border-top: 1px solid var(--linha);
+  }
+  .resumo { font-size: 13px; color: var(--tinta-fraca); }
+  .resumo.mudou { color: var(--sel-tinta); font-weight: 600; }
+
+  .nota {
+    max-width: 720px; margin: 28px auto 0; padding-top: 16px;
+    border-top: 1px solid var(--linha); font-size: 13px; color: var(--tinta-fraca);
+  }
+</style>
+</head>
+<body>
+
+<div class="folha">
+  <h1>Ajustar o corte deste trecho</h1>
+  <p class="subtitulo">Clique numa frase para mover o início ou o fim. Use as setas para afinar.</p>
+
+  <div class="painel">
+    <p class="rotulo-secao">Frases em volta do trecho — as destacadas estão dentro do corte</p>
+    <div class="frases" id="frases"></div>
+
+    <div class="linha-ctrl">
+      <span class="campo">Início</span>
+      <button type="button" data-mov="ini,-1">‹ mais cedo</button>
+      <span class="valor" id="v-ini">00:39:18</span>
+      <button type="button" data-mov="ini,1">mais tarde ›</button>
+      <button type="button" class="quieto" id="usar-ini">usar 00:39:24 do player</button>
+    </div>
+
+    <div class="linha-ctrl" style="margin-bottom:4px">
+      <span class="campo">Fim</span>
+      <button type="button" data-mov="fim,-1">‹ mais cedo</button>
+      <span class="valor" id="v-fim">00:40:12</span>
+      <button type="button" data-mov="fim,1">mais tarde ›</button>
+      <button type="button" class="ouvir">▶ ouvir o fim</button>
+    </div>
+
+    <div class="fino-linha">
+      <span class="fino-rotulo">ajuste fino</span>
+      <button type="button" class="fino" data-mov="fim,-0.25">−0,25s</button>
+      <button type="button" class="fino" data-mov="fim,0.25">+0,25s</button>
+    </div>
+
+    <div class="rodape">
+      <span class="resumo" id="resumo">igual ao original · 55s</span>
+      <button type="button" id="restaurar">↻ restaurar</button>
+    </div>
+  </div>
+
+  <p class="nota">
+    Mockup de referência do painel de ajuste (spec-05, v2). Dados reais de um trecho do sermão
+    IxmiQGL9CMQ. As frases vêm de <code>harness.Frasear</code>, a mesma fonte que o servidor já
+    usa para encaixar o corte em fronteira de fala — clicar numa frase é a operação nativa do
+    sistema, não um recurso novo. O ajuste fino existe só no Fim (o Início encaixa em fronteira
+    de 1s, então passo menor seria inócuo).
+  </p>
+</div>
+
+<script>
+  const ORIG = { ini: 2358, fim: 2413 };
+  const TEMPO_PLAYER = 2364;
+
+  const frases = [
+    { t: 2344, txt: "E isso foi o que o Pai fez. Veja, o Pai o avistou de longe e reconheceu que era seu filho." },
+    { t: 2358, txt: "Não perdeu a fraternidade, não perdeu os laços." },
+    { t: 2371, txt: 'Ele disse: "Esse é meu filho". Sempre foi.' },
+    { t: 2389, txt: "Mas o pai correu ao encontro, o abraçou, o beijou." },
+    { t: 2413, txt: 'A cena da história nunca diz que disse: "Eu te disse".' },
+    { t: 2431, txt: "Tá vendo? É o que nós, pais, sempre usamos isso." }
+  ];
+
+  let ini = ORIG.ini, fim = ORIG.fim;
+  const $ = id => document.getElementById(id);
+
+  const hms = s => {
+    s = Math.max(0, s);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = Math.floor(s % 60);
+    return String(h).padStart(2,"0") + ":" + String(m).padStart(2,"0") + ":" + String(r).padStart(2,"0");
+  };
+
+  function desenharFrases() {
+    $("frases").innerHTML = frases.map((f, i) => {
+      const dentro = f.t >= ini && f.t < fim;
+      return '<button type="button" class="frase' + (dentro ? ' dentro' : '') + '" data-i="' + i + '">' +
+             '<span class="t">' + hms(f.t) + '</span>' + f.txt + '</button>';
+    }).join("");
+    $("frases").querySelectorAll(".frase").forEach(b => {
+      b.addEventListener("click", () => {
+        const f = frases[+b.dataset.i];
+        const meio = (ini + fim) / 2;
+        if (f.t < meio) { ini = f.t; if (fim <= ini) fim = ini + 30; }
+        else { const prox = frases.find(x => x.t > f.t); fim = prox ? prox.t : f.t + 20; }
+        desenhar();
+      });
+    });
+  }
+
+  function desenhar() {
+    $("v-ini").textContent = hms(ini);
+    $("v-fim").textContent = hms(fim);
+    const dur = Math.round(fim - ini);
+    const durOrig = ORIG.fim - ORIG.ini;
+    const d = dur - durOrig;
+    const r = $("resumo");
+    if (d === 0 && ini === ORIG.ini) {
+      r.textContent = "igual ao original · " + dur + "s";
+      r.classList.remove("mudou");
+    } else {
+      const txt = d === 0 ? "mesmo tamanho, deslocado" :
+                  d > 0 ? d + "s a mais que o original" : (-d) + "s a menos que o original";
+      r.textContent = txt + " · fica com " + dur + "s";
+      r.classList.add("mudou");
+    }
+    desenharFrases();
+  }
+
+  document.querySelectorAll("[data-mov]").forEach(b => {
+    b.addEventListener("click", () => {
+      const [qual, passo] = b.dataset.mov.split(",");
+      const p = parseFloat(passo);
+      if (qual === "ini") { const n = ini + p; if (n < fim - 5) ini = n; }
+      else { const n = fim + p; if (n > ini + 5) fim = n; }
+      desenhar();
+    });
+  });
+
+  $("usar-ini").addEventListener("click", () => {
+    if (TEMPO_PLAYER < fim - 5) { ini = TEMPO_PLAYER; desenhar(); }
+  });
+
+  $("restaurar").addEventListener("click", () => { ini = ORIG.ini; fim = ORIG.fim; desenhar(); });
+
+  desenhar();
+</script>
+
+</body>
+</html>

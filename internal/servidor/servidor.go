@@ -600,9 +600,9 @@ func (s *Servidor) responderErroAprovar(w http.ResponseWriter, r *http.Request, 
 // RECALCULA hook, duração e texto a partir deles, em vez de confiar no que o cliente
 // mandou. O cliente é conveniência; a fonte de verdade é o recálculo.
 type ajusteRecebido struct {
-	Indice int     `json:"indice"`
-	Start  float64 `json:"start"`
-	End    float64 `json:"end"`
+	Indice  int `json:"indice"`
+	StartMs int `json:"start_ms"`
+	EndMs   int `json:"end_ms"`
 }
 
 func lerAprovados(r *http.Request) ([]int, []ajusteRecebido, error) {
@@ -628,7 +628,7 @@ func lerAprovados(r *http.Request) ([]int, []ajusteRecebido, error) {
 		}
 		out = append(out, n)
 	}
-	// Formulário sem JS: "ajuste_<i>=start,end" (mesma semântica do caminho JSON).
+	// Formulário sem JS: "ajuste_<i>=startMs,endMs" (mesma semântica do caminho JSON).
 	ajs, err := lerAjustesDoForm(r)
 	if err != nil {
 		return nil, nil, err
@@ -650,14 +650,14 @@ func lerAjustesDoForm(r *http.Request) ([]ajusteRecebido, error) {
 		}
 		partes := strings.Split(vals[0], ",")
 		if len(partes) != 2 {
-			return nil, fmt.Errorf("ajuste %q: esperado \"start,end\"", chave)
+			return nil, fmt.Errorf("ajuste %q: esperado \"startMs,endMs\"", chave)
 		}
-		ini, err1 := strconv.ParseFloat(strings.TrimSpace(partes[0]), 64)
-		fim, err2 := strconv.ParseFloat(strings.TrimSpace(partes[1]), 64)
+		ini, err1 := strconv.Atoi(strings.TrimSpace(partes[0]))
+		fim, err2 := strconv.Atoi(strings.TrimSpace(partes[1]))
 		if err1 != nil || err2 != nil {
-			return nil, fmt.Errorf("ajuste %q: tempos ilegíveis", chave)
+			return nil, fmt.Errorf("ajuste %q: tempos ilegíveis (esperado inteiros em ms)", chave)
 		}
-		out = append(out, ajusteRecebido{Indice: idx, Start: ini, End: fim})
+		out = append(out, ajusteRecebido{Indice: idx, StartMs: ini, EndMs: fim})
 	}
 	return out, nil
 }

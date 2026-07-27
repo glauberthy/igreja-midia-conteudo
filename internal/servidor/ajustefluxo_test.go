@@ -20,13 +20,13 @@ func TestFluxoCompletoDoAjuste(t *testing.T) {
 	os.WriteFile(filepath.Join(s.baseDir, "teste-1", "transcricao.txt"), []byte(transcricaoAjuste()), 0644)
 
 	// 1) feedback ao vivo: o operador empurrou o fim para 80s
-	code, prev := postAjustar(t, s, 0, 36, 80)
+	code, prev := postAjustar(t, s, 0, 36000, 80000)
 	if code != 200 || !prev.Aprovavel {
 		t.Fatalf("pré-visualização falhou: %d %s", code, prev.Motivo)
 	}
 
 	// 2) confirma pelo MESMO formato que o JS envia (formulário)
-	corpo := "aprovados=0&ajuste_0=" + "36,80"
+	corpo := "aprovados=0&ajuste_0=" + "36000,80000" // ms inteiros
 	req := httptest.NewRequest("POST", "/pedidos/teste-1/aprovar", strings.NewReader(corpo))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()

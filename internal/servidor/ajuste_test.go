@@ -41,12 +41,12 @@ func TestRecalculaHookTextoDuracao(t *testing.T) {
 	frases := frasesAjuste(t)
 
 	// Janela de 0:36 a 1:18 = 42 s (dentro de 30–58).
-	got := recalcularTrecho(frases, 0, 36, 78, LimitesPregacao{})
+	got := recalcularTrecho(frases, 0, 36000, 78000, LimitesPregacao{})
 	if !got.Aprovavel {
 		t.Fatalf("deveria ser aprovável: %s", got.Motivo)
 	}
-	if got.DuracaoSeg != 42 {
-		t.Errorf("duração = %.1f, queria 42", got.DuracaoSeg)
+	if got.DuracaoMs != 42000 {
+		t.Errorf("duração = %dms, queria 42000", got.DuracaoMs)
 	}
 	// Hook = a frase que começa em 0:36, ou seja, a de índice 6.
 	if !strings.Contains(got.Hook, "frase numero 6") {
@@ -71,8 +71,8 @@ func TestRecalculaHookTextoDuracao(t *testing.T) {
 func TestHookRecalculadoAoEstenderParaTras(t *testing.T) {
 	frases := frasesAjuste(t)
 
-	original := recalcularTrecho(frases, 0, 60, 102, LimitesPregacao{}) // 1:00 → 1:42
-	estendido := recalcularTrecho(frases, 0, 36, 78, LimitesPregacao{}) // recuou 24 s
+	original := recalcularTrecho(frases, 0, 60000, 102000, LimitesPregacao{}) // 1:00 → 1:42
+	estendido := recalcularTrecho(frases, 0, 36000, 78000, LimitesPregacao{}) // recuou 24 s
 
 	if original.Hook == estendido.Hook {
 		t.Fatal("o hook não mudou ao estender para trás — a regra da Fase 3 não foi aplicada")
@@ -87,21 +87,22 @@ func TestHookRecalculadoAoEstenderParaTras(t *testing.T) {
 func TestInvarianteDoAuditorSeMantem(t *testing.T) {
 	frases := frasesAjuste(t)
 
-	for _, marcado := range []float64{36, 36.4, 37.9, 35.2, 38.7} {
-		got := recalcularTrecho(frases, 0, marcado, marcado+42, LimitesPregacao{})
+	// Tempos "tortos" em ms, como o player entregaria.
+	for _, marcado := range []int{36000, 36400, 37900, 35200, 38700} {
+		got := recalcularTrecho(frases, 0, marcado, marcado+42000, LimitesPregacao{})
 		if got.Hook == "" {
-			t.Fatalf("marcado %.1f: sem hook", marcado)
+			t.Fatalf("marcado %dms: sem hook", marcado)
 		}
 		idx, achou := harness.AcharAncora(frases, got.Hook)
 		if !achou {
-			t.Fatalf("marcado %.1f: hook não encontrado na transcrição", marcado)
+			t.Fatalf("marcado %dms: hook não encontrado na transcrição", marcado)
 		}
 		startMs, ok := validacao.HmsToMs(got.Start)
 		if !ok {
-			t.Fatalf("marcado %.1f: start ilegível %q", marcado, got.Start)
+			t.Fatalf("marcado %dms: start ilegível %q", marcado, got.Start)
 		}
 		if delta := frases[idx].InicioMs - startMs; delta != 0 {
-			t.Errorf("marcado %.1f: Δ=%dms entre hook e start — o auditor acusaria", marcado, delta)
+			t.Errorf("marcado %dms: Δ=%dms entre hook e start — o auditor acusaria", marcado, delta)
 		}
 	}
 }
@@ -111,9 +112,9 @@ func TestInvarianteDoAuditorSeMantem(t *testing.T) {
 func TestEncaixeEmFronteiraDeFala(t *testing.T) {
 	frases := frasesAjuste(t)
 
-	got := recalcularTrecho(frases, 0, 37.4, 79.2, LimitesPregacao{})
-	if got.StartSeg != 36 {
-		t.Errorf("start não encaixou na fronteira: %.2f, queria 36", got.StartSeg)
+	got := recalcularTrecho(frases, 0, 37400, 79200, LimitesPregacao{})
+	if got.StartMs != 36000 {
+		t.Errorf("start não encaixou na fronteira: %dms, queria 36000", got.StartMs)
 	}
 	if !got.AjustadoStart {
 		t.Error("AjustadoStart deveria avisar que o ponto foi movido")
@@ -128,9 +129,9 @@ func TestFimLiberadoParaFrente(t *testing.T) {
 	frases := frasesAjuste(t)
 
 	// Fronteiras de 6 em 6 s. O operador marcou 2 s depois de uma delas.
-	got := recalcularTrecho(frases, 0, 36, 80, LimitesPregacao{})
-	if got.EndSeg != 80 {
-		t.Errorf("o end foi movido para %.1f — o operador marcou 80 e a folga é segura", got.EndSeg)
+	got := recalcularTrecho(frases, 0, 36000, 80000, LimitesPregacao{})
+	if got.EndMs != 80000 {
+		t.Errorf("o end foi movido para %dms — o operador marcou 80000 e a folga é segura", got.EndMs)
 	}
 	if got.AjustadoEnd {
 		t.Error("AjustadoEnd marcado: o fim não deveria ter sido encaixado")
@@ -146,9 +147,9 @@ func TestFimAntesDaFronteiraEncaixaParaFrente(t *testing.T) {
 	frases := frasesAjuste(t)
 
 	// Antes da primeira fronteira (a primeira frase termina em 6 s).
-	got := recalcularTrecho(frases, 0, 0, 3, LimitesPregacao{})
-	if got.EndSeg < 3 {
-		t.Errorf("o end foi para trás (%.1f) — cortaria fala no meio", got.EndSeg)
+	got := recalcularTrecho(frases, 0, 0, 3000, LimitesPregacao{})
+	if got.EndMs < 3000 {
+		t.Errorf("o end foi para trás (%dms) — cortaria fala no meio", got.EndMs)
 	}
 }
 
@@ -158,10 +159,10 @@ func TestFolgaDoFimTemTeto(t *testing.T) {
 	frases := frasesAjuste(t)
 
 	// Última fronteira é 174 s (frase 29 começa em 174). Marcar 200 s pede 26 s de folga.
-	got := recalcularTrecho(frases, 0, 150, 200, LimitesPregacao{})
-	limite := 174 + float64(harness.FolgaFimMaxMs)/1000
-	if got.EndSeg > limite {
-		t.Errorf("end = %.1f passou do teto de folga (%.1f)", got.EndSeg, limite)
+	got := recalcularTrecho(frases, 0, 150000, 200000, LimitesPregacao{})
+	limite := 174000 + harness.FolgaFimMaxMs
+	if got.EndMs > limite {
+		t.Errorf("end = %dms passou do teto de folga (%dms)", got.EndMs, limite)
 	}
 }
 
@@ -170,7 +171,7 @@ func TestFolgaDoFimTemTeto(t *testing.T) {
 // gerando material que o próprio projeto marca como defeituoso.
 func TestAjusteSobreviveAoAuditor(t *testing.T) {
 	frases := frasesAjuste(t)
-	got := recalcularTrecho(frases, 0, 36, 80, LimitesPregacao{}) // 2 s de folga no fim
+	got := recalcularTrecho(frases, 0, 36000, 80000, LimitesPregacao{}) // 2 s de folga no fim
 	if !got.Aprovavel {
 		t.Fatalf("pré-condição: %s", got.Motivo)
 	}
@@ -197,7 +198,7 @@ func TestAjusteSobreviveAoAuditor(t *testing.T) {
 func TestGuardaDuracaoForaDaFaixa(t *testing.T) {
 	frases := frasesAjuste(t)
 
-	curto := recalcularTrecho(frases, 0, 36, 54, LimitesPregacao{}) // 18 s
+	curto := recalcularTrecho(frases, 0, 36000, 54000, LimitesPregacao{}) // 18 s
 	if curto.Aprovavel {
 		t.Error("18 s deveria ser recusado (mínimo 30 s)")
 	}
@@ -205,7 +206,7 @@ func TestGuardaDuracaoForaDaFaixa(t *testing.T) {
 		t.Errorf("motivo não diz o que falta: %q", curto.Motivo)
 	}
 
-	longo := recalcularTrecho(frases, 0, 0, 66, LimitesPregacao{}) // 66 s
+	longo := recalcularTrecho(frases, 0, 0, 66000, LimitesPregacao{}) // 66 s
 	if longo.Aprovavel {
 		t.Error("66 s deveria ser recusado (máximo 58 s)")
 	}
@@ -234,13 +235,13 @@ func TestFaixaVemDaHarness(t *testing.T) {
 // TestGuardaFimAntesDoInicio: end <= start é impedido, com mensagem em português.
 func TestGuardaFimAntesDoInicio(t *testing.T) {
 	frases := frasesAjuste(t)
-	for _, c := range []struct{ ini, fim float64 }{{60, 60}, {60, 30}, {60, 59.9}} {
+	for _, c := range []struct{ ini, fim int }{{60000, 60000}, {60000, 30000}, {60000, 59900}} {
 		got := recalcularTrecho(frases, 0, c.ini, c.fim, LimitesPregacao{})
 		if got.Aprovavel {
-			t.Errorf("start=%.1f end=%.1f deveria ser recusado", c.ini, c.fim)
+			t.Errorf("start=%dms end=%dms deveria ser recusado", c.ini, c.fim)
 		}
 		if got.Motivo == "" {
-			t.Errorf("start=%.1f end=%.1f: recusado sem explicar", c.ini, c.fim)
+			t.Errorf("start=%dms end=%dms: recusado sem explicar", c.ini, c.fim)
 		}
 	}
 }
@@ -251,12 +252,12 @@ func TestClampNosLimitesDaPregacao(t *testing.T) {
 	frases := frasesAjuste(t)
 	lim := LimitesPregacao{IniMs: 36000, FimMs: 120000} // 0:36 → 2:00
 
-	got := recalcularTrecho(frases, 0, 0, 300, lim) // tentou 0:00 → 5:00
-	if got.StartSeg < 36 {
-		t.Errorf("start escapou do limite inferior: %.1f", got.StartSeg)
+	got := recalcularTrecho(frases, 0, 0, 300000, lim) // tentou 0:00 → 5:00
+	if got.StartMs < 36000 {
+		t.Errorf("start escapou do limite inferior: %dms", got.StartMs)
 	}
-	if got.EndSeg > 120 {
-		t.Errorf("end escapou do limite superior: %.1f", got.EndSeg)
+	if got.EndMs > 120000 {
+		t.Errorf("end escapou do limite superior: %dms", got.EndMs)
 	}
 }
 
@@ -276,9 +277,9 @@ func servidorAjuste(t *testing.T) *Servidor {
 	return s
 }
 
-func postAjustar(t *testing.T, s *Servidor, indice int, ini, fim float64) (int, TrechoAjustado) {
+func postAjustar(t *testing.T, s *Servidor, indice, iniMs, fimMs int) (int, TrechoAjustado) {
 	t.Helper()
-	corpo, _ := json.Marshal(map[string]any{"indice": indice, "start": ini, "end": fim})
+	corpo, _ := json.Marshal(map[string]any{"indice": indice, "start_ms": iniMs, "end_ms": fimMs})
 	req := httptest.NewRequest(http.MethodPost, "/pedidos/teste-1/ajustar", bytes.NewReader(corpo))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -291,12 +292,12 @@ func postAjustar(t *testing.T, s *Servidor, indice int, ini, fim float64) (int, 
 func TestEndpointAjustarDevolveTextoNovo(t *testing.T) {
 	s := servidorAjuste(t)
 
-	code, got := postAjustar(t, s, 0, 36, 78)
+	code, got := postAjustar(t, s, 0, 36000, 78000)
 	if code != http.StatusOK {
 		t.Fatalf("status %d", code)
 	}
-	if got.DuracaoSeg != 42 {
-		t.Errorf("duração = %.1f, queria 42", got.DuracaoSeg)
+	if got.DuracaoMs != 42000 {
+		t.Errorf("duração = %dms, queria 42000", got.DuracaoMs)
 	}
 	if got.Hook == "" || got.TextoFalado == "" {
 		t.Error("o operador precisa ver hook e texto novos antes de aprovar")
@@ -308,7 +309,7 @@ func TestEndpointAjustarDevolveTextoNovo(t *testing.T) {
 
 func TestEndpointAjustarRecusaTrechoInexistente(t *testing.T) {
 	s := servidorAjuste(t)
-	if code, _ := postAjustar(t, s, 99, 36, 78); code != http.StatusBadRequest {
+	if code, _ := postAjustar(t, s, 99, 36000, 78000); code != http.StatusBadRequest {
 		t.Errorf("status %d, queria 400", code)
 	}
 }
@@ -329,7 +330,7 @@ func TestAprovarUsaTemposAjustadosNoRender(t *testing.T) {
 
 	corpo, _ := json.Marshal(map[string]any{
 		"aprovados": []int{0},
-		"ajustes":   []map[string]any{{"indice": 0, "start": 36, "end": 78}},
+		"ajustes":   []map[string]any{{"indice": 0, "start_ms": 36000, "end_ms": 78000}},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/pedidos/teste-1/aprovar", bytes.NewReader(corpo))
 	req.Header.Set("Content-Type", "application/json")
@@ -368,7 +369,7 @@ func TestAprovarRecusaAjusteForaDaFaixa(t *testing.T) {
 
 	corpo, _ := json.Marshal(map[string]any{
 		"aprovados": []int{0},
-		"ajustes":   []map[string]any{{"indice": 0, "start": 0, "end": 66}},
+		"ajustes":   []map[string]any{{"indice": 0, "start_ms": 0, "end_ms": 66000}},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/pedidos/teste-1/aprovar", bytes.NewReader(corpo))
 	req.Header.Set("Content-Type", "application/json")
@@ -390,7 +391,7 @@ func TestAprovarIgnoraAjusteDeTrechoNaoAprovado(t *testing.T) {
 	corpo, _ := json.Marshal(map[string]any{
 		"aprovados": []int{0},
 		// Ajuste absurdo, mas do trecho 1, que NÃO está aprovado.
-		"ajustes": []map[string]any{{"indice": 1, "start": 0, "end": 500}},
+		"ajustes": []map[string]any{{"indice": 1, "start_ms": 0, "end_ms": 500000}},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/pedidos/teste-1/aprovar", bytes.NewReader(corpo))
 	req.Header.Set("Content-Type", "application/json")
@@ -434,8 +435,12 @@ func htmlDaPagina(t *testing.T) string {
 func TestTelaTrazControlesDeAjuste(t *testing.T) {
 	corpo := htmlDaRevisao(t)
 	for _, quer := range []string{
-		`id="ajuste"`, `id="aj-marcar-ini"`, `id="aj-marcar-fim"`, `id="aj-restaurar"`,
-		`id="aj-estado"`, `id="aj-invalido"`, `id="btn-meia"`,
+		`id="ajuste"`, `id="aj-frases"`, // a faixa de frases clicável
+		`id="aj-v-ini"`, `id="aj-v-fim"`, // o valor ENTRE os botões que o mudam
+		`id="aj-ini-cedo"`, `id="aj-ini-tarde"`, `id="aj-fim-cedo"`, `id="aj-fim-tarde"`,
+		`id="aj-usar-ini"`, `id="aj-usar-fim"`, // "usar <tempo> do player"
+		`id="aj-ouvir-fim"`, // ouvir o fim, junto dos controles do fim
+		`id="aj-restaurar"`, `id="aj-resumo"`, `id="aj-invalido"`, `id="btn-meia"`,
 	} {
 		if !strings.Contains(corpo, quer) {
 			t.Errorf("o fragmento de revisão não trouxe %q", quer)
@@ -443,39 +448,42 @@ func TestTelaTrazControlesDeAjuste(t *testing.T) {
 	}
 }
 
-// TestJSChamaOEndpointDeAjuste: o JS mora no template da página, não no fragmento. Uma rota
-// renomeada de um lado só quebraria o ajuste em silêncio — a tela apareceria inteira e o
-// feedback ao vivo simplesmente não voltaria.
-func TestJSChamaOEndpointDeAjuste(t *testing.T) {
-	corpo := htmlDaPagina(t)
-	for _, quer := range []string{
-		"/ajustar",        // a rota
-		"getCurrentTime",  // captura o instante do clique
-		"setPlaybackRate", // meia velocidade
-		"REV.debounce",    // feedback ao vivo com debounce
-		"texto_falado",    // consome o texto novo do servidor
-		"aprovavel",       // respeita a guarda do servidor
-	} {
+// TestRotulosPeloEfeito trava a correção do principal ponto de confusão: "−1s" e "+1s" não
+// diziam o que faziam — "−1s" no início deixa o trecho MAIS longo, e "+1s" no fim também, o
+// que fazia o mesmo rótulo produzir efeitos opostos por linha.
+func TestRotulosPeloEfeito(t *testing.T) {
+	corpo := htmlDaRevisao(t)
+	for _, quer := range []string{"mais cedo", "mais tarde"} {
 		if !strings.Contains(corpo, quer) {
-			t.Errorf("o JS da página não contém %q", quer)
+			t.Errorf("os controles precisam ser rotulados pelo efeito: falta %q", quer)
 		}
+	}
+	// Os rótulos por sinal não podem voltar nos botões de 1s (o ajuste fino de 0,25s no fim
+	// segue com sinal, e ali é adequado: é um passo fino, subordinado e explícito).
+	for _, naoQuer := range []string{">−1s<", ">+1s<"} {
+		if strings.Contains(corpo, naoQuer) {
+			t.Errorf("rótulo por sinal voltou (%s): exige tradução mental a cada clique", naoQuer)
+		}
+	}
+	// "Marcar aqui" não dizia AQUI ONDE. O botão agora nomeia o tempo do player.
+	if strings.Contains(corpo, "Marcar aqui") || strings.Contains(corpo, "⤓ Marcar") {
+		t.Error(`"Marcar aqui" voltou: o operador não vê que tempo está capturando`)
+	}
+	if !strings.Contains(corpo, "do player") {
+		t.Error("o botão precisa nomear o tempo do player")
 	}
 }
 
-// TestGranularidadeAssimetrica trava a decisão: no início o encaixe em fronteira de fala
-// absorve qualquer coisa menor que 1 s, então empurrão fino ali seria botão que não faz nada.
-// No fim, que é livre para frente, os 0,25 s têm efeito real.
-func TestGranularidadeAssimetrica(t *testing.T) {
+// TestAjusteFinoSoNoFimESubordinado: a assimetria (Fim com passo fino, Início sem) parecia
+// defeito. Como linha subordinada e rotulada "ajuste fino", lê como recurso extra do fim.
+func TestAjusteFinoSoNoFimESubordinado(t *testing.T) {
 	corpo := htmlDaRevisao(t)
-
-	for _, quer := range []string{`id="aj-fim-m025"`, `id="aj-fim-p025"`, `id="aj-fim-m1"`, `id="aj-fim-p1"`} {
-		if !strings.Contains(corpo, quer) {
-			t.Errorf("o fim precisa de passo fino e de 1s: falta %q", quer)
-		}
+	if !strings.Contains(corpo, "ajuste fino") {
+		t.Error("o passo fino precisa estar rotulado como subordinado")
 	}
-	for _, quer := range []string{`id="aj-ini-m1"`, `id="aj-ini-p1"`} {
+	for _, quer := range []string{`id="aj-fim-m025"`, `id="aj-fim-p025"`} {
 		if !strings.Contains(corpo, quer) {
-			t.Errorf("o início precisa dos passos de 1s: falta %q", quer)
+			t.Errorf("o fim precisa do passo fino: falta %q", quer)
 		}
 	}
 	for _, naoQuer := range []string{`id="aj-ini-m025"`, `id="aj-ini-p025"`} {
@@ -485,22 +493,135 @@ func TestGranularidadeAssimetrica(t *testing.T) {
 	}
 }
 
+// TestSemFalsaPrecisaoNaTela: "54.75s" e "00:40:12.000" anunciam precisão que o sistema não
+// tem — a transcrição vem em segundos inteiros. Mesma falsa precisão já rejeitada na grade.
+func TestSemFalsaPrecisaoNaTela(t *testing.T) {
+	frases := frasesAjuste(t)
+	got := recalcularTrecho(frases, 0, 36000, 80000, LimitesPregacao{})
+
+	// Os rótulos da vizinhança são o que a tela mostra: sem milissegundos.
+	if len(got.Vizinhanca) == 0 {
+		t.Fatal("sem vizinhança não há faixa de frases")
+	}
+	for _, f := range got.Vizinhanca {
+		if strings.Contains(f.Rotulo, ".") {
+			t.Errorf("rótulo com fração de segundo: %q", f.Rotulo)
+		}
+	}
+	// As mensagens de guarda também: segundos inteiros.
+	curto := recalcularTrecho(frases, 0, 36000, 54000, LimitesPregacao{})
+	if strings.Contains(curto.Motivo, ".") {
+		t.Errorf("mensagem com falsa precisão: %q", curto.Motivo)
+	}
+}
+
+// TestVizinhancaMarcaDentroEFora é o contrato da faixa clicável: as frases do corte vêm
+// marcadas, e há contexto dos dois lados para o operador apontar onde a ideia começa/termina.
+func TestVizinhancaMarcaDentroEFora(t *testing.T) {
+	frases := frasesAjuste(t)
+	got := recalcularTrecho(frases, 0, 36000, 78000, LimitesPregacao{})
+
+	var dentro, antes, depois int
+	for _, f := range got.Vizinhanca {
+		switch {
+		case f.Dentro:
+			dentro++
+		case f.InicioMs < 36000:
+			antes++
+		default:
+			depois++
+		}
+	}
+	if dentro == 0 {
+		t.Error("nenhuma frase marcada como dentro do corte — nada ficaria destacado")
+	}
+	if antes == 0 || depois == 0 {
+		t.Errorf("falta contexto: %d antes, %d depois — o operador precisa ver os dois lados", antes, depois)
+	}
+	// Ordem cronológica: a faixa é lida de cima para baixo.
+	for i := 1; i < len(got.Vizinhanca); i++ {
+		if got.Vizinhanca[i].InicioMs < got.Vizinhanca[i-1].InicioMs {
+			t.Fatal("vizinhança fora de ordem cronológica")
+		}
+	}
+}
+
+// TestVizinhancaVemMesmoComAjusteInvalido: é justamente quando o operador precisa da faixa
+// para se orientar. Um painel que esvazia no erro deixa ele sem saída.
+func TestVizinhancaVemMesmoComAjusteInvalido(t *testing.T) {
+	frases := frasesAjuste(t)
+	for _, c := range []struct {
+		nome     string
+		ini, fim int
+	}{
+		{"duração curta", 36000, 54000},
+		{"duração longa", 0, 66000},
+		{"fim antes do início", 60000, 30000},
+	} {
+		got := recalcularTrecho(frases, 0, c.ini, c.fim, LimitesPregacao{})
+		if got.Aprovavel {
+			t.Fatalf("%s: deveria ser inválido", c.nome)
+		}
+		if len(got.Vizinhanca) == 0 {
+			t.Errorf("%s: faixa de frases vazia — o operador fica sem referência para consertar", c.nome)
+		}
+	}
+}
+
 // TestEndpointAjustarAceitaFimComFolga é o caminho completo do caso de uso, pelo HTTP: o
 // operador estende 2 s além da fronteira e o servidor aceita, devolvendo o texto novo.
 func TestEndpointAjustarAceitaFimComFolga(t *testing.T) {
 	s := servidorAjuste(t)
 
-	code, got := postAjustar(t, s, 0, 36, 80) // fronteiras de 6 em 6: 78 + 2 s de folga
+	code, got := postAjustar(t, s, 0, 36000, 80000) // fronteiras de 6 em 6: 78 + 2 s de folga
 	if code != http.StatusOK {
 		t.Fatalf("status %d", code)
 	}
-	if got.EndSeg != 80 {
-		t.Errorf("o servidor moveu o fim para %.2f — a folga de 2s deveria ser aceita", got.EndSeg)
+	if got.EndMs != 80000 {
+		t.Errorf("o servidor moveu o fim para %dms — a folga de 2s deveria ser aceita", got.EndMs)
 	}
 	if !got.Aprovavel {
 		t.Errorf("deveria ser aprovável: %s", got.Motivo)
 	}
 	if got.TextoFalado == "" {
 		t.Error("sem texto falado o operador ajusta às cegas")
+	}
+}
+
+// TestSeekToSegueARecomendacaoDoYouTube: allowSeekAhead=false durante os empurrões (não
+// dispara requisição de vídeo a cada clique) e true quando o debounce assenta. É recomendação
+// da documentação do player, e aqui é o que evita uma rajada de requisições.
+func TestSeekToSegueARecomendacaoDoYouTube(t *testing.T) {
+	js := htmlDaPagina(t)
+	if !strings.Contains(js, "seekTo(iniMs / MS, false)") {
+		t.Error("o empurrão deveria usar allowSeekAhead=false (barato, só reposiciona)")
+	}
+	if !strings.Contains(js, "seekTo(resp.start_ms / MS, true)") {
+		t.Error("ao assentar o debounce deveria usar allowSeekAhead=true (busca de fato)")
+	}
+}
+
+// TestTemposInternosEmMilissegundos: guardar em float de segundos acumularia erro numa rajada
+// de empurrões de 0,25s, e o tempo é a chave do corte.
+func TestTemposInternosEmMilissegundos(t *testing.T) {
+	js := htmlDaPagina(t)
+	for _, quer := range []string{"iniMs", "fimMs", "start_ms: a.iniMs"} {
+		if !strings.Contains(js, quer) {
+			t.Errorf("o cliente não guarda os tempos em ms: falta %q", quer)
+		}
+	}
+	if strings.Contains(js, "a.startSeg + ','") {
+		t.Error("o envio voltou a usar segundos float")
+	}
+
+	// E o servidor: uma rajada de 0,25s não pode derivar. Simula 8 empurrões.
+	frases := frasesAjuste(t)
+	ini, fim := 36000, 78000
+	for i := 0; i < 8; i++ {
+		got := recalcularTrecho(frases, 0, ini, fim+250, LimitesPregacao{})
+		ini, fim = got.StartMs, got.EndMs
+	}
+	if fim != 80000 {
+		t.Errorf("após 8 empurrões de 250ms o fim é %dms, esperado exatamente 80000", fim)
 	}
 }

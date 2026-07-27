@@ -27,6 +27,8 @@
       --ok-bg: #eaf3de; --ok-tinta: #3b6d11; --ok-linha: #97c459;
       --nao-bg: #fceceb; --nao-tinta: #a32d2d; --nao-linha: #f09595;
       --aviso-bg: #faeeda; --aviso-tinta: #854f0b; --aviso-linha: #ef9f27;
+      /* seleção do ajuste de corte (mockup docs/mockups/ajuste-corte_referencia.html) */
+      --sel-bg: #eef3d9; --sel-tinta: #4a5510; --sel-linha: #c3d22f;
       --raio: 8px;
     }
     * { box-sizing: border-box; }
@@ -94,19 +96,46 @@
     .reprovar { flex: 1; }
     .atalhos { font-size: 12px; color: var(--tinta-tenue); margin: 10px 0 0; }
 
-    /* ajuste manual do corte (spec-05 v2) */
-    .ajuste { border: 1px solid var(--linha); border-radius: var(--raio); padding: 12px 14px; margin: 0 0 16px; }
+    /* ajuste manual do corte (spec-05 v2, redesenho) — CSS do mockup de referência */
+    .ajuste { border: 1px solid var(--linha); border-radius: 12px; padding: 16px 18px; margin: 0 0 16px; }
     .ajuste > summary { cursor: pointer; font-size: 14px; font-weight: 600; }
-    .ajuste-linha { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
-    .ajuste-rotulo { font-size: 13px; color: var(--tinta-tenue); min-width: 54px; }
-    .ajuste-linha button { font-size: 13px; padding: 5px 9px; }
-    .ajuste-marcar { font-weight: 600; }
-    .ajuste-nudge { min-width: 46px; }
-    .ajuste-estado { font-size: 13px; margin: 10px 0 0; }
+    .ajuste-corpo { margin-top: 14px; }
+    .rotulo-secao { font-size: 13px; color: var(--tinta-fraca); margin: 0 0 8px; }
+
+    /* faixa de frases clicável: a mudança principal do redesenho */
+    .frases { background: var(--papel); border: 1px solid var(--linha);
+      border-radius: var(--raio); padding: 6px; margin-bottom: 18px; }
+    .frase { display: block; width: 100%; text-align: left; font-family: inherit;
+      font-size: 13.5px; line-height: 1.5; padding: 7px 10px; margin: 0;
+      border: 1px solid transparent; border-radius: var(--raio); background: transparent;
+      color: var(--tinta-tenue); cursor: pointer; }
+    .frase:hover { border-color: var(--linha-forte); color: var(--tinta); }
+    .frase.dentro { background: var(--sel-bg); color: var(--sel-tinta); border-color: var(--sel-linha); }
+    .frase .t { font-size: 11.5px; color: var(--tinta-tenue); margin-right: 8px;
+      font-variant-numeric: tabular-nums; }
+    .frase.dentro .t { color: var(--sel-tinta); opacity: 0.75; }
+
+    /* linhas de controle: o número que muda fica ENTRE os botões que o mudam */
+    .linha-ctrl { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+    .campo { font-size: 13px; color: var(--tinta-fraca); width: 46px; flex: none; }
+    .valor { font-size: 16px; font-weight: 600; min-width: 86px; text-align: center;
+      font-variant-numeric: tabular-nums; }
+    .linha-ctrl button { font-size: 13px; padding: 7px 12px; }
+    button.quieto { color: var(--tinta-fraca); }
+    button.ouvir { background: var(--sel-bg); border-color: var(--sel-linha);
+      color: var(--sel-tinta); font-weight: 600; }
+    button.fino { font-size: 12px; padding: 4px 10px; }
+    .fino-linha { display: flex; align-items: center; gap: 8px; margin: 0 0 16px 56px; }
+    .fino-rotulo { font-size: 12px; color: var(--tinta-tenue); }
+
+    .ajuste-rodape { display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding-top: 12px; border-top: 1px solid var(--linha); }
+    .resumo-ajuste { font-size: 13px; color: var(--tinta-fraca); }
+    .resumo-ajuste.mudou { color: var(--sel-tinta); font-weight: 600; }
     .ajuste-invalido { background: var(--aviso-bg); border-left: 3px solid var(--aviso-linha);
-      padding: 10px 12px; margin-top: 10px; font-size: 13px; color: var(--aviso-tinta); }
-    .ajuste-encaixe { font-size: 12px; color: var(--tinta-tenue); margin-top: 6px; }
-    .editado { font-size: 12px; color: var(--aviso-tinta); font-weight: 600; }
+      padding: 10px 12px; margin-top: 12px; font-size: 13px; color: var(--aviso-tinta); }
+    .ajuste-encaixe { font-size: 12px; color: var(--tinta-tenue); margin: 8px 0 0; }
+    .editado { font-size: 12px; color: var(--sel-tinta); font-weight: 600; }
 
     /* rodapé fixo */
     .rodape { position: fixed; left: 0; right: 0; bottom: 0; background: var(--carta);
@@ -160,10 +189,14 @@
       var ent = document.getElementById('entrada'); if (ent) ent.style.display = 'none';
       REV = { dados: dados, atual: 0, estado: dados.trechos.map(function(){ return 'pendente'; }),
               player: null, prontoPlayer: false, timer: null,
-              // ajustes[i] = {startSeg, endSeg, resposta} — resposta é o que o servidor
-              // recalculou (hook, texto, duração, aprovável). null = usa o original.
+              // ajustes[i] = {iniMs, fimMs, resposta, vizinhanca} — resposta é o que o
+              // servidor recalculou (hook, texto, duração, aprovável, frases em volta).
+              // null = usa o original. Tempos em ms INTEIROS (ver moverPara).
               ajustes: dados.trechos.map(function(){ return null; }),
-              debounce: null, meia: false };
+              // viz[i] guarda a vizinhança de frases do trecho SEM ajuste, para a faixa
+              // clicável já abrir preenchida.
+              viz: dados.trechos.map(function(){ return null; }),
+              debounce: null, meia: false, relogio: null };
       ligarControles();
       desenhar();
       criarPlayer();
@@ -192,54 +225,89 @@
     }
     function trechoAtual() { return REV.dados.trechos[REV.atual]; }
 
-    // ===== Ajuste manual do corte (spec-05 v2) =====
+    // ===== Ajuste manual do corte (spec-05 v2, redesenhado) =====
     //
     // Contrato de tempo: getCurrentTime() do player JÁ É o tempo que o corte usa. O vídeo
     // baixado é o inteiro, com origem 0, e o player também conta do início do vídeo — os
     // dois relógios são o mesmo, sem conversão.
+    //
+    // Tempos guardados em MILISSEGUNDOS INTEIROS. Empurrão de 0,25s em float de segundos
+    // acumularia erro ao longo de uma rajada de cliques, e o tempo é a chave do corte.
+
+    var MS = 1000;
 
     // efetivo devolve o que a tela deve MOSTRAR para o trecho i: o ajuste recalculado pelo
     // servidor quando existe, o original quando não. Uma fonte só, para o player, a emenda
     // e o texto nunca discordarem entre si.
     function efetivo(i) {
       var t = REV.dados.trechos[i], a = REV.ajustes[i];
-      if (!a) return { startSeg: t.startSeg, endSeg: t.endSeg, dur: t.dur, hook: t.hook,
-                       texto: t.texto, inicio: t.inicio, fim: t.fim, ajustado: false, ok: true };
+      if (!a) return { iniMs: t.startSeg * MS, fimMs: t.endSeg * MS, durMs: t.dur * MS,
+                       hook: t.hook, texto: t.texto, ajustado: false, ok: true, vizinhanca: null };
       var r = a.resposta;
-      if (!r) { // ainda esperando o servidor: mostra os tempos marcados, sem texto novo
-        return { startSeg: a.startSeg, endSeg: a.endSeg, dur: (a.endSeg - a.startSeg).toFixed(1),
-                 hook: t.hook, texto: t.texto, inicio: hhmmss(a.startSeg), fim: hhmmss(a.endSeg),
-                 ajustado: true, ok: true, esperando: true };
+      if (!r) { // esperando o servidor: mostra os tempos marcados, mantém a última vizinhança
+        return { iniMs: a.iniMs, fimMs: a.fimMs, durMs: a.fimMs - a.iniMs,
+                 hook: t.hook, texto: t.texto, ajustado: true, ok: true,
+                 esperando: true, vizinhanca: a.vizinhanca || null };
       }
-      return { startSeg: r.start_seg, endSeg: r.end_seg, dur: r.duration_seconds,
-               hook: r.hook, texto: r.texto_falado, inicio: r.start, fim: r.end,
-               ajustado: true, ok: r.aprovavel, motivo: r.motivo,
-               moveuIni: r.ajustado_start, moveuFim: r.ajustado_end };
+      return { iniMs: r.start_ms, fimMs: r.end_ms, durMs: r.duracao_ms,
+               hook: r.hook, texto: r.texto_falado, ajustado: true, ok: r.aprovavel,
+               motivo: r.motivo, moveuIni: r.ajustado_start, vizinhanca: r.vizinhanca };
     }
     function efetivoAtual() { return efetivo(REV.atual); }
+    function origMs(i) {
+      var t = REV.dados.trechos[i];
+      return { iniMs: t.startSeg * MS, fimMs: t.endSeg * MS };
+    }
 
-    function hhmmss(seg) {
-      var s = Math.max(0, Math.round(seg));
+    // rotulo: HH:MM:SS, sem milissegundos. Exibir ".000" ou "54.75s" anuncia uma precisão que
+    // o sistema não tem — a transcrição vem em segundos inteiros.
+    function rotulo(ms) {
+      var s = Math.max(0, Math.round(ms / MS));
       return [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60]
         .map(function (n) { return String(n).padStart(2, '0'); }).join(':');
     }
 
-    // marcar captura o instante EXATO do clique. É o gesto principal: o operador ouve, e no
-    // ponto onde a fala deveria começar/terminar, clica.
-    function marcar(qual) {
-      if (!REV.prontoPlayer) return;
-      var e = efetivoAtual();
-      var t = REV.player.getCurrentTime();
-      if (qual === 'inicio') propor(t, e.endSeg); else propor(e.startSeg, t);
+    // moverPara grava os tempos e pede o recálculo com DEBOUNCE.
+    //
+    // O seekTo segue a recomendação da documentação do YouTube: allowSeekAhead=false durante
+    // os empurrões (não dispara requisição de vídeo a cada clique) e true quando o debounce
+    // assenta, aí sim buscando de fato o trecho.
+    function moverPara(iniMs, fimMs) {
+      var i = REV.atual;
+      iniMs = Math.max(0, Math.round(iniMs));
+      fimMs = Math.max(0, Math.round(fimMs));
+      var anterior = REV.ajustes[i];
+      REV.ajustes[i] = { iniMs: iniMs, fimMs: fimMs, resposta: null,
+                         vizinhanca: anterior ? anterior.vizinhanca : null };
+      if (REV.prontoPlayer) REV.player.seekTo(iniMs / MS, false); // barato: só reposiciona
+      desenhar();
+      clearTimeout(REV.debounce);
+      REV.debounce = setTimeout(function () { pedirRecalculo(i); }, 350);
     }
 
-    // empurrar move um dos lados. Granularidade ASSIMÉTRICA de propósito: no início o
-    // servidor encaixa em fronteira de fala (passo de 1s), então empurrão fino não muda
-    // nada — só no fim, que é livre para frente, os 0,25s têm efeito.
-    function empurrar(qual, delta) {
+    function empurrar(qual, deltaMs) {
       var e = efetivoAtual();
-      if (qual === 'inicio') propor(e.startSeg + delta, e.endSeg);
-      else propor(e.startSeg, e.endSeg + delta);
+      if (qual === 'inicio') moverPara(e.iniMs + deltaMs, e.fimMs);
+      else moverPara(e.iniMs, e.fimMs + deltaMs);
+    }
+
+    // usarTempoDoPlayer é o antigo "marcar aqui", agora com o tempo VISÍVEL no rótulo do
+    // botão — o operador vê que tempo vai usar antes de clicar, em vez de clicar às cegas.
+    function usarTempoDoPlayer(qual) {
+      if (!REV.prontoPlayer) return;
+      var e = efetivoAtual();
+      var ms = Math.round(REV.player.getCurrentTime() * MS);
+      if (qual === 'inicio') moverPara(ms, e.fimMs); else moverPara(e.iniMs, ms);
+    }
+
+    // clicarFrase é a operação nativa do ajuste: o servidor já encaixa o corte em fronteira
+    // de fala, então apontar uma frase é dizer exatamente onde o corte deve cair. Antes do
+    // meio do trecho move o início; depois, o fim.
+    function clicarFrase(f) {
+      var e = efetivoAtual();
+      var meio = (e.iniMs + e.fimMs) / 2;
+      if (f.inicio_ms < meio) moverPara(f.inicio_ms, e.fimMs);
+      else moverPara(e.iniMs, f.fim_ms);
     }
 
     function restaurar() {
@@ -248,31 +316,25 @@
       desenhar();
     }
 
-    // propor grava os tempos e pede o recálculo ao servidor com DEBOUNCE: uma rajada de
-    // empurrõezinhos gera uma chamada, não seis. Sem o recálculo o operador ajustaria às
-    // cegas — o texto falado novo é justamente o que ele está julgando.
-    function propor(ini, fim) {
-      var i = REV.atual;
-      REV.ajustes[i] = { startSeg: Math.max(0, ini), endSeg: Math.max(0, fim), resposta: null };
-      desenhar();
-      clearTimeout(REV.debounce);
-      REV.debounce = setTimeout(function () { pedirRecalculo(i); }, 350);
-    }
-
     function pedirRecalculo(i) {
       var a = REV.ajustes[i];
       if (!a) return;
       fetch('/pedidos/' + REV.dados.pedidoId + '/ajustar', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ indice: i, start: a.startSeg, end: a.endSeg })
+        body: JSON.stringify({ indice: i, start_ms: a.iniMs, end_ms: a.fimMs })
       }).then(function (r) { return r.ok ? r.json() : null; }).then(function (resp) {
         if (!resp || !REV || !REV.ajustes[i]) return;
         REV.ajustes[i].resposta = resp;
         // Adota os tempos que o servidor DE FATO usará (pode ter encaixado ou clampado),
         // senão o próximo empurrão partiria de um número que não existe mais.
-        REV.ajustes[i].startSeg = resp.start_seg;
-        REV.ajustes[i].endSeg = resp.end_seg;
-        if (i === REV.atual) desenhar();
+        REV.ajustes[i].iniMs = resp.start_ms;
+        REV.ajustes[i].fimMs = resp.end_ms;
+        REV.ajustes[i].vizinhanca = resp.vizinhanca;
+        if (i === REV.atual) {
+          // Debounce assentou: agora vale buscar o vídeo de verdade (allowSeekAhead=true).
+          if (REV.prontoPlayer) REV.player.seekTo(resp.start_ms / MS, true);
+          desenhar();
+        }
       }).catch(function () { /* rede: mantém o que está na tela */ });
     }
 
@@ -284,43 +346,95 @@
       if (b) b.textContent = REV.meia ? '🐇 Velocidade normal' : '🐢 Meia velocidade';
     }
 
-    function desenharAjuste() {
-      var e = efetivoAtual();
-      var est = document.getElementById('aj-estado');
-      var inv = document.getElementById('aj-invalido');
-      var enc = document.getElementById('aj-encaixe');
-      if (!est) return;
-
-      if (!e.ajustado) {
-        est.textContent = 'Sem ajuste: o corte é o original.';
-        inv.hidden = true; enc.hidden = true;
+    function desenharFrases(e) {
+      var wrap = document.getElementById('aj-frases');
+      if (!wrap) return;
+      var fs = e.vizinhanca;
+      if (!fs || !fs.length) {
+        // Sem ajuste ainda: pede a vizinhança ao servidor com os tempos originais, para a
+        // faixa já aparecer preenchida quando o operador abrir o painel.
+        wrap.innerHTML = '<p class="fino-rotulo" style="padding:8px 10px">Carregando as frases…</p>';
         return;
       }
-      var t = REV.dados.trechos[REV.atual];
-      est.innerHTML = '<span class="editado">✎ ajustado</span> · ' + e.inicio + ' → ' + e.fim +
-        ' · ' + e.dur + 's <span class="ajuste-rotulo">(original: ' + t.inicio + ' → ' + t.fim + ' · ' + t.dur + 's)</span>';
+      wrap.innerHTML = fs.map(function (f, i) {
+        return '<button type="button" class="frase' + (f.dentro ? ' dentro' : '') + '" data-i="' + i + '">' +
+               '<span class="t">' + f.rotulo + '</span>' + escapar(f.texto) + '</button>';
+      }).join('');
+      wrap.querySelectorAll('.frase').forEach(function (b) {
+        b.addEventListener('click', function () { clicarFrase(fs[+b.dataset.i]); });
+      });
+    }
 
-      if (e.esperando) { inv.hidden = true; enc.hidden = true; return; }
-      if (!e.ok) { inv.hidden = false; inv.textContent = '⚠ ' + (e.motivo || 'ajuste inválido') + '. Não dá para aprovar assim.'; }
-      else { inv.hidden = true; }
+    function escapar(txt) {
+      var d = document.createElement('div');
+      d.textContent = txt || '';
+      return d.innerHTML;
+    }
 
-      // Encaixe do início: o operador precisa saber que o ponto foi movido, e por quê.
+    function desenharAjuste() {
+      var e = efetivoAtual();
+      var o = origMs(REV.atual);
+      if (!document.getElementById('aj-resumo')) return;
+
+      document.getElementById('aj-v-ini').textContent = rotulo(e.iniMs);
+      document.getElementById('aj-v-fim').textContent = rotulo(e.fimMs);
+
+      // O rótulo do botão mostra o tempo do player — "usar 00:39:24 do player" em vez de
+      // "marcar aqui", que não dizia aqui onde.
+      var tp = REV.prontoPlayer ? rotulo(REV.player.getCurrentTime() * MS) : null;
+      ['aj-usar-ini', 'aj-usar-fim'].forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) b.textContent = tp ? 'usar ' + tp + ' do player' : 'usar o tempo do player';
+      });
+
+      // Resumo em linguagem natural, não dois timestamps com milissegundos.
+      var dur = Math.round(e.durMs / MS);
+      var durOrig = Math.round((o.fimMs - o.iniMs) / MS);
+      var d = dur - durOrig;
+      var r = document.getElementById('aj-resumo');
+      if (!e.ajustado) {
+        r.textContent = 'igual ao original · ' + dur + 's';
+        r.classList.remove('mudou');
+      } else {
+        var txt = d === 0 ? 'mesmo tamanho, deslocado'
+                : d > 0 ? d + 's a mais que o original'
+                : (-d) + 's a menos que o original';
+        r.textContent = txt + ' · fica com ' + dur + 's';
+        r.classList.add('mudou');
+      }
+
+      var inv = document.getElementById('aj-invalido');
+      if (e.ajustado && !e.esperando && !e.ok) {
+        inv.hidden = false;
+        inv.textContent = '⚠ ' + (e.motivo || 'ajuste inválido') + '. Não dá para aprovar assim.';
+      } else { inv.hidden = true; }
+
+      var enc = document.getElementById('aj-encaixe');
       if (e.moveuIni) {
         enc.hidden = false;
-        enc.textContent = 'O início foi encaixado no começo da fala (' + e.inicio + ') — é o que mantém o hook casando com o corte.';
+        enc.textContent = 'O início foi encaixado no começo da fala (' + rotulo(e.iniMs) +
+          ') — é o que mantém o hook casando com o corte.';
       } else { enc.hidden = true; }
+
+      desenharFrases(e);
     }
-    // Tocar e ouvir a emenda usam os tempos EFETIVOS (ajustados, se houver): o operador
-    // precisa conferir o corte NOVO, senão ele ajusta e continua ouvindo o antigo.
-    function playPause() {
-      if (!REV.prontoPlayer) return;
-      var e = efetivoAtual();
-      if (REV.player.getPlayerState() === YT.PlayerState.PLAYING) { REV.player.pauseVideo(); clearInterval(REV.timer); }
-      else { tocarIntervalo(e.startSeg, e.endSeg); }
+
+    // A faixa de frases precisa da vizinhança ANTES do primeiro ajuste, senão o painel abre
+    // vazio. Pede uma vez por trecho, com os tempos originais.
+    function garantirVizinhanca() {
+      var i = REV.atual;
+      if (REV.ajustes[i] || REV.viz[i]) return;
+      var o = origMs(i);
+      REV.viz[i] = 'pedindo';
+      fetch('/pedidos/' + REV.dados.pedidoId + '/ajustar', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ indice: i, start_ms: o.iniMs, end_ms: o.fimMs })
+      }).then(function (r) { return r.ok ? r.json() : null; }).then(function (resp) {
+        if (!resp || !REV) return;
+        REV.viz[i] = resp.vizinhanca;
+        if (i === REV.atual && !REV.ajustes[i]) desenharFrases({ vizinhanca: resp.vizinhanca });
+      }).catch(function () { REV.viz[i] = null; });
     }
-    function doInicio() { var e = efetivoAtual(); tocarIntervalo(e.startSeg, e.endSeg); }
-    function emendaInicio() { var e = efetivoAtual(); tocarIntervalo(e.startSeg - 2, e.startSeg + 3); }
-    function emendaFim() { var e = efetivoAtual(); tocarIntervalo(e.endSeg - 3, e.endSeg + 2); }
 
     function desenharTrilha() {
       var wrap = document.getElementById('trilha');
@@ -343,8 +457,10 @@
       var t = trechoAtual();
       var e = efetivoAtual();
       // Texto e tempos EFETIVOS: é o texto da janela nova que o operador está julgando.
+      // Sem milissegundos e sem decimal de duração — precisão que o sistema não tem.
       document.getElementById('texto').textContent = e.texto || e.hook;
-      document.getElementById('meta').textContent = e.inicio + ' → ' + e.fim + ' · ' + e.dur + 's · score ' + t.score +
+      document.getElementById('meta').textContent = rotulo(e.iniMs) + ' → ' + rotulo(e.fimMs) +
+        ' · ' + Math.round(e.durMs / 1000) + 's · score ' + t.score +
         (t.melhorScore ? ' · ★ maior score' : '') + (e.ajustado ? ' · ✎ corte ajustado' : '');
       var fa = document.getElementById('faixa-aviso');
       if (t.revisar) {
@@ -383,8 +499,9 @@
 
       desenharAjuste();
       desenharTrilha();
+      garantirVizinhanca();
       // Player cueado no início do trecho atual (spec: seekTo(start) ao trocar).
-      if (REV.prontoPlayer) { clearInterval(REV.timer); REV.player.seekTo(e.startSeg, true); REV.player.pauseVideo(); }
+      if (REV.prontoPlayer) { clearInterval(REV.timer); REV.player.seekTo(e.iniMs / 1000, true); REV.player.pauseVideo(); }
     }
 
     function irPara(i) { REV.atual = Math.max(0, Math.min(REV.dados.trechos.length - 1, i)); desenhar(); }
@@ -405,12 +522,13 @@
       var partes = aprov.map(function (i) { return 'aprovados=' + i; });
       aprov.forEach(function (i) {
         var a = REV.ajustes[i];
-        if (a) partes.push('ajuste_' + i + '=' + encodeURIComponent(a.startSeg + ',' + a.endSeg));
+        if (a) partes.push('ajuste_' + i + '=' + encodeURIComponent(a.iniMs + ',' + a.fimMs));
       });
       var body = partes.join('&');
       fetch('/pedidos/' + REV.dados.pedidoId + '/aprovar', {
         method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'text/html' }, body: body
       }).then(function (r) { return r.text(); }).then(function (html) {
+        if (REV && REV.relogio) clearInterval(REV.relogio);
         REV = null;
         var res = document.getElementById('resultado');
         res.innerHTML = html;
@@ -428,17 +546,32 @@
       document.getElementById('btn-emenda-ini').addEventListener('click', emendaInicio);
       document.getElementById('btn-emenda-fim').addEventListener('click', emendaFim);
       document.getElementById('btn-meia').addEventListener('click', meiaVelocidade);
-      // Ajuste: início só com passos de 1s (o encaixe em fronteira de fala absorve menos que
-      // isso); fim com 0,25s e 1s, porque lá o tempo é livre para frente.
-      document.getElementById('aj-marcar-ini').addEventListener('click', function () { marcar('inicio'); });
-      document.getElementById('aj-marcar-fim').addEventListener('click', function () { marcar('fim'); });
-      document.getElementById('aj-ini-m1').addEventListener('click', function () { empurrar('inicio', -1); });
-      document.getElementById('aj-ini-p1').addEventListener('click', function () { empurrar('inicio', 1); });
-      document.getElementById('aj-fim-m1').addEventListener('click', function () { empurrar('fim', -1); });
-      document.getElementById('aj-fim-m025').addEventListener('click', function () { empurrar('fim', -0.25); });
-      document.getElementById('aj-fim-p025').addEventListener('click', function () { empurrar('fim', 0.25); });
-      document.getElementById('aj-fim-p1').addEventListener('click', function () { empurrar('fim', 1); });
+      // Rótulos pelo EFEITO ("mais cedo"/"mais tarde"), não por sinal: "−1s" no início deixa
+      // o trecho MAIS longo e "+1s" no fim também, então o mesmo rótulo produzia efeitos
+      // opostos por linha e exigia tradução mental a cada clique.
+      document.getElementById('aj-ini-cedo').addEventListener('click', function () { empurrar('inicio', -1000); });
+      document.getElementById('aj-ini-tarde').addEventListener('click', function () { empurrar('inicio', 1000); });
+      document.getElementById('aj-fim-cedo').addEventListener('click', function () { empurrar('fim', -1000); });
+      document.getElementById('aj-fim-tarde').addEventListener('click', function () { empurrar('fim', 1000); });
+      // Ajuste fino SÓ no fim, e subordinado: no início o encaixe em fronteira de fala (1s)
+      // torna o passo menor inócuo. Como linha subordinada, a assimetria lê como recurso
+      // extra do fim, não como falta no início.
+      document.getElementById('aj-fim-m025').addEventListener('click', function () { empurrar('fim', -250); });
+      document.getElementById('aj-fim-p025').addEventListener('click', function () { empurrar('fim', 250); });
+      document.getElementById('aj-usar-ini').addEventListener('click', function () { usarTempoDoPlayer('inicio'); });
+      document.getElementById('aj-usar-fim').addEventListener('click', function () { usarTempoDoPlayer('fim'); });
+      document.getElementById('aj-ouvir-fim').addEventListener('click', emendaFim);
       document.getElementById('aj-restaurar').addEventListener('click', restaurar);
+      // Relógio do rótulo "usar HH:MM:SS do player": sem ele o tempo mostrado envelhece e o
+      // operador volta a clicar às cegas.
+      REV.relogio = setInterval(function () {
+        if (!REV || !REV.prontoPlayer) return;
+        var tp = rotulo(REV.player.getCurrentTime() * 1000);
+        ['aj-usar-ini', 'aj-usar-fim'].forEach(function (id) {
+          var b = document.getElementById(id);
+          if (b) b.textContent = 'usar ' + tp + ' do player';
+        });
+      }, 500);
       document.getElementById('aprovar').addEventListener('click', function () { decidir('aprovado'); });
       document.getElementById('reprovar').addEventListener('click', function () { decidir('reprovado'); });
       document.getElementById('anterior').addEventListener('click', function () { irPara(REV.atual - 1); });
@@ -455,8 +588,8 @@
       else if (e.key === 'ArrowLeft') irPara(REV.atual - 1);
       else if (e.key === 'ArrowRight') irPara(REV.atual + 1);
       else if (e.key === ' ') { e.preventDefault(); playPause(); }
-      else if (k === 'i') marcar('inicio');
-      else if (k === 'f') marcar('fim');
+      else if (k === 'i') usarTempoDoPlayer('inicio');
+      else if (k === 'f') usarTempoDoPlayer('fim');
     });
 
     // A tela de revisão chega via HTMX; inicia quando o fragmento com os dados aparece.
@@ -517,26 +650,41 @@
     </div>
     <details class="ajuste" id="ajuste">
       <summary>✎ Ajustar o corte deste trecho</summary>
-      <div class="ajuste-linha">
-        <span class="ajuste-rotulo">Início</span>
-        <button type="button" class="ajuste-marcar" id="aj-marcar-ini">⤓ Marcar aqui</button>
-        <button type="button" class="ajuste-nudge" id="aj-ini-m1">−1s</button>
-        <button type="button" class="ajuste-nudge" id="aj-ini-p1">+1s</button>
+      <div class="ajuste-corpo">
+        <p class="rotulo-secao">Clique numa frase para mover o início ou o fim — as destacadas estão dentro do corte</p>
+        <div class="frases" id="aj-frases"></div>
+
+        <div class="linha-ctrl">
+          <span class="campo">Início</span>
+          <button type="button" id="aj-ini-cedo">‹ mais cedo</button>
+          <span class="valor" id="aj-v-ini">—</span>
+          <button type="button" id="aj-ini-tarde">mais tarde ›</button>
+          <button type="button" class="quieto" id="aj-usar-ini">usar o tempo do player</button>
+        </div>
+
+        <div class="linha-ctrl" style="margin-bottom:4px">
+          <span class="campo">Fim</span>
+          <button type="button" id="aj-fim-cedo">‹ mais cedo</button>
+          <span class="valor" id="aj-v-fim">—</span>
+          <button type="button" id="aj-fim-tarde">mais tarde ›</button>
+          <button type="button" class="ouvir" id="aj-ouvir-fim">▶ ouvir o fim</button>
+          <button type="button" class="quieto" id="aj-usar-fim">usar o tempo do player</button>
+        </div>
+
+        <div class="fino-linha">
+          <span class="fino-rotulo">ajuste fino</span>
+          <button type="button" class="fino" id="aj-fim-m025">−0,25s</button>
+          <button type="button" class="fino" id="aj-fim-p025">+0,25s</button>
+        </div>
+
+        <p class="ajuste-encaixe" id="aj-encaixe" hidden></p>
+        <div class="ajuste-invalido" id="aj-invalido" hidden></div>
+
+        <div class="ajuste-rodape">
+          <span class="resumo-ajuste" id="aj-resumo">—</span>
+          <button type="button" id="aj-restaurar">↻ restaurar original</button>
+        </div>
       </div>
-      <div class="ajuste-linha">
-        <span class="ajuste-rotulo">Fim</span>
-        <button type="button" class="ajuste-marcar" id="aj-marcar-fim">⤓ Marcar aqui</button>
-        <button type="button" class="ajuste-nudge" id="aj-fim-m1">−1s</button>
-        <button type="button" class="ajuste-nudge" id="aj-fim-m025">−0,25s</button>
-        <button type="button" class="ajuste-nudge" id="aj-fim-p025">+0,25s</button>
-        <button type="button" class="ajuste-nudge" id="aj-fim-p1">+1s</button>
-      </div>
-      <div class="ajuste-linha">
-        <button type="button" id="aj-restaurar">↺ Restaurar original</button>
-      </div>
-      <p class="ajuste-estado" id="aj-estado">Sem ajuste: o corte é o original.</p>
-      <p class="ajuste-encaixe" id="aj-encaixe" hidden></p>
-      <div class="ajuste-invalido" id="aj-invalido" hidden></div>
     </details>
     <div class="decisao">
       <button type="button" class="seta" id="anterior" aria-label="Trecho anterior">‹</button>
