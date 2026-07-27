@@ -481,12 +481,13 @@ func htmlDaPagina(t *testing.T) string {
 func TestTelaTrazControlesDeAjuste(t *testing.T) {
 	corpo := htmlDaRevisao(t)
 	for _, quer := range []string{
-		`id="ajuste"`, `id="aj-frases"`, // a faixa de frases clicável
+		`id="aj-frases"`,                 // a faixa de frases clicável
 		`id="aj-v-ini"`, `id="aj-v-fim"`, // o valor ENTRE os botões que o mudam
 		`id="aj-ini-cedo"`, `id="aj-ini-tarde"`, `id="aj-fim-cedo"`, `id="aj-fim-tarde"`,
-		`id="aj-usar-ini"`, `id="aj-usar-fim"`, // "usar <tempo> do player"
-		`id="aj-ouvir-fim"`, // ouvir o fim, junto dos controles do fim
+		`id="aj-usar-fim"`,                       // "usar <tempo>", só no Fim (item 2)
+		`id="aj-ouvir-ini"`, `id="aj-ouvir-fim"`, // uma escuta de cada, junto do seu controle
 		`id="aj-restaurar"`, `id="aj-resumo"`, `id="aj-invalido"`, `id="btn-meia"`,
+		`class="duas-colunas"`, // layout numa tela (item 4)
 	} {
 		if !strings.Contains(corpo, quer) {
 			t.Errorf("o fragmento de revisão não trouxe %q", quer)
@@ -1007,4 +1008,191 @@ func TestFalhaAoRegistrarNaoQuebraOPedido(t *testing.T) {
 		t.Fatalf("falha ao registrar quebrou o pedido: %d", w.Code)
 	}
 	esperarStatus(t, s, "teste-1", "concluido")
+}
+
+// --- Correções da segunda rodada com o operador ---
+
+// TestNenhumaEscutaPassaDoCorte é o item 1, e a raiz do "o ajuste não pegou": "ouvir o fim"
+// tocava até (fim + 2s) e soava perfeito, enquanto "tocar do início" parava em `fim` — o que o
+// Short de fato terá. As duas discordavam porque a emenda mostrava áudio que o Short não
+// conteria. Mesma coisa no início, que tocava desde (ini - 2s).
+func TestNenhumaEscutaPassaDoCorte(t *testing.T) {
+	js := jsDaPagina(t)
+
+	// Nenhuma reprodução pode somar ao fim nem subtrair do início.
+	for _, proibido := range []string{
+		"e.fimMs / 1000 + 2", "e.iniMs / 1000 - 2", // a versão antiga, literal
+		"fimMs / MS + ", "iniMs / MS - ", // qualquer reaparição da mesma ideia
+	} {
+		if strings.Contains(js, proibido) {
+			t.Errorf("uma escuta ultrapassa o corte (%q): mostraria áudio que o Short não terá", proibido)
+		}
+	}
+	// E o fim é passado como FUNÇÃO, para o limite acompanhar um ajuste feito durante a
+	// reprodução em vez de ficar no valor capturado no clique.
+	if !strings.Contains(js, "function limiteFim()") {
+		t.Error("o limite de parada deveria ser reavaliado a cada tick, não capturado no clique")
+	}
+	for _, quer := range []string{"tocarIntervalo(efetivoAtual().iniMs / MS, limiteFim)", "tocarIntervalo(ini, limiteFim)"} {
+		if !strings.Contains(js, quer) {
+			t.Errorf("reprodução sem o limite dinâmico: falta %q", quer)
+		}
+	}
+}
+
+// TestBotaoUsarTempoSoNoFim é o item 2: havia dois "usar <tempo> do player", um no Início e um
+// solto abaixo do Fim. Com a faixa de frases, clicar na frase é melhor no Início.
+func TestBotaoUsarTempoSoNoFim(t *testing.T) {
+	corpo := htmlDaRevisao(t)
+	if strings.Contains(corpo, `id="aj-usar-ini"`) {
+		t.Error("o botão 'usar o tempo' do Início voltou: duplica a faixa de frases")
+	}
+	if strings.Count(corpo, "aj-usar-") != 1 {
+		t.Errorf("esperava exatamente um botão 'usar o tempo', achei %d", strings.Count(corpo, "aj-usar-"))
+	}
+	// Dentro da linha do Fim, não solto abaixo dela.
+	linhaFim := corpo[strings.Index(corpo, `<span class="campo">Fim</span>`):]
+	linhaFim = linhaFim[:strings.Index(linhaFim, "</div>")]
+	if !strings.Contains(linhaFim, `id="aj-usar-fim"`) {
+		t.Error("o botão 'usar o tempo' não está dentro da linha do Fim")
+	}
+}
+
+// TestTocaAEmendaAoAjustar é o item 3, o que derruba as 8 a 10 escutas: conferir tocando o
+// trecho inteiro custa ~50s por iteração; ouvir só a ponta mexida custa ~5s.
+func TestTocaAEmendaAoAjustar(t *testing.T) {
+	js := jsDaPagina(t)
+	if !strings.Contains(js, "REV.ultimaPonta") {
+		t.Error("a tela não guarda qual ponta foi mexida, então não sabe o que tocar")
+	}
+	if !strings.Contains(js, "if (REV.ultimaPonta === 'inicio') ouvirInicio(); else ouvirFim();") {
+		t.Error("a emenda da ponta mexida não é tocada quando o recálculo chega")
+	}
+	// Depois do debounce, não a cada clique.
+	if !strings.Contains(js, "pedirRecalculo(i, true)") {
+		t.Error("a escuta automática deveria estar atrelada ao debounce")
+	}
+}
+
+// TestUmaEscutaDeCadaJuntoDoSeuControle é o item 5: havia "ouvir a emenda do início/fim" no
+// grupo de cima E "ouvir o fim" dentro do painel — os mesmos comandos em dois lugares.
+func TestUmaEscutaDeCadaJuntoDoSeuControle(t *testing.T) {
+	corpo := htmlDaRevisao(t)
+	for _, naoQuer := range []string{`id="btn-emenda-ini"`, `id="btn-emenda-fim"`, "Ouvir a emenda"} {
+		if strings.Contains(corpo, naoQuer) {
+			t.Errorf("escuta duplicada no grupo de cima (%s)", naoQuer)
+		}
+	}
+	if n := strings.Count(corpo, "ouvir o início"); n != 1 {
+		t.Errorf("esperava uma escuta do início, achei %d", n)
+	}
+	if n := strings.Count(corpo, "ouvir o fim"); n != 1 {
+		t.Errorf("esperava uma escuta do fim, achei %d", n)
+	}
+}
+
+// TestSemParagrafoRedundanteNoTopo é o item 4: a faixa de frases já mostra o mesmo texto, e
+// melhor (destaca o que está dentro do corte). Manter os dois empurrava os controles para fora
+// da tela.
+func TestSemParagrafoRedundanteNoTopo(t *testing.T) {
+	corpo := htmlDaRevisao(t)
+	if strings.Contains(corpo, `id="texto"`) {
+		t.Error("o parágrafo grande do topo voltou: duplica a faixa de frases e empurra os controles")
+	}
+	if !strings.Contains(corpo, `class="duas-colunas"`) {
+		t.Error("sem o layout de duas colunas o operador rola muito")
+	}
+}
+
+// TestFrasesComMesmoCarimboSaoAgrupadas é o item 6. A legenda tem resolução de 1 s, então duas
+// frases no mesmo segundo recebem carimbos idênticos e viram duas linhas na faixa que levam ao
+// MESMO tempo: o operador clica na segunda, nada muda, e soma mais um "não funcionou".
+func TestFrasesComMesmoCarimboSaoAgrupadas(t *testing.T) {
+	// Duas frases na mesma linha de timestamp: ambas herdam o carimbo dela.
+	tr := "[00:00:00] primeira fala termina aqui. segunda fala no mesmo segundo tambem.\n" +
+		"[00:00:20] terceira fala em outro segundo.\n" +
+		"[00:00:40] quarta fala aqui.\n" +
+		"[00:01:00] quinta fala aqui.\n"
+	frases := harness.Frasear(tr)
+
+	// Confere a pré-condição: sem isso o teste não exercita o agrupamento.
+	var repetidos int
+	for i := 1; i < len(frases); i++ {
+		if frases[i].InicioMs == frases[i-1].InicioMs {
+			repetidos++
+		}
+	}
+	if repetidos == 0 {
+		t.Skip("o Frasear não produziu carimbos repetidos nesta fixture; nada a agrupar")
+	}
+
+	got := recalcularTrecho(frases, 0, 0, 40000, LimitesPregacao{})
+
+	// Nenhum carimbo pode aparecer duas vezes na faixa: é isso que produz o clique inócuo.
+	vistos := map[int]int{}
+	for _, f := range got.Vizinhanca {
+		vistos[f.InicioMs]++
+	}
+	for ms, n := range vistos {
+		if n > 1 {
+			t.Errorf("o carimbo %s aparece %d vezes na faixa — clicar na segunda não mudaria nada",
+				rotulo(ms), n)
+		}
+	}
+
+	// O bloco agrupado mantém as duas falas no texto (nada se perde) e diz quantas são.
+	for _, f := range got.Vizinhanca {
+		if f.InicioMs != 0 {
+			continue
+		}
+		if f.Falas < 2 {
+			t.Errorf("o bloco de 00:00:00 deveria contar 2 falas, contou %d", f.Falas)
+		}
+		for _, quer := range []string{"primeira fala", "segunda fala"} {
+			if !strings.Contains(f.Texto, quer) {
+				t.Errorf("o agrupamento perdeu %q: %q", quer, f.Texto)
+			}
+		}
+	}
+}
+
+// TestAgruparPorCarimboPreservaOrdemEDentro: o agrupamento não pode reordenar a faixa nem
+// apagar o destaque de um bloco que toca o corte.
+func TestAgruparPorCarimboPreservaOrdemEDentro(t *testing.T) {
+	entrada := []FraseVizinha{
+		{InicioMs: 1000, FimMs: 1000, Texto: "a", Dentro: false, Falas: 1},
+		{InicioMs: 1000, FimMs: 2000, Texto: "b", Dentro: true, Falas: 1},
+		{InicioMs: 3000, FimMs: 3000, Texto: "c", Dentro: true, Falas: 1},
+	}
+	got := agruparPorCarimbo(entrada)
+	if len(got) != 2 {
+		t.Fatalf("esperava 2 entradas após agrupar, veio %d", len(got))
+	}
+	if got[0].InicioMs != 1000 || got[1].InicioMs != 3000 {
+		t.Errorf("ordem cronológica quebrada: %d, %d", got[0].InicioMs, got[1].InicioMs)
+	}
+	if !got[0].Dentro {
+		t.Error("o bloco tem uma fala dentro do corte; deveria vir destacado (é indivisível)")
+	}
+	if got[0].FimMs != 2000 {
+		t.Errorf("o fim do bloco deveria ser o maior das falas (2000), veio %d", got[0].FimMs)
+	}
+	if got[0].Falas != 2 {
+		t.Errorf("contagem de falas = %d, esperado 2", got[0].Falas)
+	}
+	if got[0].Texto != "a b" {
+		t.Errorf("texto do bloco = %q", got[0].Texto)
+	}
+}
+
+// TestFaixaMostraQuantasFalasNoBloco: sem dizer, o operador vê um bloco longo e não entende por
+// que não consegue começar no meio dele.
+func TestFaixaMostraQuantasFalasNoBloco(t *testing.T) {
+	js := jsDaPagina(t)
+	if !strings.Contains(js, "f.falas > 1") {
+		t.Error("a faixa não sinaliza blocos agrupados")
+	}
+	if !strings.Contains(js, "falas no mesmo segundo") {
+		t.Error("o aviso do bloco deveria explicar o motivo em palavras")
+	}
 }

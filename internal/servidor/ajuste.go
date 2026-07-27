@@ -34,6 +34,9 @@ type FraseVizinha struct {
 	Rotulo   string `json:"rotulo"` // HH:MM:SS, sem milissegundos (ver comentário em rotulo)
 	Texto    string `json:"texto"`
 	Dentro   bool   `json:"dentro"` // está dentro do corte atual? (destaque na tela)
+	// Falas é quantas frases da transcrição foram AGRUPADAS nesta entrada (1 = nenhuma
+	// agrupada). Ver agruparPorCarimbo.
+	Falas int `json:"falas"`
 }
 
 // TrechoAjustado é o resultado do recálculo de um trecho com tempos novos. É o que o
@@ -178,7 +181,48 @@ func vizinhanca(frases []harness.Frase, iniMs, fimMs int) []FraseVizinha {
 			Rotulo:   rotulo(f.InicioMs),
 			Texto:    f.Texto,
 			Dentro:   f.InicioMs >= iniMs && f.InicioMs < fimMs,
+			Falas:    1,
 		})
+	}
+	return agruparPorCarimbo(out)
+}
+
+// agruparPorCarimbo junta numa entrada só as frases que compartilham o MESMO carimbo.
+//
+// O problema: a legenda tem resolução de 1 segundo, e duas frases que começam no mesmo
+// segundo recebem carimbos idênticos ("Isso é um dos seus maiores alegados." e "Os puritanos
+// acreditavam…" ambas em 00:04:21). Na faixa clicável isso produz duas linhas visualmente
+// distintas que levam ao MESMO tempo: o operador clica na segunda, nada muda, e soma mais uma
+// experiência de "não funcionou". Com granularidade de 1 s, é frequente.
+//
+// Escolhi AGRUPAR em vez de desempatar pela ordem. Desempatar exigiria atribuir à segunda
+// frase um tempo que ninguém mediu — interpolado entre carimbos — e cortar ali colocaria o
+// início do Short num ponto arbitrário no meio da fala, com aparência de precisão que o dado
+// não tem. É a mesma falsa precisão que já rejeitamos na duração e nos rótulos.
+//
+// Agrupar é honesto: para efeito de CORTE aquelas frases são um bloco indivisível, e a faixa
+// passa a dizer isso. O operador não clica esperando um resultado que o sistema não pode dar.
+// De quebra a faixa fica mais curta, o que ajuda no layout de uma tela.
+//
+// A perda é real e aceitável: ele não pode começar o corte na segunda frase do bloco. Mas não
+// podia antes tampouco — antes a interface fingia que podia.
+func agruparPorCarimbo(fs []FraseVizinha) []FraseVizinha {
+	if len(fs) < 2 {
+		return fs
+	}
+	out := make([]FraseVizinha, 0, len(fs))
+	for _, f := range fs {
+		if n := len(out); n > 0 && out[n-1].InicioMs == f.InicioMs {
+			out[n-1].Texto += " " + f.Texto
+			out[n-1].Falas++
+			if f.FimMs > out[n-1].FimMs {
+				out[n-1].FimMs = f.FimMs
+			}
+			// Dentro do corte se QUALQUER fala do bloco estiver: o bloco é indivisível.
+			out[n-1].Dentro = out[n-1].Dentro || f.Dentro
+			continue
+		}
+		out = append(out, f)
 	}
 	return out
 }

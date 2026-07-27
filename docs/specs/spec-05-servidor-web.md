@@ -525,6 +525,58 @@ ajuste, `efetivo()` nao consultava o cache de vizinhanca (`REV.viz`), entao nave
 trecho e voltar deixava a faixa de frases travada em "Carregando…" -- `garantirVizinhanca` ja
 tinha respondido e nao pediria de novo.
 
+### Segunda rodada com o operador: 8 a 10 escutas por trecho
+
+A faixa de frases funcionou, mas ajustar um trecho custava 8 a 10 escutas. Seis correções.
+
+**1. As reproducoes discordavam entre si (bug).** O relato foi "com 'ouvir o fim' o corte esta
+perfeito, mas tocando do inicio o trecho termina antes". A causa NAO era o `efetivo()` faltar no
+play — ele ja estava la. Era que **"ouvir o fim" tocava ate (fim + 2 s)** e "ouvir a emenda do
+inicio" desde **(inicio − 2 s)**: as emendas mostravam audio que o Short **nao vai conter**. O
+operador ajustava ate a emenda soar bem, tocava do inicio (que para no `fim` real) e concluia
+que o ajuste nao pegou.
+
+Agora **toda escuta e do PRODUTO**: "ouvir o inicio" toca do start para frente, "ouvir o fim"
+para no end. O limite de parada passou a ser reavaliado a cada tick (funcao, nao valor
+capturado no clique), entao ajustar durante a reproducao move o ponto de parada junto.
+
+> Consequencia retroativa que vale registrar: o diagnostico da rodada anterior ("com o corte em
+> 00:20:08 ainda ouco '...do pelo Senhor'") pode ter vindo da emenda antiga, que tocava 2 s
+> ANTES do corte. O adiantamento da legenda segue valendo — foi confirmado por outras vias —
+> mas a ferramenta de escuta contaminava o diagnostico, e isso explica parte das 8 a 10
+> escutas: duas ferramentas discordando sobre o mesmo corte.
+
+**2. Botoes duplicados** (pedido que se perdeu entre rodadas): havia dois "usar <tempo> do
+player". O do Inicio saiu — com a faixa de frases, clicar na frase e melhor e mais preciso — e o
+do Fim entrou na linha do Fim, com rotulo curto ("usar 00:05:13") para caber.
+
+**3. Escuta automatica apos ajustar** — a correcao que derruba o custo. Conferir tocando o trecho
+inteiro custa ~49 s por iteracao; dez tentativas sao oito minutos. Agora, quando o debounce
+assenta, toca sozinho os ~5 s da ponta que foi mexida. **O ciclo cai de ~50 s para ~5 s**, e
+"tocar do inicio" volta a ser conferencia final unica em vez de ferramenta de trabalho.
+
+**4. Layout em duas colunas** (video de um lado, texto e controles do outro) e **remocao do
+paragrafo grande do topo**: a faixa de frases mostra o mesmo texto e melhor, porque destaca o
+que esta dentro do corte. Manter os dois empurrava os controles para fora da tela. Abaixo de
+900 px volta a empilhar. O painel deixou de ser `<details>`: com duas colunas nao ha motivo para
+esconder.
+
+**5. Escutas consolidadas:** uma de cada, junto do controle a que pertence.
+
+**6. Frases com o MESMO carimbo: agrupadas numa entrada so.** A legenda tem resolucao de 1 s,
+entao duas frases no mesmo segundo recebem carimbos identicos (no print, "Isso e um dos seus
+maiores alegados." e "Os puritanos acreditavam…" ambas em 00:04:21). Na faixa isso produzia duas
+linhas distintas levando ao MESMO tempo: o operador clicava na segunda, nada mudava, e somava
+mais um "nao funcionou".
+
+Escolhi **agrupar** em vez de desempatar pela ordem. Desempatar exigiria atribuir a segunda
+frase um tempo que **ninguem mediu** — interpolado entre carimbos — e cortar ali poria o inicio
+do Short num ponto arbitrario no meio da fala, com aparencia de precisao que o dado nao tem: a
+mesma falsa precisao ja rejeitada na duracao e nos rotulos. Agrupar e honesto: para efeito de
+corte aquelas falas sao um bloco indivisivel, e a faixa passa a dizer isso ("2 falas no mesmo
+segundo"). A perda e real e aceitavel — ele nao pode comecar na segunda frase do bloco, mas nao
+podia antes tampouco; antes a interface **fingia** que podia.
+
 ### Registro dos cortes: acumular o dado, sem agir sobre ele
 
 Cada ajuste manual e uma **medicao** do desvio da legenda: o operador, ao empurrar as pontas ate
