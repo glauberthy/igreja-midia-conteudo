@@ -165,21 +165,45 @@ func encaixarInicio(frases []harness.Frase, ms int) (int, bool) {
 	return melhor, melhor >= 0
 }
 
-// encaixarFim escolhe o fim de frase COMPLETA mais próximo do ponto marcado. Completa
-// porque o auditor exige que o end caia em fim de frase completa — cortar no meio de uma
-// oração é o defeito que o "ouvir a emenda" revela.
+// encaixarFim libera o fim PARA FRENTE e o encaixa apenas para trás — assimetria de
+// propósito, e é o que faz o ajuste manual servir para o caso que o motivou.
+//
+// O defeito que o operador está consertando é o timestamp da legenda adiantar o áudio em
+// 1–3 s: a palavra final é engolida. Encaixar no fim de frase mais PRÓXIMO usaria esses
+// mesmos timestamps errados, devolvendo o operador à fronteira defeituosa — ele marca +2 s,
+// o sistema desfaz, e o ajuste não serve para nada.
+//
+// A regra, então:
+//
+//   - fim marcado igual ou POSTERIOR a alguma fronteira de frase completa: aceito como está
+//     (nunca corta fala no meio; a folga cai em silêncio ou no começo da fala seguinte);
+//   - fim marcado ANTES de qualquer fronteira: encaixa para FRENTE, na próxima — para trás
+//     cortaria no meio;
+//   - folga maior que harness.FolgaFimMaxMs: limitada, para não virar vazamento silencioso.
 func encaixarFim(frases []harness.Frase, ms int) (int, bool) {
-	melhorMs, dist := 0, math.MaxInt64
-	achou := false
+	anterior, temAnterior := 0, false
+	proxima, temProxima := 0, false
 	for _, f := range frases {
 		if !f.Completa {
 			continue
 		}
-		if d := abs(f.FimMs - ms); d < dist {
-			melhorMs, dist, achou = f.FimMs, d, true
+		if f.FimMs <= ms && (!temAnterior || f.FimMs > anterior) {
+			anterior, temAnterior = f.FimMs, true
+		}
+		if f.FimMs > ms && (!temProxima || f.FimMs < proxima) {
+			proxima, temProxima = f.FimMs, true
 		}
 	}
-	return melhorMs, achou
+	if temAnterior {
+		if ms-anterior <= harness.FolgaFimMaxMs {
+			return ms, true // o ouvido do operador manda
+		}
+		return anterior + harness.FolgaFimMaxMs, true
+	}
+	if temProxima {
+		return proxima, true
+	}
+	return 0, false
 }
 
 // hms formata no MESMO formato da Fase 3 ("HH:MM:SS.000"). Não há perda: a transcrição

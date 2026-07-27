@@ -79,12 +79,52 @@ func TestAuditarCandidatoHookInventado(t *testing.T) {
 	}
 }
 
-func TestAuditarCandidatoEndNoMeioDaFala(t *testing.T) {
+// TestAuditarCandidatoEndComFolgaExcessiva: 27 s depois da última fronteira é vazamento,
+// não folga de sincronia. Acusa.
+func TestAuditarCandidatoEndComFolgaExcessiva(t *testing.T) {
 	frases := harness.Frasear(trAudit)
-	// end em 00:00:44 não coincide com fim de frase completa nenhuma.
 	probs, _ := AuditarCandidato(frases, cand("00:00:07.000", "00:00:44.000", 37, "Salvação não é um processo."))
-	if len(probs) == 0 || !strings.Contains(strings.Join(probs, ";"), "fim de frase") {
-		t.Errorf("deveria acusar end fora de fim de frase: %v", probs)
+	if len(probs) == 0 || !strings.Contains(strings.Join(probs, ";"), "folga") {
+		t.Errorf("deveria acusar folga excessiva no end: %v", probs)
+	}
+}
+
+// TestAuditarCandidatoEndNaFronteiraExata: o caso automático da Fase 3 continua limpo.
+func TestAuditarCandidatoEndNaFronteiraExata(t *testing.T) {
+	frases := harness.Frasear(trAudit)
+	probs, _ := AuditarCandidato(frases, cand("00:00:07.000", "00:00:17.000", 10, "Salvação não é um processo."))
+	for _, p := range probs {
+		if strings.Contains(p, "folga") || strings.Contains(p, "corta fala") {
+			t.Errorf("end na fronteira exata não deveria acusar corte: %v", probs)
+		}
+	}
+}
+
+// TestAuditarCandidatoEndComFolgaPequenaPassa é a invariante REFORMULADA (spec-16): o end
+// pode passar da fronteira, porque o timestamp da legenda adianta o áudio em 1–3 s e cortar
+// exatamente na fronteira engole a palavra final. Folga para frente nunca corta fala.
+//
+// Este é o caso de uso que motivou o ajuste manual (spec-05 v2). Se o auditor acusasse aqui,
+// todo trecho ajustado pelo operador viria marcado como defeituoso.
+func TestAuditarCandidatoEndComFolgaPequenaPassa(t *testing.T) {
+	frases := harness.Frasear(trAudit)
+	// Fronteira em 00:00:17; o operador estendeu 2 s para não engolir a última palavra.
+	probs, _ := AuditarCandidato(frases, cand("00:00:07.000", "00:00:19.000", 12, "Salvação não é um processo."))
+	for _, p := range probs {
+		if strings.Contains(p, "folga") || strings.Contains(p, "corta fala") {
+			t.Errorf("folga de 2s deveria ser aceita (legenda adianta o áudio): %v", probs)
+		}
+	}
+}
+
+// TestAuditarCandidatoEndAntesDeQualquerFronteira: aí sim corta fala no meio.
+func TestAuditarCandidatoEndAntesDeQualquerFronteira(t *testing.T) {
+	frases := harness.Frasear(trAudit)
+	// As fronteiras desta transcrição são 7s, 10s, 13s, 17s e 45s. Um end em 5s está antes
+	// de todas — não há como não cortar fala.
+	probs, _ := AuditarCandidato(frases, cand("00:00:00.000", "00:00:05.000", 5, "A palavra nos diz que a salvação é pela fé, é um ato."))
+	if len(probs) == 0 || !strings.Contains(strings.Join(probs, ";"), "corta fala") {
+		t.Errorf("deveria acusar corte no meio da fala: %v", probs)
 	}
 }
 

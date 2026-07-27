@@ -32,7 +32,8 @@ Dentro:
   1. **hook existe na legenda** e **começa exatamente no `start`** (acusa "hook CLIPADO"
      se o hook começa antes do start, ou "start com sobra" se começa depois; "hook não
      encontrado / inventado" se não casa);
-  2. o **`end` cai no fim de uma frase completa** (não corta fala no meio);
+  2. o **`end` não termina ANTES de uma fronteira de frase completa** (não corta fala no
+     meio), com folga para frente limitada a `harness.FolgaFimMaxMs` (5 s);
   3. **duração** em 30–60 s.
 - Flags de leitura: `-texto` (imprime o texto realmente falado na janela, insumo da
   revisão humana) e `-criterios` (grade dos 5 critérios da Fase 4 — por que o score é
@@ -42,6 +43,34 @@ Fora:
 - **Não** usa LLM e **não** julga doutrina — a certificação teológica continua humana
   (regra inviolável nº 6). O `-texto`/`-criterios` são insumo para essa revisão.
 - Não corrige nada: só reporta (a correção de bugs que ela revela é feita à parte).
+
+### Por que a invariante de fim é "não termina antes", e não "termina exatamente em"
+
+A primeira versão exigia `end == fim de frase completa`. A formulação correta é mais frouxa
+de um lado e igualmente firme do outro:
+
+| Onde cai o `end` | Corta fala? | Veredito |
+|---|---|---|
+| Antes de qualquer fronteira | **Sim** | acusa |
+| Exatamente na fronteira | Não | passa |
+| Depois da fronteira, até 5 s | Não (silêncio ou início da fala seguinte) | passa |
+| Depois da fronteira, além de 5 s | Não, mas vaza conteúdo | acusa |
+
+O motivo é um defeito medido da fonte: **o timestamp da legenda automática do YouTube
+adianta o áudio em 1–3 s**. O texto da frase vem completo, mas o tempo de fim chega antes de
+o pregador terminar de falar. Cortar exatamente na fronteira, então, ENGOLE a palavra final —
+é o defeito que o operador escuta como `"...fez por nós,"` faltando `"preço nenhum paga"`.
+
+Terminar depois da fronteira nunca corta fala: pega silêncio ou o começo da fala seguinte, e
+o quanto disso é aceitável é julgamento de ouvido — por isso é o operador que decide, dentro
+do teto. Sem teto, a folga viraria vazamento silencioso.
+
+Isto **não é exceção aberta para o ajuste manual** (spec-05 v2): é o enunciado mais fiel da
+intenção original do auditor, que sempre foi "não cortar fala no meio". A alternativa —
+manter a igualdade exata e ensinar o auditor a ignorar trechos ajustados à mão — criaria uma
+classe de material que o projeto marca como defeituoso e manda ignorar, o que é pior que o
+problema. A delimitação automática (Fase 3) continua produzindo `end` exatamente na
+fronteira e continua passando sem folga nenhuma.
 
 ## Contrato e uso
 
@@ -62,7 +91,8 @@ Saída: markdown por pedido — `## <id> — N candidato(s)` e, por candidato, `
 ## Critérios de aceite
 
 - [x] Determinístico, sem LLM; lê os artefatos do pedido em `trabalho/<id>/`.
-- [x] Acusa hook clipado, hook inventado, end fora de fim de frase e duração fora de 30–60 s.
+- [x] Acusa hook clipado, hook inventado, end que corta fala no meio, folga de fim excessiva
+      e duração fora de 30–60 s.
 - [x] `-texto` imprime o texto falado; `-criterios` imprime a grade da Fase 4.
 - [x] Sai com código ≠ 0 quando há problema.
 - [x] `go build ./...` e `go test ./...` verdes.

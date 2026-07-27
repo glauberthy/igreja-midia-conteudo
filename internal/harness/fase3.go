@@ -28,6 +28,19 @@ const (
 	DuracaoMaxMs = 58000 // 58 s
 )
 
+// FolgaFimMaxMs é quanto o fim de um trecho pode passar da fronteira de frase da legenda.
+//
+// Por que existe folga: o timestamp da legenda automática do YouTube ADIANTA o áudio em
+// 1–3 s. O texto da frase vem completo, mas o tempo de fim chega antes de o pregador
+// terminar de falar — o defeito que o operador escuta como palavra engolida ("...fez por
+// nós," faltando "preço nenhum paga"). Cortar exatamente na fronteira REPRODUZ o defeito.
+//
+// Por que a folga é só para frente: a invariante real é "não cortar fala no meio". Terminar
+// ANTES da fronteira corta no meio; terminar DEPOIS nunca corta — pega silêncio ou o começo
+// da fala seguinte, e o quanto disso é aceitável é julgamento de ouvido do operador. Daí o
+// teto: sem ele, a folga viraria vazamento silencioso.
+const FolgaFimMaxMs = 5000 // 5 s
+
 const (
 	duracaoMinMs = DuracaoMinMs
 	duracaoMaxMs = DuracaoMaxMs

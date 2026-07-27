@@ -171,16 +171,30 @@ func AuditarCandidato(frases []harness.Frase, c validacao.Candidato) (probs []st
 		probs = append(probs, fmt.Sprintf("start %.0fs antes do hook (sobra de abertura)", float64(delta)/1000))
 	}
 
-	// 2) O end cai no fim de uma frase completa?
-	fimOK := false
+	// 2) O end NÃO TERMINA ANTES de uma fronteira de frase completa.
+	//
+	// A invariante é essa, e não "end == fim exato de frase". O que se quer garantir é não
+	// cortar fala no meio: terminar antes da fronteira corta; terminar DEPOIS nunca corta —
+	// pega silêncio ou o começo da fala seguinte. E terminar depois é necessário, porque o
+	// timestamp da legenda automática adianta o áudio em 1–3 s: cortar exatamente na
+	// fronteira engole a palavra final (o defeito "...fez por nós," sem "preço nenhum
+	// paga"). O ajuste manual do operador (spec-05 v2) usa justamente essa folga.
+	//
+	// A folga tem teto (harness.FolgaFimMaxMs) para não virar vazamento silencioso.
+	fronteira, folga := -1, 0
 	for _, f := range frases {
-		if f.FimMs == endMs && f.Completa {
-			fimOK = true
-			break
+		if f.Completa && f.FimMs <= endMs && f.FimMs > fronteira {
+			fronteira = f.FimMs
 		}
 	}
-	if !fimOK {
-		probs = append(probs, "end não coincide com fim de frase completa (pode cortar fala)")
+	switch {
+	case fronteira < 0:
+		probs = append(probs, "end termina antes de qualquer fim de frase completa (corta fala no meio)")
+	default:
+		if folga = endMs - fronteira; folga > harness.FolgaFimMaxMs {
+			probs = append(probs, fmt.Sprintf("end passa %.1fs do fim da última frase (máximo %ds de folga)",
+				float64(folga)/1000, harness.FolgaFimMaxMs/1000))
+		}
 	}
 
 	// 3) Duração na faixa do produto.

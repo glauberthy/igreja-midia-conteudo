@@ -118,9 +118,77 @@ func TestEncaixeEmFronteiraDeFala(t *testing.T) {
 	if !got.AjustadoStart {
 		t.Error("AjustadoStart deveria avisar que o ponto foi movido")
 	}
-	// Fim de frase completa: a frase que começa em 1:12 termina no início da seguinte.
-	if got.EndSeg == 79.2 {
-		t.Error("end não encaixou em fim de frase completa")
+}
+
+// TestFimLiberadoParaFrente é o caso que motivou o ajuste manual, e o que um encaixe
+// simétrico anularia: o timestamp da legenda adianta o áudio, o operador ouve a palavra
+// engolida e estende 2 s. Se o sistema o devolvesse à fronteira, o ajuste não serviria
+// para nada — ele marca +2s e o sistema desfaz.
+func TestFimLiberadoParaFrente(t *testing.T) {
+	frases := frasesAjuste(t)
+
+	// Fronteiras de 6 em 6 s. O operador marcou 2 s depois de uma delas.
+	got := recalcularTrecho(frases, 0, 36, 80, LimitesPregacao{})
+	if got.EndSeg != 80 {
+		t.Errorf("o end foi movido para %.1f — o operador marcou 80 e a folga é segura", got.EndSeg)
+	}
+	if got.AjustadoEnd {
+		t.Error("AjustadoEnd marcado: o fim não deveria ter sido encaixado")
+	}
+	if !got.Aprovavel {
+		t.Errorf("44 s deveria ser aprovável: %s", got.Motivo)
+	}
+}
+
+// TestFimAntesDaFronteiraEncaixaParaFrente: para trás cortaria fala no meio, que é
+// exatamente o defeito. Então o encaixe só existe nessa direção.
+func TestFimAntesDaFronteiraEncaixaParaFrente(t *testing.T) {
+	frases := frasesAjuste(t)
+
+	// Antes da primeira fronteira (a primeira frase termina em 6 s).
+	got := recalcularTrecho(frases, 0, 0, 3, LimitesPregacao{})
+	if got.EndSeg < 3 {
+		t.Errorf("o end foi para trás (%.1f) — cortaria fala no meio", got.EndSeg)
+	}
+}
+
+// TestFolgaDoFimTemTeto: folga é para sincronia de legenda, não licença para vazar. Além do
+// teto, o sistema limita — senão o operador estica sem perceber e o auditor acusa depois.
+func TestFolgaDoFimTemTeto(t *testing.T) {
+	frases := frasesAjuste(t)
+
+	// Última fronteira é 174 s (frase 29 começa em 174). Marcar 200 s pede 26 s de folga.
+	got := recalcularTrecho(frases, 0, 150, 200, LimitesPregacao{})
+	limite := 174 + float64(harness.FolgaFimMaxMs)/1000
+	if got.EndSeg > limite {
+		t.Errorf("end = %.1f passou do teto de folga (%.1f)", got.EndSeg, limite)
+	}
+}
+
+// TestAjusteSobreviveAoAuditor fecha o ciclo com a spec-16: um trecho ajustado à mão, com
+// folga de fim, NÃO pode ser acusado pelo auditor. Se este teste quebrar, o operador estaria
+// gerando material que o próprio projeto marca como defeituoso.
+func TestAjusteSobreviveAoAuditor(t *testing.T) {
+	frases := frasesAjuste(t)
+	got := recalcularTrecho(frases, 0, 36, 80, LimitesPregacao{}) // 2 s de folga no fim
+	if !got.Aprovavel {
+		t.Fatalf("pré-condição: %s", got.Motivo)
+	}
+
+	// Mesma verificação do cmd/auditar, item 2: existe fronteira completa em ou antes do
+	// end, e a folga cabe no teto?
+	endMs, _ := validacao.HmsToMs(got.End)
+	fronteira := -1
+	for _, f := range frases {
+		if f.Completa && f.FimMs <= endMs && f.FimMs > fronteira {
+			fronteira = f.FimMs
+		}
+	}
+	if fronteira < 0 {
+		t.Fatal("o auditor acusaria corte no meio da fala")
+	}
+	if folga := endMs - fronteira; folga > harness.FolgaFimMaxMs {
+		t.Errorf("o auditor acusaria folga excessiva: %dms", folga)
 	}
 }
 
