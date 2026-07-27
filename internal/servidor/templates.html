@@ -225,6 +225,18 @@
     }
     function trechoAtual() { return REV.dados.trechos[REV.atual]; }
 
+    // Tocar e ouvir a emenda usam os tempos EFETIVOS (ajustados, se houver): o operador
+    // precisa conferir o corte NOVO, senão ele ajusta e continua ouvindo o antigo.
+    function playPause() {
+      if (!REV.prontoPlayer) return;
+      var e = efetivoAtual();
+      if (REV.player.getPlayerState() === YT.PlayerState.PLAYING) { REV.player.pauseVideo(); clearInterval(REV.timer); }
+      else { tocarIntervalo(e.iniMs / 1000, e.fimMs / 1000); }
+    }
+    function doInicio() { var e = efetivoAtual(); tocarIntervalo(e.iniMs / 1000, e.fimMs / 1000); }
+    function emendaInicio() { var e = efetivoAtual(); tocarIntervalo(e.iniMs / 1000 - 2, e.iniMs / 1000 + 3); }
+    function emendaFim() { var e = efetivoAtual(); tocarIntervalo(e.fimMs / 1000 - 3, e.fimMs / 1000 + 2); }
+
     // ===== Ajuste manual do corte (spec-05 v2, redesenhado) =====
     //
     // Contrato de tempo: getCurrentTime() do player JÁ É o tempo que o corte usa. O vídeo
@@ -241,8 +253,13 @@
     // e o texto nunca discordarem entre si.
     function efetivo(i) {
       var t = REV.dados.trechos[i], a = REV.ajustes[i];
+      // Sem ajuste, a vizinhança vem do cache (REV.viz), preenchido por garantirVizinhanca.
+      // Sem esse fallback, navegar para outro trecho e voltar deixava a faixa travada em
+      // "Carregando…": garantirVizinhanca já tinha respondido e não pediria de novo.
+      var cache = REV.viz[i];
       if (!a) return { iniMs: t.startSeg * MS, fimMs: t.endSeg * MS, durMs: t.dur * MS,
-                       hook: t.hook, texto: t.texto, ajustado: false, ok: true, vizinhanca: null };
+                       hook: t.hook, texto: t.texto, ajustado: false, ok: true,
+                       vizinhanca: (cache && cache !== 'pedindo') ? cache : null };
       var r = a.resposta;
       if (!r) { // esperando o servidor: mostra os tempos marcados, mantém a última vizinhança
         return { iniMs: a.iniMs, fimMs: a.fimMs, durMs: a.fimMs - a.iniMs,
@@ -540,43 +557,55 @@
       });
     }
 
+    // ligar associa um handler tolerando id ausente. Motivo concreto: quando playPause
+    // desapareceu num recorte, a exceção no PRIMEIRO addEventListener abortou ligarControles
+    // inteiro — a tela ficou sem controle nenhum, e o sintoma (nada funciona) não apontava
+    // para a causa (uma função). Com isto, um controle quebrado degrada só a si mesmo e o
+    // console nomeia qual.
+    function ligar(id, fn) {
+      var el = document.getElementById(id);
+      if (!el) { if (window.console) console.warn('controle ausente na tela: ' + id); return; }
+      if (typeof fn !== 'function') { if (window.console) console.warn('handler inválido para: ' + id); return; }
+      el.addEventListener('click', fn);
+    }
+
     function ligarControles() {
-      document.getElementById('btn-play').addEventListener('click', playPause);
-      document.getElementById('btn-inicio').addEventListener('click', doInicio);
-      document.getElementById('btn-emenda-ini').addEventListener('click', emendaInicio);
-      document.getElementById('btn-emenda-fim').addEventListener('click', emendaFim);
-      document.getElementById('btn-meia').addEventListener('click', meiaVelocidade);
+      ligar('btn-play', playPause);
+      ligar('btn-inicio', doInicio);
+      ligar('btn-emenda-ini', emendaInicio);
+      ligar('btn-emenda-fim', emendaFim);
+      ligar('btn-meia', meiaVelocidade);
       // Rótulos pelo EFEITO ("mais cedo"/"mais tarde"), não por sinal: "−1s" no início deixa
       // o trecho MAIS longo e "+1s" no fim também, então o mesmo rótulo produzia efeitos
       // opostos por linha e exigia tradução mental a cada clique.
-      document.getElementById('aj-ini-cedo').addEventListener('click', function () { empurrar('inicio', -1000); });
-      document.getElementById('aj-ini-tarde').addEventListener('click', function () { empurrar('inicio', 1000); });
-      document.getElementById('aj-fim-cedo').addEventListener('click', function () { empurrar('fim', -1000); });
-      document.getElementById('aj-fim-tarde').addEventListener('click', function () { empurrar('fim', 1000); });
+      ligar('aj-ini-cedo', function () { empurrar('inicio', -1000); });
+      ligar('aj-ini-tarde', function () { empurrar('inicio', 1000); });
+      ligar('aj-fim-cedo', function () { empurrar('fim', -1000); });
+      ligar('aj-fim-tarde', function () { empurrar('fim', 1000); });
       // Ajuste fino SÓ no fim, e subordinado: no início o encaixe em fronteira de fala (1s)
       // torna o passo menor inócuo. Como linha subordinada, a assimetria lê como recurso
       // extra do fim, não como falta no início.
-      document.getElementById('aj-fim-m025').addEventListener('click', function () { empurrar('fim', -250); });
-      document.getElementById('aj-fim-p025').addEventListener('click', function () { empurrar('fim', 250); });
-      document.getElementById('aj-usar-ini').addEventListener('click', function () { usarTempoDoPlayer('inicio'); });
-      document.getElementById('aj-usar-fim').addEventListener('click', function () { usarTempoDoPlayer('fim'); });
-      document.getElementById('aj-ouvir-fim').addEventListener('click', emendaFim);
-      document.getElementById('aj-restaurar').addEventListener('click', restaurar);
+      ligar('aj-fim-m025', function () { empurrar('fim', -250); });
+      ligar('aj-fim-p025', function () { empurrar('fim', 250); });
+      ligar('aj-usar-ini', function () { usarTempoDoPlayer('inicio'); });
+      ligar('aj-usar-fim', function () { usarTempoDoPlayer('fim'); });
+      ligar('aj-ouvir-fim', emendaFim);
+      ligar('aj-restaurar', restaurar);
+      ligar('aprovar', function () { decidir('aprovado'); });
+      ligar('reprovar', function () { decidir('reprovado'); });
+      ligar('anterior', function () { irPara(REV.atual - 1); });
+      ligar('proximo', function () { irPara(REV.atual + 1); });
       // Relógio do rótulo "usar HH:MM:SS do player": sem ele o tempo mostrado envelhece e o
       // operador volta a clicar às cegas.
       REV.relogio = setInterval(function () {
         if (!REV || !REV.prontoPlayer) return;
-        var tp = rotulo(REV.player.getCurrentTime() * 1000);
+        var tp = rotulo(REV.player.getCurrentTime() * MS);
         ['aj-usar-ini', 'aj-usar-fim'].forEach(function (id) {
           var b = document.getElementById(id);
           if (b) b.textContent = 'usar ' + tp + ' do player';
         });
       }, 500);
-      document.getElementById('aprovar').addEventListener('click', function () { decidir('aprovado'); });
-      document.getElementById('reprovar').addEventListener('click', function () { decidir('reprovado'); });
-      document.getElementById('anterior').addEventListener('click', function () { irPara(REV.atual - 1); });
-      document.getElementById('proximo').addEventListener('click', function () { irPara(REV.atual + 1); });
-      document.getElementById('gerar').addEventListener('click', confirmar);
+      ligar('gerar', confirmar);
     }
 
     document.addEventListener('keydown', function (e) {

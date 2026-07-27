@@ -473,6 +473,41 @@ servidor DE FATO usara (apos encaixe/clamp), senao o empurrao seguinte partiria 
 que nao existe mais. Mantidos tambem: bloqueio de aprovar com ajuste invalido, restaurar
 original, meia velocidade, atalhos e o debounce de 350 ms.
 
+### Licao do primeiro teste no navegador: string presente != referencia integra
+
+O redesenho subiu com um bug que nenhum teste pegou. Um recorte de bloco durante a edicao
+engoliu `playPause`, `doInicio`, `emendaInicio` e `emendaFim`; a substituicao seguinte que
+deveria atualizar essas funcoes falhou **em silencio** (nao encontrou o texto e nao reclamou).
+Resultado: `node --check` passou (sintaxe valida), os testes de contrato passaram (as strings
+que eles procuravam continuavam la) e a tela quebrou no primeiro clique com
+`playPause is not defined`.
+
+Duas correcoes, alem de restaurar as funcoes:
+
+**1. Testes de INTEGRIDADE DE REFERENCIA** (`js_referencias_test.go`), sem navegador nem node:
+
+- todo handler (`addEventListener('click', f)` e o atalho `ligar('id', f)`) aponta para funcao
+  declarada no script;
+- nenhuma chamada a nome nao declarado nem constante numa lista explicita de globais
+  permitidos (APIs do navegador, `YT`, `htmx`) -- lista explicita de proposito: nome novo ali e
+  decisao consciente;
+- todo id que o JS busca existe em algum template (o outro lado da mesma falha: id renomeado
+  no HTML e nao no JS da `null`);
+- uma lista nomeada das funcoes essenciais da tela, redundante de proposito: se um recorte
+  remover a funcao E o handler juntos, os testes de referencia ficam satisfeitos e a
+  funcionalidade desaparece calada.
+
+**2. `ligar(id, fn)` no lugar de `getElementById(...).addEventListener(...)` direto.** O que
+transformou uma funcao ausente em tela totalmente morta foi a exceção no PRIMEIRO
+`addEventListener` abortar o `ligarControles` inteiro. O sintoma ("nada funciona") nao apontava
+para a causa (uma funcao). Agora um controle quebrado degrada so a si mesmo e o console nomeia
+qual.
+
+A releitura do JS que essa investigacao forcou achou um segundo bug, este nunca observado: sem
+ajuste, `efetivo()` nao consultava o cache de vizinhanca (`REV.viz`), entao navegar para outro
+trecho e voltar deixava a faixa de frases travada em "Carregando…" -- `garantirVizinhanca` ja
+tinha respondido e nao pediria de novo.
+
 ### Dois cuidados tecnicos do estudo de bibliotecas
 
 O estudo foi descartado no geral (as bibliotecas exigem midia local, que a revisao nao tem --
