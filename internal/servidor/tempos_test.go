@@ -60,7 +60,7 @@ func TestMetricasLinhaCSVeCabecalho(t *testing.T) {
 func TestGravarTemposAnexaComCabecalhoUmaVez(t *testing.T) {
 	csv := filepath.Join(t.TempDir(), "tempos.csv")
 	s := Novo(Opcoes{Baixador: &baixadorFake{}, Selecionador: &selecionadorFake{}, TemposPath: csv,
-		AjustesPath: filepath.Join(t.TempDir(), "ajustes.csv")})
+		CortesPath: filepath.Join(t.TempDir(), "cortes.csv")})
 
 	s.gravarTempos(&Metricas{ID: "p1", NumAprovados: 1, RenderizarMs: 1000})
 	s.gravarTempos(&Metricas{ID: "p2", NumAprovados: 1, RenderizarMs: 2000})

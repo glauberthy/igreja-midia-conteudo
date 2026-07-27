@@ -90,7 +90,7 @@ type Servidor struct {
 	outDir           string
 	logRodadasPath   string
 	temposPath       string
-	ajustesPath      string
+	cortesPath       string
 	assetsDir        string
 	reterPedidos     int
 	limpezaDesligada bool
@@ -122,10 +122,10 @@ type Opcoes struct {
 	// TemposPath é o CSV de auditoria de desempenho (uma linha por pedido, append).
 	// Vazio usa o padrão "resultados/tempos.csv".
 	TemposPath string
-	// AjustesPath é o CSV dos ajustes manuais de corte (uma linha por trecho ajustado,
-	// append). Vazio usa o padrão "resultados/ajustes.csv". É dado de PESQUISA sobre o
-	// desvio da legenda — ver ajustes_csv.go.
-	AjustesPath string
+	// CortesPath é o CSV dos cortes APROVADOS (uma linha por trecho, ajustado ou não;
+	// append). Vazio usa o padrão "resultados/cortes.csv". É dado de PESQUISA sobre o desvio
+	// da legenda — ver cortes_csv.go, inclusive por que registra os não ajustados.
+	CortesPath string
 	// ReterPedidos é quantos pedidos mantêm o material bruto após a limpeza automática
 	// (spec-06). 0 usa o padrão 1 (o último, para regerar sem baixar de novo).
 	// LimpezaDesligada desativa a limpeza automática (o cmd/limpar continua disponível).
@@ -153,7 +153,7 @@ func Novo(o Opcoes) *Servidor {
 		outDir:           o.OutDir,
 		logRodadasPath:   o.LogRodadasPath,
 		temposPath:       o.TemposPath,
-		ajustesPath:      o.AjustesPath,
+		cortesPath:       o.CortesPath,
 		assetsDir:        o.AssetsDir,
 		reterPedidos:     o.ReterPedidos,
 		limpezaDesligada: o.LimpezaDesligada,
@@ -176,8 +176,8 @@ func Novo(o Opcoes) *Servidor {
 	if s.temposPath == "" {
 		s.temposPath = filepath.Join("resultados", "tempos.csv")
 	}
-	if s.ajustesPath == "" {
-		s.ajustesPath = filepath.Join("resultados", "ajustes.csv")
+	if s.cortesPath == "" {
+		s.cortesPath = filepath.Join("resultados", "cortes.csv")
 	}
 	if s.assetsDir == "" {
 		s.assetsDir = "assets"
@@ -341,9 +341,10 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Registra os ajustes ANTES de mexer no estado: é medição do desvio da legenda, e o
-	// pedido não depende dela (ver ajustes_csv.go).
-	s.registrarAjustes(reg, ajustes)
+	// Registra TODOS os aprovados (ajustados ou não) antes de mexer no estado: é medição do
+	// desvio da legenda, e o pedido não depende dela. Registrar só os ajustados montaria uma
+	// amostra apenas dos casos ruins — ver cortes_csv.go.
+	s.registrarCortes(reg, limpos, ajustes)
 
 	s.mu.Lock()
 	reg.aprovados = limpos

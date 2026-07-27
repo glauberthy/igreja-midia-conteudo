@@ -525,20 +525,56 @@ ajuste, `efetivo()` nao consultava o cache de vizinhanca (`REV.viz`), entao nave
 trecho e voltar deixava a faixa de frases travada em "Carregando…" -- `garantirVizinhanca` ja
 tinha respondido e nao pediria de novo.
 
-### Registro dos ajustes: acumular o dado, sem agir sobre ele
+### Registro dos cortes: acumular o dado, sem agir sobre ele
 
-Cada ajuste manual e uma **medicao** do desvio da legenda: o operador, ao empurrar as pontas
-ate soar certo, esta medindo quanto o carimbo se adianta ao audio. `resultados/ajustes.csv`
-grava, por trecho ajustado: `quando, pedido, indice, start_original, start_ajustado,
-delta_start_ms, end_original, end_ajustado, delta_end_ms, duracao_original_s,
-duracao_ajustada_s`. Modo append, cabecalho na criacao, serializado pelo mesmo mutex do log de
-rodadas.
+Cada ajuste manual e uma **medicao** do desvio da legenda: o operador, ao empurrar as pontas ate
+soar certo, esta medindo quanto o carimbo se adianta ao audio.
 
-**Deliberadamente sem correcao automatica e sem sugestao de vies.** Agir sobre tres pontos
-seria construir sobre ruido. Depois de uns dez trechos ajustados, olha-se se o desvio e
-consistente: se for, aplica-lo na **Fase 3** melhoraria todos os cortes de uma vez e tornaria o
-ajuste manual excecao em vez de rotina; se nao for, o dado custou nada e a hipotese morre com
-evidencia em vez de opiniao.
+`resultados/cortes.csv` grava **uma linha por trecho APROVADO** -- ajustado ou nao:
+`quando, pedido, indice, ajustado, start_original, start_final, delta_start_ms, end_original,
+end_final, delta_end_ms, duracao_original_s, duracao_final_s`. Modo append, cabecalho na
+criacao, serializado pelo mesmo mutex do log de rodadas.
+
+**Por que TODOS os aprovados, e nao so os ajustados.** Registrar apenas os ajustados montaria
+uma amostra composta so dos casos ruins -- o trecho aprovado sem ajuste e justamente a evidencia
+de que o corte estava BOM, e nao geraria linha. O erro nao e marginal:
+
+| | media sobre os ajustados | media real |
+|---|---|---|
+| 10 aprovados, 3 ajustados em +2 s, 7 aceitos | **2,0 s** | **0,6 s** |
+
+Aplicar 2 s na Fase 3 empurraria os 7 cortes corretos para longe demais: o remedio criaria a
+doenca nos casos saudaveis. Com os nao ajustados dentro (delta 0), a media fica correta e sai de
+graca a **proporcao de cortes que precisam de ajuste** -- o indicador de saude do sistema. Se
+cair de 60% para 10%, melhorou.
+
+Daí o arquivo chamar-se `cortes.csv` e nao `ajustes.csv`: um arquivo chamado "ajustes" convida
+quem o le a filtrar mentalmente so os ajustados, recriando o vies que a mudanca removeu.
+
+A coluna `ajustado` reflete se o corte **mudou**, nao se o operador mexeu no painel: quem
+experimenta e volta ao original esta confirmando que o corte estava bom, e contar isso como
+"precisou de ajuste" estragaria o indicador. Trecho **reprovado** nao entra -- ali o operador
+rejeitou o CONTEUDO, nao o recorte, e misturar as duas coisas na mesma coluna nao mede nada.
+
+#### Dois cuidados para quando formos ler os numeros
+
+**(a) Os deltas sao QUANTIZADOS por fronteira de frase.** O corte encaixa em fala, nao em tempo
+continuo, entao a distribuicao sai **aos caroços**, agrupada nas distancias tipicas entre
+frases. Com poucas amostras a media cai num vale entre dois caroços e nao descreve nenhum caso
+real. Olhar a **forma** da distribuicao, nao so o valor central.
+
+**(b) O delta mede a soma de DOIS efeitos:** o adiantamento da legenda (fisica da fonte) e a
+preferencia do operador por respiro no corte (gosto). Aplicar o total na Fase 3 embutiria o
+gosto dele como se fosse fisica da fonte -- e a Fase 3 vale para todos os pregadores e todos os
+cultos, inclusive quando quem revisa for outra pessoa. Pista para separar: se inicio e fim
+andarem com magnitudes parecidas, e sincronia; se o fim andar sistematicamente mais que o
+inicio, tem gosto no meio.
+
+**Deliberadamente sem correcao automatica e sem sugestao de vies.** Agir sobre tres pontos seria
+construir sobre ruido. Depois de uns dez trechos, olha-se se o desvio e consistente: se for,
+aplica-lo na **Fase 3** melhoraria todos os cortes de uma vez e tornaria o ajuste manual excecao
+em vez de rotina; se nao for, o dado custou nada e a hipotese morre com evidencia em vez de
+opiniao.
 
 Falha ao gravar nunca quebra o pedido -- e dado de pesquisa, e o Short do operador vale mais que
 a estatistica (coberto por teste).
@@ -594,6 +630,8 @@ preenchimento do mesmo fluxo, e a decisao continua sendo do operador.
 - [x] `seekTo(t, false)` nos empurroes e `seekTo(t, true)` ao assentar o debounce.
 - [x] Tempos internos em milissegundos INTEIROS, no cliente e no servidor.
 - [x] Feedback ao vivo com debounce atualizando duracao, hook e texto falado no card.
+- [x] `resultados/cortes.csv` registra TODOS os trechos aprovados (delta 0 nos nao ajustados) com
+      coluna `ajustado`, para a media nao enviesar e a proporcao sair de graca.
 - [x] Testes: recalculo, `/aprovar` usando os ajustados e nao os originais, guardas de faixa
       e de `end <= start`, fluxo ponta a ponta no formato que o cliente envia, e o contrato da
       tela redesenhada (rotulos pelo efeito, ausencia de "Marcar aqui", vizinhanca com contexto

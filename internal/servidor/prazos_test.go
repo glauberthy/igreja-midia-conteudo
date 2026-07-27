@@ -48,7 +48,7 @@ func servidorComPrazos(t *testing.T, p Prazos, bv BaixadorVideo, sel Selecionado
 		BaseDir: base, OutDir: out,
 		LogRodadasPath: filepath.Join(base, "rodadas.md"),
 		TemposPath:     filepath.Join(base, "tempos.csv"),
-		AjustesPath:    filepath.Join(base, "ajustes.csv"),
+		CortesPath:     filepath.Join(base, "cortes.csv"),
 		Prazos:         p,
 		Agora:          func() time.Time { return time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC) },
 		GerarID:        func() string { return "teste-1" },

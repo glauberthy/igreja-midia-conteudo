@@ -777,7 +777,7 @@ func TestAjusteDeInicioSobreviveAoAuditor(t *testing.T) {
 
 // TestCSVRegistraAsQuatroPontas: o valor do arquivo é permitir olhar, depois de uns dez
 // trechos, se o desvio da legenda é consistente. Para isso precisa das quatro pontas (start e
-// end, original e ajustado) e dos dois deltas.
+// end, original e final) e dos dois deltas.
 func TestCSVRegistraAsQuatroPontas(t *testing.T) {
 	s := servidorAjuste(t)
 
@@ -800,7 +800,7 @@ func TestCSVRegistraAsQuatroPontas(t *testing.T) {
 	}
 	esperarStatus(t, s, "teste-1", "concluido")
 
-	b, err := os.ReadFile(s.ajustesPath)
+	b, err := os.ReadFile(s.cortesPath)
 	if err != nil {
 		t.Fatalf("CSV de ajustes não foi criado: %v", err)
 	}
@@ -811,33 +811,135 @@ func TestCSVRegistraAsQuatroPontas(t *testing.T) {
 	}
 
 	// Cabeçalho com as quatro pontas e os dois deltas.
-	for _, col := range []string{"start_original", "start_ajustado", "delta_start_ms",
-		"end_original", "end_ajustado", "delta_end_ms"} {
+	for _, col := range []string{"ajustado", "start_original", "start_final", "delta_start_ms",
+		"end_original", "end_final", "delta_end_ms"} {
 		if !strings.Contains(linhas[0], col) {
 			t.Errorf("cabeçalho sem a coluna %q: %s", col, linhas[0])
 		}
 	}
 
 	campos := strings.Split(linhas[1], ",")
-	if len(campos) != strings.Count(cabecalhoAjustes, ",")+1 {
+	if len(campos) != strings.Count(cabecalhoCortes, ",")+1 {
 		t.Fatalf("linha com %d campos, cabeçalho tem %d:\n%s",
-			len(campos), strings.Count(cabecalhoAjustes, ",")+1, linhas[1])
+			len(campos), strings.Count(cabecalhoCortes, ",")+1, linhas[1])
 	}
 	if campos[1] != "teste-1" || campos[2] != "0" {
 		t.Errorf("pedido/índice errados: %q, %q", campos[1], campos[2])
 	}
-	// Os deltas são a medição que interessa: quanto o operador moveu cada ponta.
-	if campos[5] != strconv.Itoa(38000-iniOrig) {
-		t.Errorf("delta_start = %q, esperado %d", campos[5], 38000-iniOrig)
+	if campos[3] != "sim" {
+		t.Errorf("coluna ajustado = %q, esperado \"sim\"", campos[3])
 	}
-	if campos[8] != strconv.Itoa(80000-fimOrig) {
-		t.Errorf("delta_end = %q, esperado %d", campos[8], 80000-fimOrig)
+	// Os deltas são a medição que interessa: quanto o operador moveu cada ponta.
+	if campos[6] != strconv.Itoa(38000-iniOrig) {
+		t.Errorf("delta_start = %q, esperado %d", campos[6], 38000-iniOrig)
+	}
+	if campos[9] != strconv.Itoa(80000-fimOrig) {
+		t.Errorf("delta_end = %q, esperado %d", campos[9], 80000-fimOrig)
+	}
+}
+
+// TestCSVRegistraAprovadoSEMAjuste é a correção do viés de seleção, e o teste mais importante
+// deste arquivo. Registrar só os ajustados montaria uma amostra apenas dos casos ruins: o
+// trecho aprovado sem ajuste é a evidência de que o corte estava BOM.
+func TestCSVRegistraAprovadoSEMAjuste(t *testing.T) {
+	s := servidorAjuste(t)
+
+	aprovarJSON(t, s, "teste-1", []int{0})
+	esperarStatus(t, s, "teste-1", "concluido")
+
+	b, err := os.ReadFile(s.cortesPath)
+	if err != nil {
+		t.Fatalf("aprovado sem ajuste não gerou linha — a amostra ficaria só com os casos ruins: %v", err)
+	}
+	linhas := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(linhas) != 2 {
+		t.Fatalf("esperava cabeçalho + 1 linha, veio %d:\n%s", len(linhas), b)
+	}
+	campos := strings.Split(linhas[1], ",")
+	if campos[3] != "nao" {
+		t.Errorf("coluna ajustado = %q, esperado \"nao\"", campos[3])
+	}
+	// Deltas zero: é o que corrige a média.
+	if campos[6] != "0" || campos[9] != "0" {
+		t.Errorf("deltas deveriam ser 0 no trecho não ajustado: start=%q end=%q", campos[6], campos[9])
+	}
+	// E os tempos finais são os originais.
+	if campos[4] != campos[5] || campos[7] != campos[8] {
+		t.Errorf("sem ajuste, final deveria igualar original: %v", campos[4:9])
+	}
+}
+
+// TestCSVCorrigeAMediaComOsNaoAjustados reproduz o exemplo numérico que motivou a correção:
+// 10 aprovados, 3 com +2s no fim. Sobre os ajustados a média é 2s; a média real é 0,6s.
+// Aplicar 2s na Fase 3 empurraria os 7 corretos para longe demais.
+func TestCSVCorrigeAMediaComOsNaoAjustados(t *testing.T) {
+	s := servidorAjuste(t)
+	frases := frasesAjuste(t)
+	reg := s.pedidos["teste-1"]
+
+	// 10 candidatos com os mesmos tempos-base, dentro da faixa da transcrição sintética
+	// (fronteiras de 6 em 6 s, até 174 s).
+	const iniOrig, fimOrig = 36000, 78000
+	s.mu.Lock()
+	base := reg.cands[0]
+	base.Start, base.End = hms(iniOrig), hms(fimOrig)
+	reg.cands = reg.cands[:0]
+	for len(reg.cands) < 10 {
+		reg.cands = append(reg.cands, base)
+	}
+	s.mu.Unlock()
+
+	// 3 ajustados em +2s no fim; os outros 7 aprovados como estão.
+	ajustes := map[int]TrechoAjustado{}
+	for i := 0; i < 3; i++ {
+		t1 := recalcularTrecho(frases, i, iniOrig, fimOrig+2000, LimitesPregacao{})
+		if !t1.Aprovavel {
+			t.Fatalf("caso %d inválido: %s", i, t1.Motivo)
+		}
+		ajustes[i] = t1
+	}
+	todos := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	s.registrarCortes(reg, todos, ajustes)
+
+	b, err := os.ReadFile(s.cortesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linhas := strings.Split(strings.TrimSpace(string(b)), "\n")[1:]
+	if len(linhas) != 10 {
+		t.Fatalf("esperava 10 linhas (todos os aprovados), veio %d", len(linhas))
+	}
+
+	var soma, n, ajustados int
+	for _, l := range linhas {
+		c := strings.Split(l, ",")
+		d, err := strconv.Atoi(c[9])
+		if err != nil {
+			t.Fatalf("delta_end ilegível em %q", l)
+		}
+		soma += d
+		n++
+		if c[3] == "sim" {
+			ajustados++
+		}
+	}
+	if ajustados != 3 {
+		t.Errorf("coluna ajustado marcou %d, esperado 3", ajustados)
+	}
+	// A média sobre TODOS é o número que se aplicaria na Fase 3.
+	media := soma / n
+	if media > 900 {
+		t.Errorf("média = %dms: com os não ajustados de fora daria ~2000ms e empurraria os corretos", media)
+	}
+	// E a proporção sai de graça: o indicador de saúde do sistema.
+	if prop := ajustados * 100 / n; prop != 30 {
+		t.Errorf("proporção de ajustados = %d%%, esperado 30%%", prop)
 	}
 }
 
 // TestCSVDeAjustesAnexaSemRepetirCabecalho: o arquivo acumula ao longo de vários pedidos, e é
 // essa acumulação que permite avaliar consistência.
-func TestCSVDeAjustesAnexaSemRepetirCabecalho(t *testing.T) {
+func TestCSVAnexaSemRepetirCabecalho(t *testing.T) {
 	s := servidorAjuste(t)
 	frases := frasesAjuste(t)
 
@@ -847,10 +949,10 @@ func TestCSVDeAjustesAnexaSemRepetirCabecalho(t *testing.T) {
 		if !t1.Aprovavel {
 			t.Fatalf("caso %d: %s", i, t1.Motivo)
 		}
-		s.registrarAjustes(reg, map[int]TrechoAjustado{0: t1})
+		s.registrarCortes(reg, []int{0}, map[int]TrechoAjustado{0: t1})
 	}
 
-	b, err := os.ReadFile(s.ajustesPath)
+	b, err := os.ReadFile(s.cortesPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -863,17 +965,24 @@ func TestCSVDeAjustesAnexaSemRepetirCabecalho(t *testing.T) {
 	}
 }
 
-// TestCSVDeAjustesNaoRegistraTrechoSemAjuste: sem ajuste não há medição, e uma linha com delta
-// zero poluiria a estatística com pedidos em que o operador não mexeu.
-func TestCSVDeAjustesNaoRegistraTrechoSemAjuste(t *testing.T) {
+// TestCSVNaoRegistraTrechoREPROVADO: reprovado não é medição de corte — o operador rejeitou o
+// CONTEÚDO, não o recorte. Incluí-lo misturaria duas coisas diferentes na mesma coluna.
+func TestCSVNaoRegistraTrechoREPROVADO(t *testing.T) {
 	s := servidorAjuste(t)
 
-	aprovarJSON(t, s, "teste-1", []int{0})
+	aprovarJSON(t, s, "teste-1", []int{1}) // aprova só o índice 1
 	esperarStatus(t, s, "teste-1", "concluido")
 
-	if _, err := os.Stat(s.ajustesPath); err == nil {
-		b, _ := os.ReadFile(s.ajustesPath)
-		t.Errorf("CSV criado sem nenhum ajuste:\n%s", b)
+	b, err := os.ReadFile(s.cortesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linhas := strings.Split(strings.TrimSpace(string(b)), "\n")[1:]
+	if len(linhas) != 1 {
+		t.Fatalf("esperava 1 linha (só o aprovado), veio %d:\n%s", len(linhas), b)
+	}
+	if c := strings.Split(linhas[0], ","); c[2] != "1" {
+		t.Errorf("registrou o índice %q em vez do aprovado (1)", c[2])
 	}
 }
 
@@ -884,7 +993,7 @@ func TestFalhaAoRegistrarNaoQuebraOPedido(t *testing.T) {
 	// Caminho impossível de escrever (um arquivo comum no lugar do diretório-pai).
 	bloqueio := filepath.Join(t.TempDir(), "arquivo")
 	os.WriteFile(bloqueio, []byte("x"), 0644)
-	s.ajustesPath = filepath.Join(bloqueio, "ajustes.csv")
+	s.cortesPath = filepath.Join(bloqueio, "cortes.csv")
 
 	corpo, _ := json.Marshal(map[string]any{
 		"aprovados": []int{0},
