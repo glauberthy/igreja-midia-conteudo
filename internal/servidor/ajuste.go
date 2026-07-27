@@ -13,7 +13,6 @@ package servidor
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -108,13 +107,12 @@ func recalcularTrecho(frases []harness.Frase, indice, startMs, endMs int, lim Li
 		return falhar(brutoIni, brutoFim, "o fim precisa vir depois do início")
 	}
 
-	iniIdx, okI := encaixarInicio(frases, brutoIni)
+	iniIdx, iniMs, okI := encaixarInicio(frases, brutoIni)
 	fimMs, okF := encaixarFim(frases, brutoFim)
 	if !okI || !okF {
 		return falhar(brutoIni, brutoFim, "não há fala transcrita nessa faixa para ancorar o corte")
 	}
 
-	iniMs := frases[iniIdx].InicioMs
 	t.AjustadoStart = iniMs != brutoIni
 	t.AjustadoEnd = fimMs != brutoFim
 	if fimMs <= iniMs {
@@ -125,12 +123,16 @@ func recalcularTrecho(frases []harness.Frase, indice, startMs, endMs int, lim Li
 	t.Start, t.End = hms(iniMs), hms(fimMs)
 	t.DuracaoMs = fimMs - iniMs
 
-	// Hook = a primeira frase real a partir do start final. MESMA regra da Fase 3
-	// (fase3.go: "hook = a PRIMEIRA frase real a partir do start final"), reusada de
-	// propósito: é o que faz a invariante do auditor valer por construção.
+	// Hook = a frase que CONTÉM o start, não a próxima. Com a legenda adiantada, o start cai
+	// dentro da frase pelo carimbo e no começo dela pelo áudio — o hook é o que se ouve.
 	t.Hook = frases[iniIdx].Texto
-	t.TextoFalado = textoDoTrechoMs(frases, iniMs, fimMs)
-	t.Vizinhanca = vizinhanca(frases, iniMs, fimMs)
+
+	// Texto e destaque da faixa partem da FRONTEIRA da frase do hook, não do start efetivo:
+	// com o start alguns segundos adiante do carimbo, usar o start deixaria a própria frase do
+	// hook de fora do texto e sem destaque — o operador leria um texto que não começa no hook.
+	iniFrase := frases[iniIdx].InicioMs
+	t.TextoFalado = textoDoTrechoMs(frases, iniFrase, fimMs)
+	t.Vizinhanca = vizinhanca(frases, iniFrase, fimMs)
 
 	t.Aprovavel, t.Motivo = duracaoAceitavel(t.DuracaoMs)
 	return t
@@ -160,7 +162,7 @@ func vizinhanca(frases []harness.Frase, iniMs, fimMs int) []FraseVizinha {
 		}
 	}
 	if primeiro < 0 {
-		primeiro, _ = encaixarInicio(frases, iniMs)
+		primeiro, _, _ = encaixarInicio(frases, iniMs)
 		ultimo = primeiro
 	}
 
@@ -225,20 +227,44 @@ func clampar(iniMs, fimMs int, lim LimitesPregacao) (int, int) {
 	return iniMs, fimMs
 }
 
-// encaixarInicio escolhe a frase cujo INÍCIO está mais perto do ponto marcado.
+// encaixarInicio libera o início PARA FRENTE e encaixa apenas para trás — o mesmo defeito da
+// fonte que motivou liberar o fim afeta as duas pontas, e tratar o início como exato deixava
+// o operador sem saída.
 //
-// Mais perto, e não "a próxima a partir de t": se o operador clicou 1 s depois de a frase
-// começar, ele quer aquela frase (ouviu a abertura e reagiu). Se clicou pouco antes de a
-// próxima começar, quer a próxima. A distância mínima captura as duas intenções sem
-// precisar adivinhar direção.
-func encaixarInicio(frases []harness.Frase, ms int) (int, bool) {
-	melhor, dist := -1, math.MaxInt64
+// O caso real: corte em 00:20:08 e ainda se ouve "...do pelo Senhor", o rabo de uma frase
+// carimbada em 00:20:05. Se os carimbos fossem exatos ela teria acabado antes. A frase
+// "Todo cristão…" está marcada em 00:20:08 mas só é falada por volta de 00:20:10. O operador
+// clicava "mais tarde", ia para 00:20:09, e o encaixe na fronteira MAIS PRÓXIMA o devolvia
+// para 00:20:08 — o botão não fazia nada visível.
+//
+// A diferença crucial em relação ao fim: o HOOK continua sendo a frase que CONTÉM o start,
+// não a seguinte. Com start em 00:20:10, o hook segue "Todo cristão deve estar preparado…" —
+// que é o que se ouve — em vez de pular para a frase de depois. Daí a função devolver o
+// ÍNDICE do hook e o start efetivo separadamente: eles deixaram de coincidir.
+//
+// Devolve (índice da frase do hook, start efetivo, ok).
+func encaixarInicio(frases []harness.Frase, ms int) (int, int, bool) {
+	// A última frase que começa em ou antes do ponto marcado é a que o contém.
+	contem := -1
 	for i, f := range frases {
-		if d := abs(f.InicioMs - ms); d < dist {
-			melhor, dist = i, d
+		if f.InicioMs <= ms && (contem < 0 || f.InicioMs >= frases[contem].InicioMs) {
+			contem = i
 		}
 	}
-	return melhor, melhor >= 0
+	if contem >= 0 {
+		folga := ms - frases[contem].InicioMs
+		if folga <= harness.FolgaInicioMaxMs {
+			return contem, ms, true // o ouvido do operador manda
+		}
+		// Folga grande sem nenhuma frase no meio = vão longo (pausa). Limita, para o start
+		// não cair no meio de uma fala de verdade.
+		return contem, frases[contem].InicioMs + harness.FolgaInicioMaxMs, true
+	}
+	// Antes de qualquer frase: encaixa para FRENTE. Para trás não há o que pegar.
+	if len(frases) == 0 {
+		return -1, 0, false
+	}
+	return 0, frases[0].InicioMs, true // o Frasear devolve em ordem cronológica
 }
 
 // encaixarFim libera o fim PARA FRENTE e o encaixa apenas para trás — assimetria de

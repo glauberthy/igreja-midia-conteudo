@@ -41,6 +41,19 @@ const (
 // teto: sem ele, a folga viraria vazamento silencioso.
 const FolgaFimMaxMs = 5000 // 5 s
 
+// FolgaInicioMaxMs é o espelho do FolgaFimMaxMs na outra ponta: quanto o início de um trecho
+// pode passar do carimbo da frase de abertura.
+//
+// A mesma causa, e por muito tempo tratada como se não existisse ali. Se o carimbo adianta o
+// áudio, cortar exatamente no carimbo faz o Short abrir com o RABO DA FALA ANTERIOR — o caso
+// medido: corte em 00:20:08 e ainda se ouve "...do pelo Senhor", de uma frase carimbada em
+// 00:20:05. A abertura correta estava por volta de 00:20:10.
+//
+// Diferença em relação ao fim: aqui a folga cai DENTRO da frase de abertura pelo carimbo, mas
+// ANTES dela pelo áudio — é isso que a torna segura. E o hook continua sendo a frase que
+// contém o start, não a seguinte: é a frase que se ouve.
+const FolgaInicioMaxMs = 5000 // 5 s
+
 const (
 	duracaoMinMs = DuracaoMinMs
 	duracaoMaxMs = DuracaoMaxMs

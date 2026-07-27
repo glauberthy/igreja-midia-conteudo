@@ -1,9 +1,10 @@
 // Comando auditar: cruza os candidatos VALIDADOS de um pedido com a legenda real
 // (transcrição desduplicada) e reporta, por trecho, as invariantes de fidelidade:
 //
-//   - o hook existe na legenda e começa EXATAMENTE no start (Δ=0)? Um Δ negativo
-//     significa hook clipado (o corte começa depois do início da frase de abertura);
-//   - o end cai no fim de uma frase COMPLETA (não corta fala no meio)?
+//   - o start cai DENTRO da frase do hook (entre o começo dela e uma folga curta, nunca
+//     antes)? Antes dela, o Short abre com a fala anterior;
+//   - o end não termina ANTES de uma fronteira de frase completa (não corta fala no meio),
+//     com folga curta para frente permitida;
 //   - a duração está em 30–60 s?
 //
 // Também imprime (com -texto) o texto realmente falado dentro da janela [start, end],
@@ -162,13 +163,26 @@ func AuditarCandidato(frases []harness.Frase, c validacao.Candidato) (probs []st
 		return []string{"tempos ilegíveis ou end<=start"}, ""
 	}
 
-	// 1) Hook existe na legenda e começa no start?
+	// 1) O hook existe na legenda e o START CAI DENTRO DELE — entre o começo da frase e uma
+	// folga curta, nunca antes.
+	//
+	// A invariante era "o hook começa exatamente no start" (Δ=0). Estava errada pela mesma
+	// razão que a do fim: o carimbo da legenda ADIANTA o áudio, então começar um pouco depois
+	// do carimbo é frequentemente MAIS correto, não menos. Cortar no carimbo exato faz o Short
+	// abrir com o rabo da fala anterior — medido: corte em 00:20:08 e ainda se ouve "...do pelo
+	// Senhor", de uma frase carimbada em 00:20:05.
+	//
+	// Começar ANTES do início da frase do hook continua sendo defeito: aí o corte pega mesmo a
+	// fala anterior, pelo carimbo e pelo áudio. E a folga tem teto, senão o Short abriria no
+	// meio da frase de abertura.
 	if idx, achou := harness.AcharAncora(frases, c.Hook); !achou {
 		probs = append(probs, "hook não encontrado na legenda (inventado?)")
-	} else if delta := frases[idx].InicioMs - startMs; delta < 0 {
-		probs = append(probs, fmt.Sprintf("hook CLIPADO: começa %.0fs antes do start", float64(-delta)/1000))
-	} else if delta > 0 {
-		probs = append(probs, fmt.Sprintf("start %.0fs antes do hook (sobra de abertura)", float64(delta)/1000))
+	} else if folga := startMs - frases[idx].InicioMs; folga < 0 {
+		probs = append(probs, fmt.Sprintf("start %.1fs ANTES da frase do hook (abre com a fala anterior)",
+			float64(-folga)/1000))
+	} else if folga > harness.FolgaInicioMaxMs {
+		probs = append(probs, fmt.Sprintf("start passa %.1fs do começo da frase do hook (máximo %ds)",
+			float64(folga)/1000, harness.FolgaInicioMaxMs/1000))
 	}
 
 	// 2) O end NÃO TERMINA ANTES de uma fronteira de frase completa.

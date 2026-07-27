@@ -404,24 +404,41 @@ ser a abertura de fato.
 
 ### Encaixe: assimetrico, e o porque
 
-| Lado | Comportamento | Motivo |
+**As DUAS pontas sao livres para frente e encaixam so para tras**, com folga limitada a 5 s:
+
+| Lado | Comportamento | Hook |
 |---|---|---|
-| Inicio | **Encaixa** na fronteira de fala mais proxima | o `cmd/auditar` exige Δ=0 entre hook e start; sem encaixe, todo trecho ajustado a mao seria acusado de "sobra de abertura", e a saida seria ensinar uma excecao ao auditor -- pior que a doenca |
-| Fim | **Livre para frente**, encaixa so para tras, folga limitada a 5 s | o timestamp da legenda ADIANTA o audio em 1-3 s; encaixar no fim mais proximo usaria esses mesmos timestamps errados e devolveria o operador a fronteira defeituosa -- ele marca +2 s e o sistema desfaz |
+| Inicio | aceito se em ou depois do comeco de uma frase; antes, encaixa para FRENTE | a frase que **contem** o start |
+| Fim | aceito se em ou depois de uma fronteira de frase completa; antes, encaixa para FRENTE | (nao afeta) |
 
-A assimetria nao e inconsistencia: a invariante real e "nao cortar fala no meio". Antes da
-fronteira corta; depois nunca corta (pega silencio ou o inicio da fala seguinte), e o quanto
-disso serve e julgamento de ouvido. A spec-16 foi reformulada para enunciar isso.
+A causa e uma so: **o carimbo da legenda adianta o audio em 1-3 s.** Encaixar na fronteira mais
+proxima usa esses mesmos carimbos errados e devolve o operador a fronteira defeituosa. Andar
+para frente nunca corta fala; para tras, sempre pode.
 
-Consequencia pratica na granularidade dos controles:
+**Correcao de rota registrada.** A primeira versao tratava o inicio como exato ("o inicio deve
+ser exato" foi a suposicao da epoca) e encaixava na fronteira mais proxima. Isso deixou o
+operador **sem saida** na ponta do inicio: com o corte em `00:20:08` ele ainda ouvia
+`"...do pelo Senhor"`, clicava "mais tarde", ia para `00:20:09` e o sistema o devolvia para
+`00:20:08` -- o botao nao fazia nada visivel. Era o mesmo argumento que ja tinha liberado o
+fim; o defeito da fonte nao distingue as pontas.
 
-- **inicio: passos de 1 s.** O encaixe absorve menos que isso, entao um botao de ±0,25s ali
-  seria um botao que nao faz nada. (A granularidade real do sistema e 1 s de todo modo: a
-  transcricao limpa tem timestamps `[HH:MM:SS]`.)
-- **fim: ±0,25s e ±1s.** Ali o tempo e livre para frente, e o passo fino tem efeito.
+**A diferenca crucial no inicio:** o hook e a frase que **contem** o start, nao a seguinte. Com
+start em `00:20:10`, o hook segue `"Todo cristao deve estar preparado…"` -- que e o que se ouve.
+Na faixa de frases essa frase continua destacada como dentro do corte, e o texto falado comeca
+nela (por isso o texto e o destaque partem da FRONTEIRA da frase do hook, e nao do start
+efetivo: com o start adiante do carimbo, usar o start deixaria a propria frase do hook de fora).
 
-Frame a frame (±0,033s) foi descartado: o operador julga de ouvido, e fronteira de fala e
-evento de 0,1-0,3 s -- seria precisao jogada fora.
+A spec-16 foi reformulada nas duas pontas para enunciar a intencao real -- nao comecar no meio
+de uma fala, nao terminar cortando uma. Nao e excecao aberta para o ajuste manual: a
+delimitacao automatica (Fase 3) continua produzindo fronteiras exatas e passando sem folga.
+
+Granularidade dos controles: **±1s no inicio; ±0,25s e ±1s no fim.** Frame a frame (±0,033s)
+foi descartado -- o operador julga de ouvido, e fronteira de fala e evento de 0,1-0,3 s.
+
+> Nota: agora que o inicio tambem e livre, o passo fino faria sentido ali tambem. Nao foi
+> adicionado porque o operador acabou de testar esta tela e a assimetria atual ja esta
+> compreendida; mexer nos controles de novo sem pedido custaria mais do que rende. Fica
+> registrado como ajuste possivel se ele sentir falta.
 
 ### Faixa de duracao: uma fonte so
 
@@ -508,6 +525,24 @@ ajuste, `efetivo()` nao consultava o cache de vizinhanca (`REV.viz`), entao nave
 trecho e voltar deixava a faixa de frases travada em "Carregando…" -- `garantirVizinhanca` ja
 tinha respondido e nao pediria de novo.
 
+### Registro dos ajustes: acumular o dado, sem agir sobre ele
+
+Cada ajuste manual e uma **medicao** do desvio da legenda: o operador, ao empurrar as pontas
+ate soar certo, esta medindo quanto o carimbo se adianta ao audio. `resultados/ajustes.csv`
+grava, por trecho ajustado: `quando, pedido, indice, start_original, start_ajustado,
+delta_start_ms, end_original, end_ajustado, delta_end_ms, duracao_original_s,
+duracao_ajustada_s`. Modo append, cabecalho na criacao, serializado pelo mesmo mutex do log de
+rodadas.
+
+**Deliberadamente sem correcao automatica e sem sugestao de vies.** Agir sobre tres pontos
+seria construir sobre ruido. Depois de uns dez trechos ajustados, olha-se se o desvio e
+consistente: se for, aplica-lo na **Fase 3** melhoraria todos os cortes de uma vez e tornaria o
+ajuste manual excecao em vez de rotina; se nao for, o dado custou nada e a hipotese morre com
+evidencia em vez de opiniao.
+
+Falha ao gravar nunca quebra o pedido -- e dado de pesquisa, e o Short do operador vale mais que
+a estatistica (coberto por teste).
+
 ### Dois cuidados tecnicos do estudo de bibliotecas
 
 O estudo foi descartado no geral (as bibliotecas exigem midia local, que a revisao nao tem --
@@ -547,8 +582,9 @@ preenchimento do mesmo fluxo, e a decisao continua sendo do operador.
       nova, via `harness.Frasear`.
 - [x] O hook e recalculado pela regra da Fase 3 (primeira frase a partir do start final).
 - [x] `POST /aprovar` aceita os tempos ajustados por trecho, e sao esses que vao ao render.
-- [x] Inicio encaixa em fronteira de fala; fim livre para frente com folga limitada -- a
-      invariante do `cmd/auditar` continua valendo por construcao (spec-16).
+- [x] As duas pontas livres para frente com folga limitada; encaixe so para tras. No inicio, o
+      hook e a frase que CONTEM o start. As invariantes do `cmd/auditar` reformuladas nas duas
+      pontas (spec-16), sem excecao para o ajuste manual.
 - [x] Guardas no SERVIDOR: faixa de duracao (fonte unica na `harness`), `end <= start`, clamp
       nos limites da pregacao; mensagens com os numeros.
 - [x] Controles: faixa de frases clicavel; botao que NOMEIA o tempo do player; rotulos pelo

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -22,6 +23,18 @@ func transcricaoAjuste() string {
 	for i := 0; i < 30; i++ {
 		seg := i * 6
 		fmt.Fprintf(&b, "[%02d:%02d:%02d] frase numero %d termina aqui.\n", seg/3600, (seg%3600)/60, seg%60, i)
+	}
+	return b.String()
+}
+
+// transcricaoDeslocada começa em 00:00:30, então há uma faixa ANTES da primeira fronteira —
+// a única região em que o encaixe para frente pode ser observado. Sem ela, a fixture normal
+// (que começa em 0) torna o caso inalcançável, e um teste sobre ele passa sem provar nada.
+func transcricaoDeslocada() string {
+	var b strings.Builder
+	for i := 0; i < 20; i++ {
+		seg := 30 + i*6
+		fmt.Fprintf(&b, "[%02d:%02d:%02d] deslocada numero %d termina aqui.\n", seg/3600, (seg%3600)/60, seg%60, i)
 	}
 	return b.String()
 }
@@ -82,8 +95,10 @@ func TestHookRecalculadoAoEstenderParaTras(t *testing.T) {
 	}
 }
 
-// TestInvarianteDoAuditorSeMantem: o hook tem de começar EXATAMENTE no start (Δ=0), que é o
-// que cmd/auditar verifica. Vale para tempos "tortos" marcados no player.
+// TestInvarianteDoAuditorSeMantem: o start tem de cair DENTRO da frase do hook — entre o
+// começo dela e o teto de folga, nunca antes. Substituiu a exigência de Δ=0, que era fiel à
+// letra e infiel à intenção: com a legenda adiantada, começar um pouco depois do carimbo é
+// frequentemente mais correto. Vale para tempos "tortos" marcados no player.
 func TestInvarianteDoAuditorSeMantem(t *testing.T) {
 	frases := frasesAjuste(t)
 
@@ -101,23 +116,62 @@ func TestInvarianteDoAuditorSeMantem(t *testing.T) {
 		if !ok {
 			t.Fatalf("marcado %dms: start ilegível %q", marcado, got.Start)
 		}
-		if delta := frases[idx].InicioMs - startMs; delta != 0 {
-			t.Errorf("marcado %dms: Δ=%dms entre hook e start — o auditor acusaria", marcado, delta)
+		folga := startMs - frases[idx].InicioMs
+		if folga < 0 {
+			t.Errorf("marcado %dms: start %dms ANTES da frase do hook — o auditor acusaria", marcado, -folga)
+		}
+		if folga > harness.FolgaInicioMaxMs {
+			t.Errorf("marcado %dms: folga de %dms passa do teto — o auditor acusaria", marcado, folga)
 		}
 	}
 }
 
-// TestEncaixeEmFronteiraDeFala documenta e trava o encaixe: o operador não precisa de
-// precisão, e a resposta diz que houve encaixe (para a tela poder mostrar onde caiu).
-func TestEncaixeEmFronteiraDeFala(t *testing.T) {
+// TestPontoMarcadoEhPreservadoNasDuasPontas: dentro da folga, o que o operador marcou é o que
+// vale — nas duas pontas. Era o oposto no início (encaixava sempre), e esse encaixe anulava o
+// principal caso de uso da ponta: ele clicava "mais tarde" e o sistema o devolvia.
+func TestPontoMarcadoEhPreservadoNasDuasPontas(t *testing.T) {
 	frases := frasesAjuste(t)
 
 	got := recalcularTrecho(frases, 0, 37400, 79200, LimitesPregacao{})
-	if got.StartMs != 36000 {
-		t.Errorf("start não encaixou na fronteira: %dms, queria 36000", got.StartMs)
+	if got.StartMs != 37400 {
+		t.Errorf("start movido para %dms: dentro da folga, o ponto marcado deveria valer", got.StartMs)
 	}
-	if !got.AjustadoStart {
-		t.Error("AjustadoStart deveria avisar que o ponto foi movido")
+	if got.EndMs != 79200 {
+		t.Errorf("end movido para %dms: dentro da folga, o ponto marcado deveria valer", got.EndMs)
+	}
+	if got.AjustadoStart || got.AjustadoEnd {
+		t.Error("nenhuma ponta foi movida; os avisos de encaixe não deveriam acender")
+	}
+}
+
+// TestEncaixeSoAconteceParaFrente: o encaixe continua existindo, mas só na direção segura —
+// quando o ponto marcado cai antes de qualquer fronteira. Usa a fixture deslocada, porque na
+// normal (que começa em 0) não existe ponto antes da primeira fronteira.
+func TestEncaixeSoAconteceParaFrente(t *testing.T) {
+	frases := harness.Frasear(transcricaoDeslocada()) // fronteiras a partir de 30 s
+
+	// Fim em 10 s: antes de qualquer fronteira. Tem de ir para FRENTE (30 s), nunca para trás.
+	got := recalcularTrecho(frases, 0, 0, 10000, LimitesPregacao{})
+	if got.EndMs < 10000 {
+		t.Fatalf("o end foi para trás (%dms) — cortaria fala no meio", got.EndMs)
+	}
+	if got.EndMs != 30000 {
+		t.Errorf("o end deveria encaixar na primeira fronteira (30000), foi para %dms", got.EndMs)
+	}
+	if !got.AjustadoEnd {
+		t.Error("houve encaixe do fim; o aviso deveria acender para a tela poder explicar")
+	}
+
+	// O mesmo no início: ponto antes de qualquer frase encaixa para frente.
+	got2 := recalcularTrecho(frases, 0, 5000, 70000, LimitesPregacao{})
+	if got2.StartMs != 30000 {
+		t.Errorf("o start deveria encaixar na primeira frase (30000), foi para %dms", got2.StartMs)
+	}
+	if !got2.AjustadoStart {
+		t.Error("houve encaixe do início; o aviso deveria acender")
+	}
+	if !strings.Contains(got2.Hook, "deslocada numero 0") {
+		t.Errorf("hook deveria ser a primeira frase: %q", got2.Hook)
 	}
 }
 
@@ -141,17 +195,9 @@ func TestFimLiberadoParaFrente(t *testing.T) {
 	}
 }
 
-// TestFimAntesDaFronteiraEncaixaParaFrente: para trás cortaria fala no meio, que é
-// exatamente o defeito. Então o encaixe só existe nessa direção.
-func TestFimAntesDaFronteiraEncaixaParaFrente(t *testing.T) {
-	frases := frasesAjuste(t)
-
-	// Antes da primeira fronteira (a primeira frase termina em 6 s).
-	got := recalcularTrecho(frases, 0, 0, 3000, LimitesPregacao{})
-	if got.EndMs < 3000 {
-		t.Errorf("o end foi para trás (%dms) — cortaria fala no meio", got.EndMs)
-	}
-}
+// (O caso "fim antes de qualquer fronteira" está em TestEncaixeSoAconteceParaFrente, que usa
+// a fixture deslocada. Na fixture normal a primeira fronteira é 0, então não existe ponto
+// antes dela e a versão anterior deste teste passava sem exercitar nada.)
 
 // TestFolgaDoFimTemTeto: folga é para sincronia de legenda, não licença para vazar. Além do
 // teto, o sistema limita — senão o operador estica sem perceber e o auditor acusa depois.
@@ -624,4 +670,232 @@ func TestTemposInternosEmMilissegundos(t *testing.T) {
 	if fim != 80000 {
 		t.Errorf("após 8 empurrões de 250ms o fim é %dms, esperado exatamente 80000", fim)
 	}
+}
+
+// --- Início liberado para frente (spec-05 v2, correção da ponta espelhada) ---
+
+// TestInicioLiberadoParaFrente é o caso relatado pelo operador: o corte em 00:20:08 ainda
+// deixava ouvir o rabo da fala anterior, ele clicava "mais tarde" e o encaixe o devolvia. A
+// legenda adianta o áudio nas DUAS pontas.
+func TestInicioLiberadoParaFrente(t *testing.T) {
+	frases := frasesAjuste(t)
+
+	// Fronteiras de 6 em 6 s. O operador empurrou o início 2 s adiante do carimbo.
+	got := recalcularTrecho(frases, 0, 38000, 80000, LimitesPregacao{})
+	if got.StartMs != 38000 {
+		t.Errorf("o início foi devolvido para %dms — o operador marcou 38000 e a folga é segura", got.StartMs)
+	}
+	if got.AjustadoStart {
+		t.Error("AjustadoStart marcado: o início não deveria ter sido movido")
+	}
+}
+
+// TestHookEhAFraseQueContemOStart é a diferença crucial em relação ao fim: empurrar o início
+// para frente NÃO pula para a próxima frase. Com o carimbo adiantado, a frase que contém o
+// start pelo carimbo é a que se OUVE — e é ela que tem de ser o hook.
+func TestHookEhAFraseQueContemOStart(t *testing.T) {
+	frases := frasesAjuste(t)
+
+	// A frase 6 está carimbada em 36 s; a 7 em 42 s. Start em 38 s: dentro da 6.
+	got := recalcularTrecho(frases, 0, 38000, 80000, LimitesPregacao{})
+	if !strings.Contains(got.Hook, "frase numero 6") {
+		t.Errorf("o hook pulou para a frase seguinte: %q — deveria ser a que contém o start", got.Hook)
+	}
+	// E o texto falado precisa COMEÇAR nela: com o start adiante do carimbo, usar o start como
+	// fronteira do texto deixaria a própria frase do hook de fora.
+	if !strings.HasPrefix(got.TextoFalado, "frase numero 6") {
+		t.Errorf("o texto não começa no hook: %q", got.TextoFalado)
+	}
+}
+
+// TestFraseDoStartFicaDestacadaNaFaixa: se a frase do hook não vier marcada como dentro do
+// corte, a faixa mostraria o hook em cinza — contradizendo o que o operador vai gerar.
+func TestFraseDoStartFicaDestacadaNaFaixa(t *testing.T) {
+	frases := frasesAjuste(t)
+	got := recalcularTrecho(frases, 0, 38000, 80000, LimitesPregacao{})
+
+	achou := false
+	for _, f := range got.Vizinhanca {
+		if strings.Contains(f.Texto, "frase numero 6") {
+			achou = true
+			if !f.Dentro {
+				t.Error("a frase que contém o start não está destacada como dentro do corte")
+			}
+		}
+	}
+	if !achou {
+		t.Fatal("a frase do hook não apareceu na faixa")
+	}
+}
+
+// (O caso "início antes de qualquer fronteira" também está em TestEncaixeSoAconteceParaFrente,
+// pelo mesmo motivo: na fixture normal a primeira frase começa em 0.)
+
+// TestFolgaDoInicioTemTeto: folga é para sincronia da legenda, não licença para abrir no meio
+// da frase.
+func TestFolgaDoInicioTemTeto(t *testing.T) {
+	frases := frasesAjuste(t)
+
+	// Frase 6 carimbada em 36 s; pedir início em 41 s pede 5 s (no limite) e em 41,5 s passa.
+	noLimite := recalcularTrecho(frases, 0, 36000+harness.FolgaInicioMaxMs, 90000, LimitesPregacao{})
+	if noLimite.StartMs != 36000+harness.FolgaInicioMaxMs {
+		t.Errorf("exatamente no teto deveria passar: %dms", noLimite.StartMs)
+	}
+
+	// Um caso onde a folga estoura precisa de um vão sem frases; a frase 29 (174 s) é a
+	// última, então qualquer ponto muito depois dela cai nesse vão.
+	longe := recalcularTrecho(frases, 0, 174000+20000, 174000+60000, LimitesPregacao{})
+	if longe.StartMs > 174000+harness.FolgaInicioMaxMs {
+		t.Errorf("start = %dms passou do teto de folga do início", longe.StartMs)
+	}
+}
+
+// TestAjusteDeInicioSobreviveAoAuditor fecha o ciclo com a spec-16 na ponta do início: um
+// trecho com início empurrado não pode ser acusado pelo próprio projeto.
+func TestAjusteDeInicioSobreviveAoAuditor(t *testing.T) {
+	frases := frasesAjuste(t)
+	got := recalcularTrecho(frases, 0, 38000, 80000, LimitesPregacao{}) // 2 s de folga no início
+	if !got.Aprovavel {
+		t.Fatalf("pré-condição: %s", got.Motivo)
+	}
+
+	// Mesma verificação do cmd/auditar, item 1.
+	idx, achou := harness.AcharAncora(frases, got.Hook)
+	if !achou {
+		t.Fatal("o auditor não acharia o hook")
+	}
+	folga := got.StartMs - frases[idx].InicioMs
+	if folga < 0 {
+		t.Errorf("o auditor acusaria start antes da frase do hook (%dms)", folga)
+	}
+	if folga > harness.FolgaInicioMaxMs {
+		t.Errorf("o auditor acusaria folga excessiva no start (%dms)", folga)
+	}
+}
+
+// --- CSV de ajustes: acumular o dado, sem agir sobre ele ---
+
+// TestCSVRegistraAsQuatroPontas: o valor do arquivo é permitir olhar, depois de uns dez
+// trechos, se o desvio da legenda é consistente. Para isso precisa das quatro pontas (start e
+// end, original e ajustado) e dos dois deltas.
+func TestCSVRegistraAsQuatroPontas(t *testing.T) {
+	s := servidorAjuste(t)
+
+	s.mu.Lock()
+	origStart, origEnd := s.pedidos["teste-1"].cands[0].Start, s.pedidos["teste-1"].cands[0].End
+	s.mu.Unlock()
+	iniOrig, _ := validacao.HmsToMs(origStart)
+	fimOrig, _ := validacao.HmsToMs(origEnd)
+
+	corpo, _ := json.Marshal(map[string]any{
+		"aprovados": []int{0},
+		"ajustes":   []map[string]any{{"indice": 0, "start_ms": 38000, "end_ms": 80000}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/pedidos/teste-1/aprovar", bytes.NewReader(corpo))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("aprovar devolveu %d: %s", w.Code, w.Body)
+	}
+	esperarStatus(t, s, "teste-1", "concluido")
+
+	b, err := os.ReadFile(s.ajustesPath)
+	if err != nil {
+		t.Fatalf("CSV de ajustes não foi criado: %v", err)
+	}
+	texto := string(b)
+	linhas := strings.Split(strings.TrimSpace(texto), "\n")
+	if len(linhas) != 2 {
+		t.Fatalf("esperava cabeçalho + 1 linha, veio %d:\n%s", len(linhas), texto)
+	}
+
+	// Cabeçalho com as quatro pontas e os dois deltas.
+	for _, col := range []string{"start_original", "start_ajustado", "delta_start_ms",
+		"end_original", "end_ajustado", "delta_end_ms"} {
+		if !strings.Contains(linhas[0], col) {
+			t.Errorf("cabeçalho sem a coluna %q: %s", col, linhas[0])
+		}
+	}
+
+	campos := strings.Split(linhas[1], ",")
+	if len(campos) != strings.Count(cabecalhoAjustes, ",")+1 {
+		t.Fatalf("linha com %d campos, cabeçalho tem %d:\n%s",
+			len(campos), strings.Count(cabecalhoAjustes, ",")+1, linhas[1])
+	}
+	if campos[1] != "teste-1" || campos[2] != "0" {
+		t.Errorf("pedido/índice errados: %q, %q", campos[1], campos[2])
+	}
+	// Os deltas são a medição que interessa: quanto o operador moveu cada ponta.
+	if campos[5] != strconv.Itoa(38000-iniOrig) {
+		t.Errorf("delta_start = %q, esperado %d", campos[5], 38000-iniOrig)
+	}
+	if campos[8] != strconv.Itoa(80000-fimOrig) {
+		t.Errorf("delta_end = %q, esperado %d", campos[8], 80000-fimOrig)
+	}
+}
+
+// TestCSVDeAjustesAnexaSemRepetirCabecalho: o arquivo acumula ao longo de vários pedidos, e é
+// essa acumulação que permite avaliar consistência.
+func TestCSVDeAjustesAnexaSemRepetirCabecalho(t *testing.T) {
+	s := servidorAjuste(t)
+	frases := frasesAjuste(t)
+
+	reg := s.pedidos["teste-1"]
+	for i, par := range [][2]int{{38000, 80000}, {36000, 78000}, {42000, 84000}} {
+		t1 := recalcularTrecho(frases, 0, par[0], par[1], LimitesPregacao{})
+		if !t1.Aprovavel {
+			t.Fatalf("caso %d: %s", i, t1.Motivo)
+		}
+		s.registrarAjustes(reg, map[int]TrechoAjustado{0: t1})
+	}
+
+	b, err := os.ReadFile(s.ajustesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linhas := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(linhas) != 4 {
+		t.Fatalf("esperava cabeçalho + 3 linhas, veio %d", len(linhas))
+	}
+	if strings.Count(string(b), "delta_start_ms") != 1 {
+		t.Error("cabeçalho repetido: quebraria a leitura do CSV")
+	}
+}
+
+// TestCSVDeAjustesNaoRegistraTrechoSemAjuste: sem ajuste não há medição, e uma linha com delta
+// zero poluiria a estatística com pedidos em que o operador não mexeu.
+func TestCSVDeAjustesNaoRegistraTrechoSemAjuste(t *testing.T) {
+	s := servidorAjuste(t)
+
+	aprovarJSON(t, s, "teste-1", []int{0})
+	esperarStatus(t, s, "teste-1", "concluido")
+
+	if _, err := os.Stat(s.ajustesPath); err == nil {
+		b, _ := os.ReadFile(s.ajustesPath)
+		t.Errorf("CSV criado sem nenhum ajuste:\n%s", b)
+	}
+}
+
+// TestFalhaAoRegistrarNaoQuebraOPedido: é dado de pesquisa. O Short do operador vale mais que
+// a estatística.
+func TestFalhaAoRegistrarNaoQuebraOPedido(t *testing.T) {
+	s := servidorAjuste(t)
+	// Caminho impossível de escrever (um arquivo comum no lugar do diretório-pai).
+	bloqueio := filepath.Join(t.TempDir(), "arquivo")
+	os.WriteFile(bloqueio, []byte("x"), 0644)
+	s.ajustesPath = filepath.Join(bloqueio, "ajustes.csv")
+
+	corpo, _ := json.Marshal(map[string]any{
+		"aprovados": []int{0},
+		"ajustes":   []map[string]any{{"indice": 0, "start_ms": 38000, "end_ms": 80000}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/pedidos/teste-1/aprovar", bytes.NewReader(corpo))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("falha ao registrar quebrou o pedido: %d", w.Code)
+	}
+	esperarStatus(t, s, "teste-1", "concluido")
 }

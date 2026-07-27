@@ -29,7 +29,9 @@ Dentro:
 - `cmd/auditar`: lê `trabalho/<id>/candidatos.corrigido.json` + `transcricao.txt`, cruza
   cada candidato com as frases da legenda (`harness.Frasear`) e reporta em markdown.
 - Invariantes verificadas por candidato:
-  1. **hook existe na legenda** e **começa exatamente no `start`** (acusa "hook CLIPADO"
+  1. **hook existe na legenda** e o **`start` cai DENTRO da frase do hook** — entre o começo
+     dela e uma folga curta (`harness.FolgaInicioMaxMs`), nunca antes (acusa "start antes da
+     frase do hook"
      se o hook começa antes do start, ou "start com sobra" se começa depois; "hook não
      encontrado / inventado" se não casa);
   2. o **`end` não termina ANTES de uma fronteira de frase completa** (não corta fala no
@@ -43,6 +45,38 @@ Fora:
 - **Não** usa LLM e **não** julga doutrina — a certificação teológica continua humana
   (regra inviolável nº 6). O `-texto`/`-criterios` são insumo para essa revisão.
 - Não corrige nada: só reporta (a correção de bugs que ela revela é feita à parte).
+
+### Por que a invariante de início é "cai dentro da frase do hook", e não "Δ=0"
+
+Mesma causa da invariante de fim, e por um tempo tratada como se não valesse ali. A primeira
+versão exigia que o hook começasse **exatamente** no `start`. A formulação fiel:
+
+| Onde cai o `start` | Abre com fala alheia? | Veredito |
+|---|---|---|
+| Antes do começo da frase do hook | **Sim** — pega o rabo da fala anterior | acusa |
+| Exatamente no começo da frase | Não | passa |
+| Depois do começo, até 5 s | Não (o carimbo adianta o áudio: ali a fala ainda não começou) | passa |
+| Depois do começo, além de 5 s | Não, mas abre no meio da frase de abertura | acusa |
+
+O caso medido pelo operador: corte em `00:20:08` e ainda se ouvia `"...do pelo Senhor"`, o rabo
+de uma frase carimbada em `00:20:05`. Se os carimbos fossem exatos, ela teria acabado antes de
+`00:20:08`. Ouvi-la depois é prova direta do adiantamento — a frase seguinte, marcada em
+`00:20:08`, só é falada por volta de `00:20:10`.
+
+Com Δ=0 obrigatório, o operador ficava **sem saída**: clicava "mais tarde", ia para `00:20:09`,
+e o encaixe na fronteira mais próxima o devolvia para `00:20:08`. O botão não fazia nada
+visível. Era o mesmo argumento que já havia liberado o fim — a diferença é que na época se
+supôs que "o início deve ser exato", e o defeito da fonte não faz essa distinção.
+
+**Uma diferença importante em relação ao fim:** o hook continua sendo a frase que **contém** o
+`start`, não a seguinte. Com `start` em `00:20:10`, o hook segue sendo `"Todo cristão deve
+estar preparado…"` — que é o que se ouve — e não pula para a frase de depois. Na faixa de
+frases da tela, essa frase continua destacada como dentro do corte, e o texto falado começa
+nela. Se o hook pulasse, a tela mostraria uma abertura que não corresponde ao áudio.
+
+Começar **antes** do começo da frase continua sendo defeito, pelo carimbo e pelo áudio: aí o
+Short abre mesmo com a fala anterior. E a folga tem teto, senão o Short abriria no meio da
+frase de abertura.
 
 ### Por que a invariante de fim é "não termina antes", e não "termina exatamente em"
 

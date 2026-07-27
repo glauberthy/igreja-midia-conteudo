@@ -62,12 +62,43 @@ func TestAuditarCandidatoFiel(t *testing.T) {
 	}
 }
 
-func TestAuditarCandidatoHookClipado(t *testing.T) {
+// TestAuditarCandidatoStartDentroDoHookPassa é a invariante de início REFORMULADA: o start
+// pode cair alguns segundos depois do carimbo da frase do hook, porque a legenda ADIANTA o
+// áudio — cortar no carimbo exato faz o Short abrir com o rabo da fala anterior.
+//
+// Este caso (start 3 s após o carimbo) era acusado como "hook CLIPADO". Passou a ser aceito,
+// e é o caso de uso que o operador precisa: ele ouve a palavra engolida na abertura e empurra
+// o início para frente.
+func TestAuditarCandidatoStartDentroDoHookPassa(t *testing.T) {
 	frases := harness.Frasear(trAudit)
-	// start 3s DEPOIS do início real do hook (o bug que a Fase 5 antiga introduzia).
+	// A frase "Salvação não é um processo." está carimbada em 00:00:07; start em 00:00:10.
 	probs, _ := AuditarCandidato(frases, cand("00:00:10.000", "00:00:45.000", 35, "Salvação não é um processo."))
-	if len(probs) == 0 || !strings.Contains(strings.Join(probs, ";"), "CLIPADO") {
-		t.Errorf("deveria acusar hook clipado: %v", probs)
+	for _, p := range probs {
+		if strings.Contains(p, "hook") || strings.Contains(p, "start") {
+			t.Errorf("start 3s dentro da frase do hook deveria passar: %v", probs)
+		}
+	}
+}
+
+// TestAuditarCandidatoStartAntesDoHook: aí sim o Short abre com a fala anterior — o defeito
+// que a invariante existe para pegar, e que continua sendo acusado.
+func TestAuditarCandidatoStartAntesDoHook(t *testing.T) {
+	frases := harness.Frasear(trAudit)
+	// Hook carimbado em 00:00:13; start 6 s ANTES dele.
+	probs, _ := AuditarCandidato(frases, cand("00:00:07.000", "00:00:45.000", 38, "Salvação você não constrói sozinho jamais."))
+	if len(probs) == 0 || !strings.Contains(strings.Join(probs, ";"), "ANTES da frase do hook") {
+		t.Errorf("deveria acusar start antes da frase do hook: %v", probs)
+	}
+}
+
+// TestAuditarCandidatoStartComFolgaExcessiva: a folga é para sincronia, não licença para abrir
+// no meio da frase de abertura.
+func TestAuditarCandidatoStartComFolgaExcessiva(t *testing.T) {
+	frases := harness.Frasear(trAudit)
+	// Hook carimbado em 00:00:07; start 13 s depois.
+	probs, _ := AuditarCandidato(frases, cand("00:00:20.000", "00:00:45.000", 25, "Salvação não é um processo."))
+	if len(probs) == 0 || !strings.Contains(strings.Join(probs, ";"), "passa") {
+		t.Errorf("deveria acusar folga excessiva no start: %v", probs)
 	}
 }
 
