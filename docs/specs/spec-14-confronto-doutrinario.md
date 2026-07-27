@@ -143,6 +143,23 @@ marcado), a classe fica vazia e a exibição cai no comportamento atual (⚠ gen
 - `ambiguo_isolado` → depende de a extensão CABER na faixa de 30–58 s (cálculo do código,
   ver seção adiante): cabe → `"o corte ficou curto: estenda até '<frase>' (+Ns, total ~Ms)"`;
   não cabe → `"ambíguo isolado, mas não dá para consertar por extensão (ficaria ~Ms): reprove ou aceite ciente"`.
+
+  **A ação já tem onde acontecer (spec-05 v2, IMPLEMENTADA).** O ajuste manual do corte
+  existe: `POST /pedidos/{id}/ajustar` recebe tempos, recalcula hook/duração/texto falado e
+  devolve `aprovavel`/`motivo`; o `/aprovar` leva os tempos ajustados ao render. Então esta
+  sugestão não precisa de mecanismo novo — precisa apenas **pré-preencher** aquele fluxo:
+
+  1. localizar `onde_resolve.frase` na transcrição (`harness.AcharAncora`, com o desfecho de
+     busca aproximada definido nesta spec para quando a frase não casa);
+  2. propor `end` (ou `start`, se `lado` for anterior) na fronteira daquela frase e chamar o
+     mesmo `/ajustar`;
+  3. **não recalcular viabilidade aqui**: a faixa vive num lugar só
+     (`harness.DuracaoMinMs`/`DuracaoMaxMs`, usada pela Fase 3 e pelo ajuste manual) e a
+     guarda do servidor já recusa com o número (*"ficaria 64.0s, o máximo é 58s"*). Duplicar
+     o cálculo criaria duas verdades sobre a mesma faixa.
+
+  Nota sobre o hook: se a extensão for para trás, o hook muda — e isso já está resolvido, o
+  recálculo é automático e mantém a invariante do auditor. Ver spec-05 v2.
 - `provavel_erro_transcricao` → `motivo_revisao = "provável erro de transcrição (não doutrina): <motivo>"`.
 - `fiel` → `motivo_revisao = "conferido: sem problema doutrinário aparente — <motivo>"`.
 

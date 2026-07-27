@@ -18,8 +18,9 @@ certo, antes do processamento pesado.
   então é barato selecionar antes de baixar o vídeo inteiro. Só o aprovado é baixado.
 - **Uma tela** conduzindo todas as etapas (decisão do dono): cola link+tempos -> processa
   -> lista trechos com player para revisar -> aprova/reprova -> baixa e corta os aprovados.
-- **v1 = aprovar/reprovar SEM ajuste fino de corte** (decisao do dono). O ajuste fino
-  (marcar inicio/fim ouvindo, via IFrame API) fica para a v2 -- ver "Futuro (v2)".
+- **v1 = aprovar/reprovar SEM ajuste fino de corte** (decisao do dono). O ajuste manual
+  (marcar inicio/fim ouvindo, via IFrame API) veio na **v2, IMPLEMENTADA** -- ver a secao
+  "v2 -- ajuste manual do corte pelo operador" no fim desta spec.
 - Um pedido por vez, fila simples (2 operadores, uso esporadico).
 - Sem autenticacao (uso local, rede confiavel). Porta dedicada, padrao :7799 (nunca
   80/8080/8000), configuravel.
@@ -75,7 +76,8 @@ Dentro:
   (arquivo baixado) devem referir-se ao MESMO instante do video. Garantir e testar.
 
 Fora:
-- Ajuste fino de corte pelo operador (marcar inicio/fim) -- e a v2 (abaixo).
+- Ajuste fino de corte pelo operador (marcar inicio/fim) -- era fora do escopo da v1;
+  ENTROU na v2, ja implementada (secao no fim desta spec).
 - Integracao de mensageria (WhatsApp) -- sempre manual.
 - Retencao/limpeza de disco -- spec-06.
 
@@ -94,7 +96,11 @@ O player do YouTube (IFrame API) pode "engasgar"/saltar para keyframe em seekTo 
 conhecida do stream do YouTube). Na v1 (so assistir/aprovar) isso nao afeta o corte: o corte
 usa o start/end ja calculado pelo harness sobre o arquivo baixado, nao o que o player
 exibe. O player serve para REVISAO (o operador confere se o trecho presta), nao para definir
-o corte. A correspondencia exata player<->arquivo so se torna critica na v2 (ajuste fino).
+o corte.
+
+**Na v2 o player TAMBEM define o corte, e isso deixou de exigir cuidado:** desde a troca para
+baixar o video inteiro com origem 0, o tempo do player e o tempo do arquivo -- o mesmo
+relogio, sem conversao. Ver a secao da v2 no fim desta spec.
 
 ## Tela de revisao -- layout (Parte 2, refinamento)
 
@@ -133,8 +139,8 @@ Decisoes (nao reabrir):
   doutrinario (spec-14):
   - `desalinhamento` -> **alto**: ⚠ ambar, destaque forte, com o ponto citado da Declaracao.
   - `ambiguo_isolado` -> **medio, com ACAO**: ✂ "o corte ficou curto — o sermao esclarece;
-    considere estender". NAO e alerta de doutrina: e convite a ajustar o trecho (liga com o
-    ajuste fino do corte, v2 abaixo).
+    considere estender". NAO e alerta de doutrina: e convite a ajustar o trecho -- e o ajuste
+    manual da v2 (ja implementado) e onde essa acao se realiza.
   - `provavel_erro_transcricao` -> **baixo**: ℹ neutro/quieto (cinza), "conferido: provavel
     erro de transcricao".
   - `fiel` (marcado pela Fase 4, confronto nao achou) -> **baixo**: ℹ neutro/quieto,
@@ -357,37 +363,130 @@ re-encode garante corte exato, sem deslizamento.)
 - [ ] POST /pedidos/{id}/aprovar dispara a fase pesada so para os aprovados.
 - [ ] A fase pesada baixa o video INTEIRO (nativo paralelo) e renderiza; a pagina lista os
       Shorts finais para baixar.
-- [ ] O start/end do corte corresponde ao mesmo instante mostrado no player.
+- [x] O start/end do corte corresponde ao mesmo instante mostrado no player (v2: e o mesmo
+      relogio, sem conversao -- ver abaixo).
 - [ ] Erro em qualquer fase aparece na pagina com mensagem clara.
 - [ ] Testes: rotas (httptest), maquina de estados das duas fases com download/selecao/
       render mockados; validacao de entrada. Nao subir pipeline real nos testes.
 - [ ] go build ./... e go test ./... verdes.
 
-## Futuro (v2) -- ajuste fino de corte pelo operador
+## v2 -- ajuste manual do corte pelo operador (IMPLEMENTADO)
 
-Registrado (pesquisa do dono): usar a YouTube IFrame Player API para o operador aparar
-inicio/fim ouvindo. player.seekTo(seg, true) aceita fracoes (ex.: +-0.033s = 1 frame a
-30fps); player.getCurrentTime() captura o instante exato onde o operador marca; botoes
-"marcar inicio/fim", "+-1 frame", setPlaybackRate para revisao lenta. O tempo capturado
-vira o start/end do corte. CUIDADO a resolver na v2: o seekTo do YouTube pode saltar
-para keyframe (nao frame exato) e o player e OUTRO video que nao o arquivo baixado -- e
-preciso garantir que o tempo marcado no player corresponda ao mesmo instante no arquivo
-baixado (mesma origem t=0), senao o corte sai deslocado. Resolve, de forma humana, tanto a
-entonacao (voz que nao fecha) quanto o timestamp impreciso da legenda.
+O operador detectava um corte ruim com "ouvir a emenda" mas so podia REPROVAR um trecho cujo
+conteudo era bom -- desperdicio do trecho e do trabalho do modelo. A v2 fecha isso.
 
-**Convergencia com a spec-14 (confronto doutrinario):** o confronto com contexto produz a
-classe `ambiguo_isolado` — "o trecho e ambiguo sozinho, mas o sermao resolve" —, cuja acao
-natural e **estender o corte**. Ou seja: **o confronto diz que o corte ficou curto; este
-ajuste manual permite consertar.** Sem o ajuste, o operador so pode REPROVAR um trecho cujo
-conteudo e bom, o que e desperdicio. As duas frentes se encaixam e valem em sequencia.
+### O alerta de alinhamento de tempo CAIU
 
-**Contrato ao ESTENDER (decidido na spec-14, vale para este ajuste):** se o operador move o
-START para tras, o trecho passa a comecar com outras palavras, entao o **hook e RECALCULADO**
-(`hook = primeira frase a partir do novo start`) — a mesma regra que a Fase 3 ja aplica
-quando o trecho cresce para tras. Duas consequencias aqui na tela: (a) o **card tem que
-atualizar** hook, duracao e texto falado assim que o trecho e ajustado — nao pode seguir
-mostrando o hook que o operador aprovou antes; (b) o `cmd/auditar` (spec-16) **nao precisa
-mudar**: sua invariante "o hook comeca exatamente no start" continua valida por construcao.
+A v1 avisava que o tempo do player podia nao corresponder ao do arquivo baixado. **Nao
+corresponde mais ao problema: os dois relogios sao o MESMO.** O download passou a ser o
+video INTEIRO com origem 0 (`origemVideoCompleto`), e o player do YouTube tambem conta do
+inicio do video. Logo `player.getCurrentTime()` devolve o tempo absoluto que o corte vai
+usar, **sem conversao nenhuma**. O alerta antigo vinha do `--download-sections`, que nao e
+mais usado (ver a decisao da fase pesada, acima).
+
+Sobrou apenas o cuidado com o `seekTo`, que pode saltar para keyframe -- irrelevante aqui,
+porque o operador **marca** o tempo (getCurrentTime) em vez de depender da precisao do salto.
+
+### Servidor
+
+`POST /pedidos/{id}/ajustar` recebe `{indice, start, end}` (segundos) e devolve o trecho
+recalculado: `hook`, `duration_seconds`, o **texto realmente falado** na janela nova (via
+`harness.Frasear`, o mesmo do `cmd/auditar`), os tempos efetivos e `aprovavel`/`motivo`.
+E leve de proposito -- nada de disco pesado nem de modelo -- porque o cliente o chama a cada
+ajuste. **O texto novo e essencial:** e o que o operador esta julgando.
+
+`POST /aprovar` aceita, por trecho aprovado, os tempos ajustados (JSON e formulario), e sao
+esses que vao ao render (`candidatosAprovados` aplica o ajuste).
+
+**O hook e recalculado sempre**, pela mesma regra da Fase 3 (`hook = primeira frase real a
+partir do start final`): ao estender para tras, o hook deixa de ser a frase-ancora e passa a
+ser a abertura de fato.
+
+### Encaixe: assimetrico, e o porque
+
+| Lado | Comportamento | Motivo |
+|---|---|---|
+| Inicio | **Encaixa** na fronteira de fala mais proxima | o `cmd/auditar` exige Δ=0 entre hook e start; sem encaixe, todo trecho ajustado a mao seria acusado de "sobra de abertura", e a saida seria ensinar uma excecao ao auditor -- pior que a doenca |
+| Fim | **Livre para frente**, encaixa so para tras, folga limitada a 5 s | o timestamp da legenda ADIANTA o audio em 1-3 s; encaixar no fim mais proximo usaria esses mesmos timestamps errados e devolveria o operador a fronteira defeituosa -- ele marca +2 s e o sistema desfaz |
+
+A assimetria nao e inconsistencia: a invariante real e "nao cortar fala no meio". Antes da
+fronteira corta; depois nunca corta (pega silencio ou o inicio da fala seguinte), e o quanto
+disso serve e julgamento de ouvido. A spec-16 foi reformulada para enunciar isso.
+
+Consequencia pratica na granularidade dos controles:
+
+- **inicio: passos de 1 s.** O encaixe absorve menos que isso, entao um botao de ±0,25s ali
+  seria um botao que nao faz nada. (A granularidade real do sistema e 1 s de todo modo: a
+  transcricao limpa tem timestamps `[HH:MM:SS]`.)
+- **fim: ±0,25s e ±1s.** Ali o tempo e livre para frente, e o passo fino tem efeito.
+
+Frame a frame (±0,033s) foi descartado: o operador julga de ouvido, e fronteira de fala e
+evento de 0,1-0,3 s -- seria precisao jogada fora.
+
+### Faixa de duracao: uma fonte so
+
+A divergencia entre "30-58 s" (Fase 3) e "30-60 s" (Fase 5 e auditor) nao era bug, era
+**margem sem nome**: 58 s e a regua de CONSTRUCAO (2 s de folga para o teto de 60 do Short e
+para a margem de fim da spec-10); 60 s e o PORTAO de validacao. Um portao mais estreito que a
+regua transformaria arredondamento de 0,1 s em descarte. Agora tem nome e um lugar so --
+`harness.DuracaoMinMs`/`DuracaoMaxMs` --, usado pela Fase 3 **e** pelo ajuste manual.
+
+### Guardas -- no servidor, nao no cliente
+
+O servidor RECALCULA em vez de confiar no que o cliente mandou: um POST direto (ou um JS
+desatualizado) nao pode enfiar um corte de 64 s no render. Recusa com mensagem que traz os
+numeros ("ficaria 64.0s, o maximo e 58s -- encurte 6.0s"), impede `end <= start` e clampa nos
+limites da pregacao informada. O cliente repete a regra apenas para nao frustrar o operador
+no ultimo clique (botoes "Aprovar" e "Confirmar e gerar" desabilitados com o motivo no
+`title`).
+
+### Cliente
+
+"Marcar inicio/fim aqui" captura `getCurrentTime()` no instante do clique; empurroezinhos na
+granularidade acima; "restaurar original"; meia velocidade (`setPlaybackRate(0.5)`); atalhos
+`I` e `F`. Feedback ao vivo com debounce de 350 ms -- uma rajada de cliques gera uma chamada,
+nao seis.
+
+Dois detalhes que decidem se funciona na pratica: (a) `efetivo(i)` e a fonte unica da tela,
+entao player, "ouvir a emenda" e texto usam os tempos ajustados -- senao o operador ajusta e
+continua ouvindo o corte antigo; (b) o cliente adota os tempos que o servidor DE FATO usara
+(apos encaixe/clamp), senao o empurrao seguinte partiria de um numero que nao existe mais.
+
+### Convergencia com a spec-14 (confronto doutrinario) -- REGISTRADO, nao implementado
+
+O confronto com contexto produz a classe `ambiguo_isolado` -- "o trecho e ambiguo sozinho,
+mas o sermao resolve" --, cuja acao natural e **estender o corte**, e o campo
+`onde_resolve.frase` diz **ate onde**. Ou seja: **o confronto diz que o corte ficou curto;
+este ajuste permite consertar.**
+
+O desenho ja esta preparado para a sugestao pre-preencher o ajuste. O que falta e so a ponte,
+quando a spec-14 existir:
+
+1. localizar `onde_resolve.frase` na transcricao (`harness.AcharAncora`, com o desfecho de
+   busca aproximada que a spec-14 define para quando a frase nao casa);
+2. propor `end` = fim daquela frase, e chamar o mesmo `POST /ajustar` que o operador usa;
+3. se a extensao estourar a faixa de duracao, a guarda ja recusa com o numero -- a sugestao
+   nao precisa saber calcular viabilidade, so propor.
+
+Nada disso exige mudanca no que foi implementado aqui: a sugestao entra como um pre-
+preenchimento do mesmo fluxo, e a decisao continua sendo do operador.
+
+### Criterios de aceite da v2
+
+- [x] `POST /ajustar` devolve hook, `duration_seconds` e o texto realmente falado da janela
+      nova, via `harness.Frasear`.
+- [x] O hook e recalculado pela regra da Fase 3 (primeira frase a partir do start final).
+- [x] `POST /aprovar` aceita os tempos ajustados por trecho, e sao esses que vao ao render.
+- [x] Inicio encaixa em fronteira de fala; fim livre para frente com folga limitada -- a
+      invariante do `cmd/auditar` continua valendo por construcao (spec-16).
+- [x] Guardas no SERVIDOR: faixa de duracao (fonte unica na `harness`), `end <= start`, clamp
+      nos limites da pregacao; mensagens com os numeros.
+- [x] Controles: marcar inicio/fim pelo `getCurrentTime()`, passos de 1 s no inicio e de
+      ±0,25s/±1s no fim, restaurar original, meia velocidade.
+- [x] Feedback ao vivo com debounce atualizando duracao, hook e texto falado no card.
+- [x] Testes: recalculo, `/aprovar` usando os ajustados e nao os originais, guardas de faixa
+      e de `end <= start`, e fluxo ponta a ponta no formato que o cliente envia.
+- [x] `go build`, `go vet` e `go test -race ./...` verdes.
 
 ## Nota
 
