@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"srtclean/internal/download"
 	"srtclean/internal/harness"
 	"srtclean/internal/transcricao"
 	"srtclean/internal/validacao"
@@ -86,7 +87,7 @@ type dadosRevisao struct {
 func revisaoJSON(reg *registro) template.JS {
 	d := dadosRevisao{
 		PedidoID: reg.ped.ID,
-		VideoID:  videoID(reg.ped.YouTubeURL),
+		VideoID:  download.VideoID(reg.ped.YouTubeURL),
 	}
 	// Índice do candidato de MAIOR score — para o selo discreto (destaca sem reordenar).
 	melhor := -1

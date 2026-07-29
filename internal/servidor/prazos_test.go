@@ -17,9 +17,9 @@ import (
 // devolve erro, não progride — só espera o ctx ser cancelado.
 type baixadorVideoTravado struct{ base string }
 
-func (b *baixadorVideoTravado) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) (int, error) {
+func (b *baixadorVideoTravado) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido, dirDestino string) (int, error) {
 	// Deixa no disco o mp4 parcial que um download travado deixaria.
-	dir := filepath.Join(b.base, ped.ID)
+	dir := dirDestino
 	os.MkdirAll(dir, 0755)
 	os.WriteFile(filepath.Join(dir, "video.mp4"), make([]byte, 8192), 0644)
 	<-ctx.Done()
@@ -175,8 +175,8 @@ type baixadorVideoLento struct {
 	intervalo time.Duration
 }
 
-func (b *baixadorVideoLento) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) (int, error) {
-	dir := filepath.Join(b.base, ped.ID)
+func (b *baixadorVideoLento) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido, dirDestino string) (int, error) {
+	dir := dirDestino
 	os.MkdirAll(dir, 0755)
 	f, err := os.Create(filepath.Join(dir, "video.mp4"))
 	if err != nil {
@@ -189,7 +189,7 @@ func (b *baixadorVideoLento) BaixarVideoCompleto(ctx context.Context, ped *pipel
 			return 0, ctx.Err()
 		case <-time.After(b.intervalo):
 		}
-		if _, err := f.Write(make([]byte, 1024)); err != nil {
+		if _, err := f.Write(make([]byte, 2<<20)); err != nil {
 			return 0, err
 		}
 		f.Sync()
@@ -202,7 +202,8 @@ func (b *baixadorVideoLento) BaixarVideoCompleto(ctx context.Context, ped *pipel
 // janela sem-progresso no total, e ainda assim não pode ser interrompido.
 func TestDownloadLentoMasVivoNaoEhMorto(t *testing.T) {
 	s := servidorComPrazos(t, Prazos{VideoSemProgresso: 200 * time.Millisecond}, nil, nil)
-	// 12 escritas a cada 60ms = ~720ms totais, 3,6x a janela sem-progresso.
+	// 12 escritas de 2 MB a cada 60ms: ~720ms totais (3,6x a janela sem-progresso) e 24 MB, que
+	// passa do mínimo para o arquivo contar como vídeo utilizável.
 	s.baixadorVideo = &baixadorVideoLento{base: s.baseDir, pedacos: 12, intervalo: 60 * time.Millisecond}
 
 	criarPedidoOK(t, s)

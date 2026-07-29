@@ -14,6 +14,7 @@ import (
 
 	"srtclean/internal/pipeline"
 	"srtclean/internal/validacao"
+	"srtclean/internal/videocache"
 )
 
 // Este arquivo guarda a ORIGEM DE TEMPO do video.mp4 (pipeline.Pedido.OrigemMs).
@@ -69,10 +70,24 @@ func TestCLIRenderizaPedidoDoServidorNaCenaCerta(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A CADEIA REAL, como o cmd/render faz: o resolvedor devolve arquivo + origem, e o render
+	// recebe os dois. É de propósito que o teste passe pelo videocache em vez de passar 0 na
+	// mão — o que se quer provar é que o caminho do operador resolve certo, não que o render
+	// obedece a um número que o teste escolheu.
+	cache := videocache.Novo(filepath.Join(base, "cache"))
+	cache.MinBytes = 1 // a fonte sintética tem ~300 KB; o mínimo de produção é 20 MB
+	fonte, err := cache.Localizar(base, lido)
+	if err != nil {
+		t.Fatalf("Localizar: %v", err)
+	}
+	if fonte.OrigemMs != 0 {
+		t.Fatalf("o resolvedor devolveu origem %d; o pedido declara 0 (vídeo inteiro)", fonte.OrigemMs)
+	}
+
 	// Trecho em tempo ABSOLUTO, como a seleção produz: 00:01:30 a 00:01:40.
 	cands := []validacao.Candidato{{Start: "00:01:30.000", End: "00:01:40.000", DurationSeconds: 10, Hook: "x"}}
 	r := &Renderizador{Exec: ExecutorReal{}, Bin: "ffmpeg", BaseDir: base, OutDir: out, Preset: "ultrafast", CRF: "18"}
-	paths, err := r.Renderizar(context.Background(), lido, cands)
+	paths, err := r.Renderizar(context.Background(), lido, cands, fonte.Path, fonte.OrigemMs)
 	if err != nil {
 		t.Fatalf("Renderizar: %v", err)
 	}
@@ -124,12 +139,12 @@ func TestOrigemErradaProduziriaOutraCena(t *testing.T) {
 	}
 
 	// Origem 0 (a verdade para o vídeo inteiro) -> frame de T=90.
-	certo, err := novoRend("origem0").RenderizarComOrigem(context.Background(), ped, cands, 0)
+	certo, err := novoRend("origem0").Renderizar(context.Background(), ped, cands, filepath.Join(base, ped.ID, "video.mp4"), 0)
 	if err != nil {
 		t.Fatalf("render com origem 0: %v", err)
 	}
 	// Origem = ped.Inicio (30 s), a suposição antiga -> corte em 90−30 = 60 s -> frame de T=60.
-	errado, err := novoRend("origem30s").RenderizarComOrigem(context.Background(), ped, cands, 30000)
+	errado, err := novoRend("origem30s").Renderizar(context.Background(), ped, cands, filepath.Join(base, ped.ID, "video.mp4"), 30000)
 	if err != nil {
 		t.Fatalf("render com origem 30s: %v", err)
 	}
@@ -157,32 +172,12 @@ func TestOrigemErradaProduziriaOutraCena(t *testing.T) {
 	}
 }
 
-// TestRenderizarSemOrigemDeclaradaFalhaClaro: pedido antigo (sem origem_ms) não renderiza com
-// um padrão silencioso. Assumir foi como o bug nasceu.
-func TestRenderizarSemOrigemDeclaradaFalhaClaro(t *testing.T) {
-	base := t.TempDir()
-	ped, cands := prepararPedido(t, base)
-	ped.OrigemMs = nil // pedido gravado por uma versão anterior
-
-	fx := &fakeExec{}
-	r := &Renderizador{Exec: fx, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final")}
-	_, err := r.Renderizar(context.Background(), ped, cands)
-	if err == nil {
-		t.Fatal("render sem origem declarada devia falhar, não escolher um padrão")
-	}
-	if len(fx.chamadas) != 0 {
-		t.Errorf("o ffmpeg foi chamado %d vez(es) antes da falha: nenhum arquivo devia ser gerado", len(fx.chamadas))
-	}
-	// A mensagem tem de dizer o que falta e o que fazer — quem topar com ela é o operador.
-	for _, quero := range []string{"origem_ms", "pedido.json", "vídeo inteiro"} {
-		if !strings.Contains(err.Error(), quero) {
-			t.Errorf("a mensagem não menciona %q: %v", quero, err)
-		}
-	}
-	if ped.Status != pipeline.EstadoErro {
-		t.Errorf("pedido devia ficar em erro, está %q", ped.Status)
-	}
-}
+// A guarda de "origem não declarada" MUDOU DE LUGAR e por isso o teste dela mudou também: o
+// render não lê mais a origem de ninguém, então não tem como recusar. Quem recusa é o
+// resolvedor — internal/videocache, TestLocalizarSemOrigemDeclaradaFalhaClaro.
+//
+// Este pacote passou a não ter acesso ao dado: é a forma mais forte da guarda (não é que
+// deduzir seja proibido, é que não há o que deduzir de).
 
 func exigirFfmpeg(t *testing.T) {
 	t.Helper()

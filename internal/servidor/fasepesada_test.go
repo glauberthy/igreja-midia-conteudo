@@ -13,6 +13,7 @@ import (
 
 	"srtclean/internal/pipeline"
 	"srtclean/internal/validacao"
+	"srtclean/internal/videocache"
 )
 
 // --- Mocks da fase pesada ---
@@ -20,20 +21,29 @@ import (
 type baixadorVideoFake struct {
 	erro    error
 	chamado bool
+	destino string // onde o servidor pediu para gravar (deve ser a pasta do cache)
 	mu      sync.Mutex
 }
 
 // O fake DEVOLVE a origem, como o baixador real: o arquivo que ele finge escrever é o vídeo
 // inteiro, logo origem 0. Se um dia o fake e o real discordarem no valor, o teste do fluxo
 // completo (que confere a origem em disco) acusa.
-func (b *baixadorVideoFake) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) (int, error) {
+func (b *baixadorVideoFake) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido, dirDestino string) (int, error) {
 	b.mu.Lock()
 	b.chamado = true
+	b.destino = dirDestino
 	b.mu.Unlock()
 	if b.erro != nil {
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = b.erro.Error()
 		return 0, b.erro
+	}
+	// Escreve um "vídeo" do tamanho mínimo que conta como utilizável: o fake tem de produzir o
+	// EFEITO que a produção produz, senão o acerto de cache não é exercitado e o teste passa
+	// por outro caminho. Esparso (Truncate), para não gastar 20 MB de verdade em cada teste.
+	os.MkdirAll(dirDestino, 0755)
+	if err := escreverVideoFalso(filepath.Join(dirDestino, "video.mp4")); err != nil {
+		return 0, err
 	}
 	return 0, nil
 }
@@ -41,15 +51,16 @@ func (b *baixadorVideoFake) BaixarVideoCompleto(ctx context.Context, ped *pipeli
 type renderFake struct {
 	erro      error
 	outDir    string
+	videoPath string // qual arquivo o resolvedor mandou cortar
 	origemMs  int
 	nCands    int
 	recebidos []validacao.Candidato // o que chegou ao render (spec-05 v2: tempos ajustados)
 	mu        sync.Mutex
 }
 
-func (r *renderFake) RenderizarComOrigem(ctx context.Context, ped *pipeline.Pedido, cands []validacao.Candidato, origemMs int) ([]string, error) {
+func (r *renderFake) Renderizar(ctx context.Context, ped *pipeline.Pedido, cands []validacao.Candidato, videoPath string, origemMs int) ([]string, error) {
 	r.mu.Lock()
-	r.origemMs, r.nCands = origemMs, len(cands)
+	r.origemMs, r.nCands, r.videoPath = origemMs, len(cands), videoPath
 	r.recebidos = append([]validacao.Candidato(nil), cands...)
 	r.mu.Unlock()
 	if r.erro != nil {
@@ -64,6 +75,18 @@ func (r *renderFake) RenderizarComOrigem(ctx context.Context, ped *pipeline.Pedi
 		paths = append(paths, p)
 	}
 	return paths, nil
+}
+
+// escreverVideoFalso cria um arquivo ESPARSO com o tamanho mínimo de vídeo utilizável
+// (videocache.MinBytesVideo). Esparso porque o conteúdo é irrelevante aqui — o que importa é o
+// TAMANHO, que é o critério de "isto é vídeo, não resto de download interrompido".
+func escreverVideoFalso(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Truncate(videocache.MinBytesVideo)
 }
 
 func servidorPesada(t *testing.T, sel *selecionadorFake, bv *baixadorVideoFake, rf *renderFake) *Servidor {
@@ -136,12 +159,18 @@ func TestFaseHeavyFluxoCompleto(t *testing.T) {
 	aprovarJSON(t, s, "teste-1", []int{0, 2})
 	esperarStatus(t, s, "teste-1", pipeline.EstadoConcluido)
 
-	// Baixou o vídeo inteiro (sem janela a calcular).
+	// Baixou o vídeo inteiro (sem janela a calcular), e baixou PARA O CACHE do culto — não para
+	// a pasta do pedido. É a mudança da spec-05 v3: o vídeo é do culto e serve outros pedidos.
 	bv.mu.Lock()
-	baixou := bv.chamado
+	baixou, destino := bv.chamado, bv.destino
 	bv.mu.Unlock()
 	if !baixou {
 		t.Error("a fase pesada deveria ter baixado o vídeo")
+	}
+	querDestino, _ := s.cache.DirVideo("cultoTeste1")
+	if destino != querDestino {
+		t.Errorf("o vídeo foi baixado para %q, mas o cache do culto é %q — se não for para o "+
+			"cache, o próximo pedido do mesmo culto rebaixa 570 MB", destino, querDestino)
 	}
 	// CONTRATO DE TEMPO: com o vídeo inteiro, a origem é ZERO — o render corta em tempo
 	// absoluto. Origem != 0 aqui significaria corte no lugar errado.
@@ -155,21 +184,46 @@ func TestFaseHeavyFluxoCompleto(t *testing.T) {
 		t.Errorf("render recebeu %d candidatos, quero 2 (os aprovados)", n)
 	}
 
-	// E a origem fica GRAVADA no pedido.json, não só passada em memória: é o que permite ao
-	// cmd/render (e ao cmd/auditar, e à retomada) saber depois que este video.mp4 é o vídeo
-	// inteiro. Sem persistir, `cmd/render -id teste-1` voltaria a não ter o fato — que é
-	// exatamente o bug relatado: Shorts da cena errada, deslocados por ped.Inicio, com a
-	// duração correta. Ver spec-09.
+	// E a origem fica GRAVADA EM DISCO, não só passada em memória: é o que permite ao
+	// cmd/render (e à retomada) saber depois a que instante do vídeo o arquivo corresponde.
+	// Sem persistir, `cmd/render -id teste-1` voltaria a não ter o fato — que é exatamente o
+	// bug relatado: Shorts da cena errada, deslocados por ped.Inicio, com a duração correta.
+	//
+	// ONDE ela é gravada mudou com o cache, e é o ponto: a declaração acompanha o ARQUIVO.
+	// O vídeo é do culto e vive em videos/<idDoVídeo>/, então a origem vive no video.json ao
+	// lado dele — não no pedido, que não é dono de um arquivo que outros pedidos também usam.
 	emDisco, err := pipeline.Carregar(s.baseDir, "teste-1")
 	if err != nil {
 		t.Fatalf("recarregando o pedido do disco: %v", err)
 	}
-	origemDisco, err := emDisco.Origem()
-	if err != nil {
-		t.Fatalf("o pedido em disco não declara a origem: %v", err)
+	if emDisco.VideoID != "cultoTeste1" {
+		t.Errorf("video_id em disco = %q, quero cultoTeste1 (é a chave do cache)", emDisco.VideoID)
 	}
-	if origemDisco != 0 {
-		t.Errorf("origem_ms em disco = %d, quero 0 (vídeo inteiro)", origemDisco)
+	idx, err := s.cache.LerIndice(emDisco.VideoID)
+	if err != nil {
+		t.Fatalf("o cache não declara a origem do vídeo: %v", err)
+	}
+	if idx.OrigemMs != 0 {
+		t.Errorf("origem_ms no video.json = %d, quero 0 (vídeo inteiro)", idx.OrigemMs)
+	}
+	if idx.UsadoEm.IsZero() || idx.BaixadoEm.IsZero() {
+		t.Errorf("video.json sem datas (%+v): a expiração conta idade pelo último USO", idx)
+	}
+
+	// E o resolvedor devolve ESSE arquivo com ESSA origem — é o que o render recebeu.
+	fonte, err := s.cache.Localizar(s.baseDir, emDisco)
+	if err != nil {
+		t.Fatalf("Localizar falhou depois da fase pesada: %v", err)
+	}
+	if !fonte.DoCache {
+		t.Errorf("a fonte resolvida não veio do cache: %+v", fonte)
+	}
+	rf.mu.Lock()
+	usado := rf.videoPath
+	rf.mu.Unlock()
+	if usado != fonte.Path {
+		t.Errorf("o render cortou %q, mas o resolvedor aponta %q — duas respostas para "+
+			"'qual vídeo?' é como o corte deslocado nasceu", usado, fonte.Path)
 	}
 	// E o Inicio continua o que o OPERADOR informou — a origem é um fato à parte, não um
 	// apelido dele. (Este fixture manda 00:00:00 no formulário; o que importa é que o

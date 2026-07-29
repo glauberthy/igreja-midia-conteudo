@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"srtclean/internal/pipeline"
+	"srtclean/internal/videocache"
 	"srtclean/internal/validacao"
 )
 
@@ -30,13 +31,13 @@ func prepararPedidoEmDisco(t *testing.T, base, id string, comPedidoJSON, comVide
 	os.WriteFile(filepath.Join(dir, "candidatos.corrigido.json"), b, 0644)
 
 	if comPedidoJSON {
-		ped := &pipeline.Pedido{ID: id, YouTubeURL: "https://www.youtube.com/watch?v=abc12345678",
+		ped := &pipeline.Pedido{ID: id, YouTubeURL: "https://www.youtube.com/watch?v=cultoTeste112345678",
 			Inicio: "00:00:00", Fim: "00:05:00"}
 		if err := ped.Salvar(base); err != nil {
 			t.Fatal(err)
 		}
 	} else {
-		info := map[string]any{"webpage_url": "https://www.youtube.com/watch?v=abc12345678", "title": "Culto"}
+		info := map[string]any{"webpage_url": "https://www.youtube.com/watch?v=cultoTeste112345678", "title": "Culto"}
 		ib, _ := json.Marshal(info)
 		os.WriteFile(filepath.Join(dir, "legenda.info.json"), ib, 0644)
 	}
@@ -161,11 +162,11 @@ func TestVideoUsavelRejeitaResiduo(t *testing.T) {
 	for _, c := range casos {
 		p := filepath.Join(dir, strings.ReplaceAll(c.nome, " ", "_")+".mp4")
 		os.WriteFile(p, make([]byte, c.bytes), 0644)
-		if got := videoUsavel(p); got != c.quer {
+		if got := (&Servidor{cache: videocache.Novo(dir)}).videoUsavel(p); got != c.quer {
 			t.Errorf("%s (%d bytes): videoUsavel = %v, queria %v", c.nome, c.bytes, got, c.quer)
 		}
 	}
-	if videoUsavel(filepath.Join(dir, "nao-existe.mp4")) {
+	if (&Servidor{cache: videocache.Novo(dir)}).videoUsavel(filepath.Join(dir, "nao-existe.mp4")) {
 		t.Error("arquivo inexistente não pode ser usável")
 	}
 }

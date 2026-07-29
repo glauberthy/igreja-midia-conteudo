@@ -189,13 +189,20 @@ func (b *Baixador) Baixar(ctx context.Context, ped *pipeline.Pedido) (int, error
 	return origemMs, nil
 }
 
-// BaixarLegenda executa SÓ a fase leve: baixa a legenda automática (sem o vídeo) e
-// gera a transcrição limpa recortada à janela [inicio, fim]. É a entrada do fluxo
-// invertido do servidor web (spec-05): selecionar antes de baixar o vídeo pesado.
-// Se não houver legenda automática (DP-001), devolve ErrSemLegenda e nada de vídeo
-// é baixado. Em qualquer falha, preenche ped.Status = erro e ped.Erro.
-func (b *Baixador) BaixarLegenda(ctx context.Context, ped *pipeline.Pedido) error {
-	if err := b.baixarLegenda(ctx, ped); err != nil {
+// BaixarLegenda baixa a legenda automática (sem o vídeo) para `dirDestino` — no servidor, a
+// pasta do vídeo no CACHE (videos/<videoID>/), porque a legenda é do CULTO e serve qualquer
+// janela e qualquer pedido. É a entrada do fluxo invertido do servidor web (spec-05):
+// selecionar antes de baixar o vídeo pesado.
+//
+// NÃO gera transcrição. O recorte à janela é derivação, e derivar é do videocache
+// (DerivarTranscricao) — quem baixa baixa, quem deriva deriva. Antes as duas coisas moravam
+// aqui, e era isso que fazia a transcrição do cache nascer já recortada, inútil para outra
+// janela.
+//
+// Se não houver legenda automática (DP-001), devolve ErrSemLegenda e nada de vídeo é baixado.
+// Em qualquer falha, preenche ped.Status = erro e ped.Erro.
+func (b *Baixador) BaixarLegenda(ctx context.Context, ped *pipeline.Pedido, dirDestino string) error {
+	if err := b.baixarSRT(ctx, ped, dirDestino); err != nil {
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = err.Error()
 		return err
@@ -210,16 +217,39 @@ func (b *Baixador) executar(ctx context.Context, ped *pipeline.Pedido) (int, err
 	return b.baixarVideo(ctx, ped)
 }
 
-// baixarLegenda valida os tempos, baixa a legenda automática pt (sem vídeo) e gera a
-// transcrição limpa da janela. Não mexe em ped.Status (quem chama decide).
+// baixarLegenda é o caminho do cmd/baixar (CLI): legenda E transcrição recortada à janela, as
+// duas na pasta do PEDIDO. Mantido como era de propósito — é o caminho de diagnóstico fora do
+// servidor, e ele funciona sozinho, sem cache. Não mexe em ped.Status (quem chama decide).
 func (b *Baixador) baixarLegenda(ctx context.Context, ped *pipeline.Pedido) error {
+	dir := filepath.Join(b.baseDir(), ped.ID)
+	if err := b.baixarSRT(ctx, ped, dir); err != nil {
+		return err
+	}
+
+	// Transcrição limpa (srtclean), recortada à janela da pregação [inicio, fim] MAS mantendo
+	// os tempos ABSOLUTOS — para o corte do vídeo (spec-04) bater. A legenda automática vem
+	// inteira; a transcrição da SELEÇÃO fica só com a pregação, para o modelo não escolher
+	// trechos de louvor/avisos fora da janela.
+	inicioMs, _ := transcricao.HmsToMs(ped.Inicio)
+	fimMs, _ := transcricao.HmsToMs(ped.Fim)
+	legenda := filepath.Join(dir, "legenda.srt")
+	transc := filepath.Join(dir, "transcricao.txt")
+	if _, _, err := transcricao.LimparArquivoJanela(legenda, transc, inicioMs, fimMs); err != nil {
+		return fmt.Errorf("limpando legenda: %w", err)
+	}
+	return nil
+}
+
+// baixarSRT baixa a legenda automática pt (sem vídeo) para `dir`, normaliza o nome para
+// legenda.srt e lê o título do .info.json. NÃO gera transcrição — quem quer transcrição
+// deriva (CLI: baixarLegenda; servidor: videocache.DerivarTranscricao).
+func (b *Baixador) baixarSRT(ctx context.Context, ped *pipeline.Pedido, dir string) error {
 	if !tempoValido(ped.Inicio, ped.Fim) {
 		return ErrTempoInvalido
 	}
 
-	dir := filepath.Join(b.baseDir(), ped.ID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("criando pasta de trabalho: %w", err)
+		return fmt.Errorf("criando pasta de destino: %w", err)
 	}
 
 	// Legenda automática pt (sem baixar o vídeo ainda). Com retry no anti-bot (temporário).
@@ -256,19 +286,6 @@ func (b *Baixador) baixarLegenda(ctx context.Context, ped *pipeline.Pedido) erro
 	if t := lerTitulo(dir); t != "" {
 		ped.Titulo = t
 	}
-
-	// Transcrição limpa (srtclean), recortada à janela da pregação [inicio, fim]
-	// MAS mantendo os tempos ABSOLUTOS — para o corte do vídeo (spec-04) bater
-	// (video.mp4 rebaseado a zero; corte em start-inicio). A legenda automática
-	// é baixada inteira; aqui a transcrição da SELEÇÃO fica só com a pregação, para
-	// o modelo não escolher trechos de louvor/avisos fora da janela.
-	inicioMs, _ := transcricao.HmsToMs(ped.Inicio)
-	fimMs, _ := transcricao.HmsToMs(ped.Fim)
-	transc := filepath.Join(dir, "transcricao.txt")
-	if _, _, err := transcricao.LimparArquivoJanela(legenda, transc, inicioMs, fimMs); err != nil {
-		return fmt.Errorf("limpando legenda: %w", err)
-	}
-
 	return nil
 }
 
@@ -298,12 +315,15 @@ func (b *Baixador) baixarVideo(ctx context.Context, ped *pipeline.Pedido) (int, 
 // preciosismo: este método recebe uma CÓPIA do pedido no servidor, e uma atribuição feita
 // aqui morreria com a cópia sem deixar rastro (foi assim que a origem virou bug). Ver o
 // contrato completo em pipeline.Pedido.DeclararOrigem.
-func (b *Baixador) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) (int, error) {
-	dir := filepath.Join(b.baseDir(), ped.ID)
+// `dirDestino` é onde o arquivo é escrito — no servidor, a pasta do vídeo no CACHE
+// (videos/<videoID>/), porque o vídeo é do CULTO e serve qualquer janela e qualquer pedido.
+// Quem chama decide o destino; este método só escreve e diz onde o arquivo começa.
+func (b *Baixador) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido, dirDestino string) (int, error) {
+	dir := dirDestino
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = err.Error()
-		return 0, fmt.Errorf("criando pasta de trabalho: %w", err)
+		return 0, fmt.Errorf("criando pasta de destino: %w", err)
 	}
 	err := comRetry(ctx, "baixando vídeo", func() error {
 		_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsVideoCompleto(ped.YouTubeURL, dir, b.formato())...)

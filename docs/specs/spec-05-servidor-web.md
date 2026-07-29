@@ -263,7 +263,28 @@ func Localizar(videosDir, baseDir string, ped *pipeline.Pedido) (path string, or
 Regra em uma frase: **vídeo na pasta do pedido vence** (é o fluxo por janela, mais
 específico); senão o cache; se nenhum dos dois, **erro claro dizendo o que falta**. Nunca
 dedução — nem por duração de arquivo, nem por `ped.Inicio`. Quem chama: fase pesada do
-servidor e `cmd/render`. O `internal/video` não muda: já recebe a origem por parâmetro.
+servidor e `cmd/render`.
+
+**Duas guardas por construção, decididas na implementação:**
+
+1. **O `internal/video` PERDEU o acesso à origem.** `Renderizar` recebe `videoPath` e
+   `origemMs` de fora e `RenderizarComOrigem` deixou de existir. O pedido era um teste que
+   detectasse leitura fora do resolvedor; o teste existe (varredura de AST, com mutação
+   verificada), mas a garantia forte é a outra: **não há de onde deduzir**. Teste detecta
+   violação; remover o acesso torna a violação impossível.
+
+2. **`videocache.Registrar` RECUSA origem != 0** (`videocache.Aceita`, `ErrOrigemNaoZero`).
+   "O cache só contém vídeo inteiro" deixou de ser convenção e virou invariante do pacote,
+   num lugar só, independente de quem chama.
+
+   O motivo é uma diferença de categoria, não de grau. Um vídeo de **janela** registrado no
+   cache teria `origem_ms: 0` — a origem declarada **mentindo sobre o conteúdo**, gravada em
+   disco. O bug de corte deslocado que custou duas rodadas morria no fim da execução; este
+   envenenaria **todo pedido futuro** que reusasse aquele culto, inclusive de outro sermão.
+   A migração já checava isso antes de mover o arquivo, e era a checagem certa no lugar
+   errado: protegia UM caminho, e qualquer via nova de escrita reabriria o furo. A migração
+   agora consulta o mesmo `Aceita` — porque ela precisa perguntar ANTES do `rename` (descobrir
+   a recusa depois deixaria o vídeo fora da pasta do pedido e sem índice no cache).
 
 ### Extração do ID do vídeo
 

@@ -24,6 +24,7 @@ import (
 	"srtclean/internal/servidor"
 	"srtclean/internal/validacao"
 	"srtclean/internal/video"
+	"srtclean/internal/videocache"
 )
 
 // selecionadorHarness adapta harness.Selecionar à interface Selecionador do servidor,
@@ -40,6 +41,8 @@ func main() {
 	porta := flag.Int("porta", 7799, "porta TCP local do servidor (padrão 7799; evite 80/8080/8000)")
 	base := flag.String("base", "trabalho", "pasta raiz de trabalho")
 	out := flag.String("out", "finalizados", "pasta raiz dos Shorts finais")
+	videos := flag.String("videos", videocache.DirPadrao, "raiz do cache por vídeo: videos/<idDoVídeo>/ "+
+		"guarda vídeo+legenda do culto e serve qualquer janela e qualquer pedido (spec-05 v3)")
 	logRodadas := flag.String("log", "resultados/rodadas.md", "arquivo de log das rodadas (avaliação de variância)")
 	tempos := flag.String("tempos", "resultados/tempos.csv", "CSV de auditoria de desempenho (uma linha por pedido)")
 	reter := flag.Int("reter", 1, "quantos pedidos mantêm o material bruto após a limpeza automática (spec-06)")
@@ -92,6 +95,7 @@ func main() {
 		BaixadorVideo:    baixador,
 		Renderizador:     rend,
 		BaseDir:          *base,
+		VideosDir:        *videos,
 		OutDir:           *out,
 		LogRodadasPath:   *logRodadas,
 		TemposPath:       *tempos,

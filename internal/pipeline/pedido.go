@@ -59,7 +59,43 @@ type Pedido struct {
 	// Ponteiro, não int: zero é um valor LEGÍTIMO (vídeo inteiro) e precisa ser
 	// distinguível de "ninguém declarou". Foi a confusão entre os dois que produziu o bug
 	// de origem trocada — ver Origem().
+	//
+	// ATENÇÃO: descreve APENAS o arquivo em trabalho/<id>/video.mp4 (fluxo do cmd/baixar por
+	// janela). O vídeo do CACHE (videos/<video_id>/video.mp4) tem a própria declaração, ao
+	// lado dele, em video.json. Quem resolve qual arquivo e qual origem valem é o
+	// videocache.Localizar — nunca leia este campo direto para renderizar (spec-09).
 	OrigemMs *int `json:"origem_ms,omitempty"`
+
+	// VideoID é o id do vídeo no YouTube (download.VideoID da URL). É a chave do cache:
+	// videos/<VideoID>/ guarda o vídeo, a legenda e a transcrição ÍNTEGRA do culto, que
+	// servem a qualquer janela e a qualquer pedido do mesmo vídeo.
+	VideoID string `json:"video_id,omitempty"`
+
+	// Recorte é a PROVENIÊNCIA do artefato derivado deste pedido: de qual vídeo e de qual
+	// janela saiu a transcrição recortada em trabalho/<id>/transcricao.txt.
+	//
+	// Existe porque a transcrição fica em dois lugares (íntegra no cache, recortada no
+	// pedido) e duas cópias do mesmo dado é como nasceram os dois bugs mais caros deste
+	// projeto. A diferença aqui é que uma é DERIVÁVEL da outra — não são duas verdades
+	// concorrentes. O que fecha o risco é declarar de onde a derivada veio: com isto, um
+	// teste regenera o recorte a partir do cache e compara byte a byte (ver
+	// internal/videocache). Se o vídeo for rebaixado e a íntegra mudar, é esse teste que
+	// acusa, em vez de o operador descobrir por um Short estranho.
+	//
+	// O arquivo derivado NUNCA é editado: ou é regenerado, ou está errado.
+	Recorte *Recorte `json:"recorte,omitempty"`
+}
+
+// Recorte registra de onde veio um artefato derivado da janela da pregação.
+type Recorte struct {
+	VideoID string `json:"video_id"` // qual vídeo do cache
+	Inicio  string `json:"inicio"`   // HH:MM:SS — início da janela usada
+	Fim     string `json:"fim"`      // HH:MM:SS — fim da janela usada
+}
+
+// DeclararRecorte registra a proveniência do recorte da transcrição.
+func (p *Pedido) DeclararRecorte(videoID, inicio, fim string) {
+	p.Recorte = &Recorte{VideoID: videoID, Inicio: inicio, Fim: fim}
 }
 
 // DeclararOrigem registra em que instante do vídeo original o video.mp4 deste pedido

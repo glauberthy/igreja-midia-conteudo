@@ -58,7 +58,7 @@ func argsDoOperador(t *testing.T) []string {
 	ped := &pipeline.Pedido{ID: "p1", YouTubeURL: "https://x", Inicio: "00:00:00"}
 	cands := []validacao.Candidato{{Start: "00:00:10.000", End: "00:00:50.000", DurationSeconds: 40, Hook: "a graca basta."}}
 
-	if _, err := r.RenderizarComOrigem(context.Background(), ped, cands, 0); err != nil {
+	if _, err := r.Renderizar(context.Background(), ped, cands, filepath.Join(base, ped.ID, "video.mp4"), 0); err != nil {
 		t.Fatalf("render falhou: %v", err)
 	}
 	if len(esp.chamadas) == 0 {
@@ -167,7 +167,7 @@ func TestLegendaSuspensaNoCaminhoDoOperador(t *testing.T) {
 	r.Legenda = true // é o que a flag -legenda faz
 	ped := &pipeline.Pedido{ID: "p1", YouTubeURL: "https://x", Inicio: "00:00:00"}
 	cands := []validacao.Candidato{{Start: "00:00:10.000", End: "00:00:50.000", DurationSeconds: 40, Hook: "a graca basta."}}
-	if _, err := r.RenderizarComOrigem(context.Background(), ped, cands, 0); err != nil {
+	if _, err := r.Renderizar(context.Background(), ped, cands, filepath.Join(base, ped.ID, "video.mp4"), 0); err != nil {
 		t.Fatalf("render com legenda ligada falhou: %v", err)
 	}
 	if !strings.Contains(strings.Join(esp.chamadas[0], " "), "drawtext") {

@@ -5,6 +5,10 @@ resultados/
 trabalho/
 finalizados/
 
+# Cache por VÍDEO (spec-05 v3): vídeo + legenda + transcrição do culto, reaproveitados por
+# qualquer pedido. Fica fora de trabalho/ de propósito — a limpeza por pedido não o enxerga.
+videos/
+
 # Artefatos corrigidos gerados pelo validador
 *.corrigido.json
 

@@ -32,6 +32,7 @@ import (
 	"srtclean/internal/retencao"
 	"srtclean/internal/transcricao"
 	"srtclean/internal/validacao"
+	"srtclean/internal/videocache"
 )
 
 //go:embed templates.html
@@ -39,10 +40,15 @@ var arquivos embed.FS
 
 var tmpl = template.Must(template.ParseFS(arquivos, "templates.html"))
 
-// BaixadorLegenda baixa SÓ a legenda (sem o vídeo) e gera a transcrição na pasta de
-// trabalho do pedido. É a fase leve do fluxo invertido.
+// BaixadorLegenda baixa SÓ a legenda (sem o vídeo) para o diretório indicado. É a fase leve
+// do fluxo invertido.
+//
+// O destino é parâmetro porque a legenda é do CULTO, não do pedido: ela vai para o cache
+// (videos/<videoID>/), serve qualquer janela e é reaproveitada por qualquer pedido do mesmo
+// vídeo. A transcrição recortada à janela é DERIVADA depois, pelo videocache — quem baixa
+// baixa, quem deriva deriva.
 type BaixadorLegenda interface {
-	BaixarLegenda(ctx context.Context, ped *pipeline.Pedido) error
+	BaixarLegenda(ctx context.Context, ped *pipeline.Pedido, dirDestino string) error
 }
 
 // Selecionador roda a seleção (harness) sobre a transcrição e devolve os candidatos
@@ -60,14 +66,14 @@ type Selecionador interface {
 // propósito: o servidor entrega uma CÓPIA do pedido (ver copiaPedido), então uma atribuição
 // feita lá dentro se perderia sem deixar rastro.
 type BaixadorVideo interface {
-	BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) (int, error)
+	BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido, dirDestino string) (int, error)
 }
 
-// RenderizadorVideo renderiza os candidatos aprovados a partir do video.mp4 baixado, com a
-// ORIGEM DE TEMPO explícita (origemMs = instante absoluto que corresponde ao t=0 do
-// arquivo). Devolve os caminhos dos Shorts gerados.
+// RenderizadorVideo renderiza os candidatos aprovados a partir de uma FONTE explícita: o
+// arquivo de vídeo e a origem de tempo dele. Os dois vêm juntos e vêm do videocache.Localizar
+// — o render não descobre nem um nem outro. Devolve os caminhos dos Shorts gerados.
 type RenderizadorVideo interface {
-	RenderizarComOrigem(ctx context.Context, ped *pipeline.Pedido, cands []validacao.Candidato, origemMs int) ([]string, error)
+	Renderizar(ctx context.Context, ped *pipeline.Pedido, cands []validacao.Candidato, videoPath string, origemMs int) ([]string, error)
 }
 
 // registro é o estado de um pedido na memória do servidor. Os candidatos ficam aqui
@@ -91,6 +97,7 @@ type Servidor struct {
 	selecionador     Selecionador
 	baixadorVideo    BaixadorVideo
 	renderizador     RenderizadorVideo
+	cache            *videocache.Cache
 	baseDir          string
 	outDir           string
 	logRodadasPath   string
@@ -121,6 +128,10 @@ type Opcoes struct {
 	Renderizador  RenderizadorVideo // fase pesada; nil desabilita
 	BaseDir       string
 	OutDir        string // raiz dos Shorts finais (padrão "finalizados")
+	// VideosDir é a raiz do CACHE por vídeo (padrão videocache.DirPadrao = "videos"). Fica
+	// FORA de BaseDir de propósito: a limpeza por pedido (spec-06) enxerga só a raiz de
+	// trabalho, então um cache dentro dela seria apagado pela política errada.
+	VideosDir string
 	// LogRodadasPath é onde cada seleção é registrada como uma "rodada" (avaliação de
 	// variância). Vazio usa o padrão "resultados/rodadas.md".
 	LogRodadasPath string
@@ -184,6 +195,24 @@ func Novo(o Opcoes) *Servidor {
 	if s.cortesPath == "" {
 		s.cortesPath = filepath.Join("resultados", "cortes.csv")
 	}
+	// Cache de vídeo: IRMÃO da pasta de trabalho quando não é informado. Em produção
+	// (BaseDir="trabalho") isso dá "videos", como a spec-05 v3 desenhou; em teste
+	// (BaseDir=<TempDir>/algo) cai dentro da árvore temporária do próprio teste.
+	//
+	// A regra "irmão" não é elegância: com o padrão fixo "videos" relativo ao processo, os
+	// testes do pacote compartilhavam UM cache em internal/servidor/videos/ — um teste
+	// acertava o cache do outro, o resultado dependia da ordem, e o repositório ficava sujo.
+	// Aconteceu, e foi assim que apareceu.
+	videosDir := o.VideosDir
+	if videosDir == "" {
+		videosDir = filepath.Join(filepath.Dir(s.baseDir), videocache.DirPadrao)
+	}
+	s.cache = videocache.Novo(videosDir)
+	if o.Agora != nil {
+		// O cache data baixado_em/usado_em pelo MESMO relógio do servidor: senão os testes de
+		// expiração (que injetam o tempo) mediriam idade contra time.Now real.
+		s.cache.Agora = o.Agora
+	}
 	if s.assetsDir == "" {
 		s.assetsDir = "assets"
 	}
@@ -245,6 +274,11 @@ func (s *Servidor) handleCriar(w http.ResponseWriter, r *http.Request) {
 
 	id := s.gerarID()
 	ped := pipeline.NovoPedido(id, ent.YouTubeURL, ent.Inicio, ent.Fim, s.agora())
+	// O id do PEDIDO segue sendo web-<timestamp>-<n>, e o id do VÍDEO entra como campo. Nunca
+	// o contrário: dois pedidos do mesmo culto com janelas diferentes (há transmissão com duas
+	// pregações, e o operador refaz com outra janela) sobrescreveriam os candidatos um do outro
+	// se a pasta do pedido fosse nomeada pelo vídeo.
+	ped.VideoID = download.VideoID(ent.YouTubeURL)
 	met := &Metricas{ID: id, DuracaoSermaoS: duracaoJanelaS(ent.Inicio, ent.Fim)}
 	met.IniciarPedido(s.agora())
 	reg := &registro{ped: ped, metricas: met}
@@ -420,36 +454,59 @@ func (s *Servidor) faseHeavy(reg *registro) {
 		return
 	}
 
-	// Espaço em disco ANTES de baixar (spec-06): um vídeo de culto passa de 900 MB. Se
-	// faltar margem, tenta a limpeza automática; se ainda faltar, falha AQUI com números —
-	// muito melhor que o disco encher no meio do download (o yt-dlp morre com erro de
-	// biblioteca, que não diz nada ao operador).
-	if err := s.garantirEspaco(reg.ped.ID); err != nil {
-		s.setErro(reg, err.Error())
+	// (A verificação de espaço em disco desceu para o ramo que de fato BAIXA — ver o switch
+	// adiante. Com acerto de cache não há o que reservar.)
+	dirPedido := filepath.Join(s.baseDir, idPedido)
+	pedCopia := s.copiaPedido(reg)
+	videoNoPedido := filepath.Join(dirPedido, "video.mp4")
+	dirVideo, errDir := s.cache.DirVideo(pedCopia.VideoID)
+	if errDir != nil {
+		s.setErro(reg, fmt.Sprintf("não sei de qual vídeo do YouTube este pedido é: %v", errDir))
 		return
 	}
+	videoNoCache := filepath.Join(dirVideo, videocache.NomeVideo)
 
-	dirPedido := filepath.Join(s.baseDir, idPedido)
-	videoPath := filepath.Join(dirPedido, "video.mp4")
-
-	// REUSO: se o vídeo já está em disco, não baixa de novo. Cumpre uma promessa que a spec-06
-	// já fazia por escrito ("o pedido retido pode ser regerado sem baixar de novo") mas que o
-	// código não aproveitava. Economiza os ~86 s do download em toda regeração, e é o que torna
-	// viável iterar em render e tela.
-	if videoUsavel(videoPath) {
-		s.logTempos(fmt.Sprintf("vídeo já em disco (%s): reaproveitando, sem baixar de novo",
-			retencao.FormatarBytes(tamanhoArquivo(videoPath))))
-		// Reuso NÃO declara origem: quem escreveu o arquivo é que sabe onde ele começa, e aqui
-		// não fomos nós. Um vídeo em disco pode ser o inteiro (baixado pelo servidor) ou uma
-		// janela (cmd/baixar, alcançável via -retomar) — assumir "inteiro" aqui recriaria a
-		// classe de bug que o origem_ms fecha. Se o pedido não declarar, a leitura abaixo falha
-		// com mensagem que diz o que fazer.
+	// REUSO, em duas formas. A ordem é a MESMA precedência do videocache.Localizar (pedido
+	// vence cache), senão o servidor decidiria uma coisa e o resolvedor outra:
+	//
+	//  1. vídeo na pasta do PEDIDO — fluxo do cmd/baixar (janela), alcançável via -retomar;
+	//  2. vídeo no CACHE — o culto já foi baixado por qualquer pedido, hoje ou semana passada.
+	//
+	// Nenhum dos dois DECLARA origem: quem escreveu o arquivo é que sabe onde ele começa, e
+	// aqui não fomos nós. Assumir "é o vídeo inteiro" recriaria a classe de bug que o
+	// origem_ms/video.json fecha. Quem resolve é o Localizar, adiante.
+	switch {
+	case s.videoUsavel(videoNoPedido):
+		s.logTempos(fmt.Sprintf("vídeo já na pasta do pedido (%s): reaproveitando",
+			retencao.FormatarBytes(tamanhoArquivo(videoNoPedido))))
 		s.metrica(reg, func(m *Metricas) {
 			m.BaixarVideoMs = m.marcar(s.agora())
-			m.BytesVideo = tamanhoArquivo(videoPath)
+			m.BytesVideo = tamanhoArquivo(videoNoPedido)
 			m.VideoReusado = true
 		})
-	} else {
+
+	case s.cache.TemVideo(pedCopia.VideoID):
+		// ACERTO DE CACHE: é o ganho da spec-05 v3 — ~35 s de download e ~570 MB de banda que
+		// não acontecem porque este culto já está em disco.
+		s.logTempos(fmt.Sprintf("vídeo do culto %s já no cache (%s): pulando o download",
+			pedCopia.VideoID, retencao.FormatarBytes(tamanhoArquivo(videoNoCache))))
+		if err := s.cache.Tocar(pedCopia.VideoID); err != nil {
+			s.logTempos(fmt.Sprintf("aviso: não atualizei usado_em de %s: %v", pedCopia.VideoID, err))
+		}
+		s.metrica(reg, func(m *Metricas) {
+			m.BaixarVideoMs = m.marcar(s.agora())
+			m.BytesVideo = tamanhoArquivo(videoNoCache)
+			m.VideoReusado = true
+		})
+
+	default:
+		// Espaço em disco ANTES de baixar (spec-06). Fica AQUI, e não antes do switch, porque
+		// com acerto de cache não há nada a reservar: exigir 2 GB livres para não baixar nada
+		// seria falhar sem motivo.
+		if err := s.garantirEspaco(reg.ped.ID); err != nil {
+			s.setErro(reg, err.Error())
+			return
+		}
 		s.setStatus(reg, pipeline.EstadoBaixandoVideo)
 		// Cópia: o Baixador escreve Status/Erro no Pedido (contrato do cmd/baixar, onde não há
 		// concorrência). Aqui o registro é compartilhado com o handleStatus, então deixá-lo
@@ -457,11 +514,11 @@ func (s *Servidor) faseHeavy(reg *registro) {
 		// Progresso, não tempo total: ver Prazos.VideoSemProgresso. O tamanho do culto varia
 		// demais (994 MB visto; 2h dariam ~1,8 GB) para um teto fixo ter margem honesta.
 		var origemBaixada int
-		err := etapaComProgresso(ctx, "o download do vídeo", dirPedido,
+		err := etapaComProgresso(ctx, "o download do vídeo", dirVideo,
 			s.prazos.VideoSemProgresso, s.prazos.VideoTeto,
 			func(ctx context.Context) error {
 				var e error
-				origemBaixada, e = s.baixadorVideo.BaixarVideoCompleto(ctx, s.copiaPedido(reg))
+				origemBaixada, e = s.baixadorVideo.BaixarVideoCompleto(ctx, s.copiaPedido(reg), dirVideo)
 				return e
 			})
 		if err != nil {
@@ -469,35 +526,34 @@ func (s *Servidor) faseHeavy(reg *registro) {
 			return
 		}
 		// O QUEM SABE DIZ, QUEM PRECISA GUARDA: o baixador devolveu a origem do arquivo que
-		// escreveu; aqui ela entra no pedido e vai para o disco. Este servidor não afirma qual
-		// é a origem — se um dia a fase pesada baixar outra coisa que não o vídeo inteiro, o
-		// valor muda no baixador e aqui continua correto.
-		//
-		// Gravar em disco é o que permite ao cmd/render (e à retomada) saber depois que este
-		// video.mp4 é o vídeo inteiro. Sem isso, o render recusaria — e, na versão anterior à
-		// existência do campo, cortava a cena errada com a duração certa.
-		s.registrarOrigem(reg, origemBaixada)
+		// escreveu; aqui ela vai para o video.json, AO LADO do vídeo. É de propósito que a
+		// declaração acompanhe o arquivo e não o pedido: o vídeo do cache é compartilhado, e um
+		// pedido não é dono do que outro também usa (spec-09).
+		if err := s.cache.Registrar(pedCopia.VideoID, origemBaixada, pedCopia.Titulo); err != nil {
+			s.setErro(reg, comPrefixo("falha ao registrar o vídeo no cache: ", err))
+			return
+		}
 		s.metrica(reg, func(m *Metricas) {
 			m.BaixarVideoMs = m.marcar(s.agora())
-			m.BytesVideo = tamanhoArquivo(videoPath)
+			m.BytesVideo = tamanhoArquivo(videoNoCache)
 		})
 	}
 
 	s.setStatus(reg, pipeline.EstadoRenderizando)
-	// A origem vem do pedido — declarada por quem escreveu o video.mp4 —, não de uma
-	// suposição desta função. Um vídeo reaproveitado de outro caminho (janela do cmd/baixar)
-	// tem origem diferente, e é isso que o campo carrega.
+	// ARQUIVO E ORIGEM vêm juntos, do resolvedor ÚNICO. Esta função não escolhe nem um nem
+	// outro — se escolhesse, seria o segundo lugar decidindo, e é assim que o corte deslocado
+	// em 49:15 nasceu (spec-09).
 	s.mu.Lock()
-	origemMs, origemErr := reg.ped.Origem()
+	fonte, errFonte := s.cache.Localizar(s.baseDir, reg.ped)
 	s.mu.Unlock()
-	if origemErr != nil {
-		s.setErro(reg, comPrefixo("não sei a que instante do vídeo o video.mp4 corresponde: ", origemErr))
+	if errFonte != nil {
+		s.setErro(reg, comPrefixo("não sei qual vídeo cortar: ", errFonte))
 		return
 	}
 	var paths []string
 	err := etapaComPrazo(ctx, "a renderização", s.prazos.Renderize, func(ctx context.Context) error {
 		var e error
-		paths, e = s.renderizador.RenderizarComOrigem(ctx, s.copiaPedido(reg), aprovados, origemMs)
+		paths, e = s.renderizador.Renderizar(ctx, s.copiaPedido(reg), aprovados, fonte.Path, fonte.OrigemMs)
 		return e
 	})
 	if err != nil {
@@ -760,16 +816,39 @@ func validarIndices(indices []int, n int) ([]int, bool) {
 // validando → aguardando-aprovacao (ou erro, com mensagem clara). Roda em goroutine.
 func (s *Servidor) faseLeve(reg *registro) {
 	ctx := context.Background()
-	idPedidoLeve := s.copiaPedido(reg).ID
+	copiaInicial := s.copiaPedido(reg)
+	idPedidoLeve := copiaInicial.ID
+	videoID := copiaInicial.VideoID
 
 	s.setStatus(reg, pipeline.EstadoBaixandoLegenda)
 	// Cópia pelo mesmo motivo da fase pesada: o Baixador escreve no Pedido, e o registro é
 	// compartilhado com os handlers. Aqui a cópia traz de volta o título (do .info.json).
 	copia := s.copiaPedido(reg)
-	if err := etapaComPrazo(ctx, "o download da legenda", s.prazos.Legenda, func(ctx context.Context) error {
-		return s.baixador.BaixarLegenda(ctx, copia)
+	dirVideo, err := s.cache.DirVideo(videoID)
+	if err != nil {
+		s.setErro(reg, fmt.Sprintf("não sei de qual vídeo do YouTube este pedido é: %v", err))
+		return
+	}
+
+	// CACHE DA LEGENDA: a legenda é do CULTO, não do pedido. Se este vídeo já passou por aqui
+	// (outra janela, outro pedido, hoje ou semana passada), a legenda já está em disco e o
+	// download de 3 s não acontece. Tocar() marca o uso para a expiração contar idade pelo
+	// último USO, não pelo download.
+	if s.cache.TemLegenda(videoID) {
+		s.logTempos(fmt.Sprintf("legenda do vídeo %s já no cache: reaproveitando", videoID))
+		if err := s.cache.Tocar(videoID); err != nil {
+			s.logTempos(fmt.Sprintf("aviso: não atualizei usado_em de %s: %v", videoID, err))
+		}
+		if t := s.tituloDoCache(videoID); t != "" {
+			copia.Titulo = t
+		}
+	} else if err := etapaComPrazo(ctx, "o download da legenda", s.prazos.Legenda, func(ctx context.Context) error {
+		return s.baixador.BaixarLegenda(ctx, copia, dirVideo)
 	}); err != nil {
 		s.setErro(reg, mensagemErroDownload(err))
+		return
+	} else if err := s.cache.GerarTranscricaoIntegra(videoID); err != nil {
+		s.setErro(reg, comPrefixo("falha ao gerar a transcrição do culto: ", err))
 		return
 	}
 	s.aplicarTitulo(reg, copia)
@@ -778,11 +857,24 @@ func (s *Servidor) faseLeve(reg *registro) {
 		m.Titulo = copia.Titulo
 	})
 
-	s.setStatus(reg, pipeline.EstadoSelecionando)
+	// DERIVAÇÃO: a transcrição recortada à janela é artefato DERIVADO do pedido, gerada a
+	// partir da legenda do cache. O pedido declara de onde ela veio (DeclararRecorte), e um
+	// teste regenera e compara byte a byte — é o que impede as duas cópias de virarem duas
+	// verdades. O arquivo derivado nunca é editado: ou é regenerado, ou está errado.
 	transc := filepath.Join(s.baseDir, idPedidoLeve, "transcricao.txt")
+	inicioMs, _ := transcricao.HmsToMs(copiaInicial.Inicio)
+	fimMs, _ := transcricao.HmsToMs(copiaInicial.Fim)
+	rec, err := s.cache.DerivarTranscricao(videoID, transc, inicioMs, fimMs)
+	if err != nil {
+		s.setErro(reg, comPrefixo("falha ao recortar a transcrição à janela: ", err))
+		return
+	}
+	s.registrarRecorte(reg, rec)
+
+	s.setStatus(reg, pipeline.EstadoSelecionando)
 	s.metrica(reg, func(m *Metricas) { m.TokensTranscricao = tokensAprox(transc) })
 	var cands []validacao.Candidato
-	err := etapaComPrazo(ctx, "a seleção dos trechos", s.prazos.Selecao, func(ctx context.Context) error {
+	err = etapaComPrazo(ctx, "a seleção dos trechos", s.prazos.Selecao, func(ctx context.Context) error {
 		var e error
 		cands, e = s.selecionador.Selecionar(ctx, transc)
 		return e
@@ -954,6 +1046,14 @@ func validarEntrada(e entrada) (string, bool) {
 	if !urlYouTube(e.YouTubeURL) {
 		return "informe um link válido do YouTube (youtube.com ou youtu.be)", false
 	}
+	// O ID DO VÍDEO é obrigatório porque ele é a chave do cache: sem id não há
+	// videos/<id>/, e cada pedido rebaixaria os ~570 MB do mesmo culto. Recusar aqui, com a
+	// lista das formas aceitas, é melhor que aceitar e falhar depois no meio da fase leve.
+	if download.VideoID(e.YouTubeURL) == "" {
+		return "não consegui identificar o vídeo nesse link. Use o endereço do vídeo ou da " +
+			"transmissão — por exemplo youtube.com/watch?v=ID, youtu.be/ID ou " +
+			"youtube.com/live/ID (o ID tem 11 caracteres)", false
+	}
 	i, oki := transcricao.HmsToMs(e.Inicio)
 	f, okf := transcricao.HmsToMs(e.Fim)
 	if !oki || !okf {
@@ -1014,8 +1114,9 @@ func mensagemErroDownload(err error) string {
 // um arquivo de 0 byte passariam por "existe" e fariam o render falhar com erro de ffmpeg,
 // longe da causa. Um culto de 40 min a 720p passa de 300 MB, então 20 MB é conservador o
 // bastante para aceitar vídeos curtos de teste e rejeitar resíduo.
-func videoUsavel(path string) bool {
-	const minimoBytes = 20 << 20
-	fi, err := os.Stat(path)
-	return err == nil && !fi.IsDir() && fi.Size() >= minimoBytes
+// A regra mora no videocache, não aqui: a pergunta "este arquivo é um vídeo usável?" é feita
+// nos dois lugares (pasta do pedido e cache) e ter duas respostas foi como o cache nasceu com
+// 1 MB enquanto o servidor usava 20 MB.
+func (s *Servidor) videoUsavel(path string) bool {
+	return s.cache.Usavel(path)
 }

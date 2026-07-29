@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"srtclean/internal/download"
 	"srtclean/internal/pipeline"
 	"srtclean/internal/transcricao"
 	"srtclean/internal/validacao"
@@ -74,7 +75,7 @@ func montarVisao(reg *registro) visaoStatus {
 		StatusLabel: rotulosEtapa[reg.ped.Status],
 		EmProgresso: emProgresso(reg.ped.Status),
 		Erro:        reg.ped.Erro,
-		VideoID:     videoID(reg.ped.YouTubeURL),
+		VideoID:     download.VideoID(reg.ped.YouTubeURL),
 		Concluido:   reg.ped.Status == pipeline.EstadoConcluido,
 		Shorts:      append([]string(nil), reg.shorts...),
 	}

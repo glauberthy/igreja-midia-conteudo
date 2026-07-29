@@ -304,50 +304,23 @@ func (r *Renderizador) faixaLogo() int {
 // devolve os caminhos gerados. Em falha, seta Status=erro e Erro. Os candidatos vêm
 // SEMPRE de fora (spec-09: fonte única = arquivo de seleção validado); o pedido não
 // os carrega mais.
-// Renderizar renderiza os candidatos usando a origem de tempo DECLARADA no pedido
-// (pipeline.Pedido.OrigemMs) — o instante absoluto do vídeo original a que o t=0 do
-// video.mp4 corresponde. Quem baixou o arquivo declarou; aqui só se lê.
+// Renderizar gera um Short por candidato a partir de uma FONTE explícita: o arquivo de vídeo
+// e a origem de tempo dele (o instante absoluto do vídeo do YouTube a que o t=0 do arquivo
+// corresponde). Os dois vêm de fora, juntos, e este pacote NÃO tem como descobri-los sozinho
+// — é de propósito.
 //
-// Antes esta função SUPUNHA ped.Inicio. Estava certo para o vídeo baixado por janela
-// (cmd/baixar) e errado para o vídeo inteiro do servidor, cujo pedido.json também tem um
-// Inicio real (o início da pregação): `cmd/render -id <pedido do servidor>` produzia Shorts
-// da cena errada, deslocados pelo Inicio, com a duração CORRETA — sem nenhum sinal de erro.
-// Se a origem não estiver declarada, falha com mensagem que diz o que fazer, em vez de
-// escolher um padrão (ver Pedido.Origem).
-func (r *Renderizador) Renderizar(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato) ([]string, error) {
-	origemMs, err := ped.Origem()
-	if err != nil {
-		ped.Status = pipeline.EstadoErro
-		ped.Erro = err.Error()
-		return nil, err
-	}
-	return r.RenderizarComOrigem(ctx, ped, candidatos, origemMs)
-}
-
-// RenderizarComOrigem é o mesmo render, mas com a ORIGEM DE TEMPO recebida por PARÂMETRO em
-// vez de lida do pedido: origemMs é o instante ABSOLUTO (no vídeo do YouTube) que corresponde
-// ao t=0 do arquivo video.mp4.
+// Por que não ler do pedido: esta função já supôs `ped.Inicio` como origem. Estava certo para
+// o vídeo baixado por janela (cmd/baixar) e errado para o vídeo inteiro do servidor, cujo
+// pedido.json também tem um Inicio real (o início da PREGAÇÃO). O resultado era
+// `cmd/render -id <pedido do servidor>` produzindo Shorts da cena errada, deslocados pelo
+// Inicio, com a duração CORRETA — sem nenhum sinal de erro. Depois virou campo declarado; e
+// agora que o vídeo pode estar no CACHE (compartilhado entre pedidos), quem resolve arquivo +
+// origem é um lugar só: videocache.Localizar. Aqui só se recebe.
 //
-// É o que a fase pesada do servidor (spec-05) usa, porque lá a origem vem do BAIXADOR (valor
-// devolvido por BaixarVideoCompleto) e o servidor a repassa direto, além de gravá-la no
-// pedido.json. O corte de cada candidato é SEMPRE (start - origemMs).
-//
-// De onde vem a origem, hoje, em cada caminho:
-//
-//	cmd/baixar + cmd/render   janela [inicio, fim]  ->  origem = inicio  (pedido.json)
-//	servidor (fase pesada)    vídeo inteiro         ->  origem = 0       (do baixador)
-//
-// NÃO deduza a origem de ped.Inicio. Era o que o Renderizar fazia, e é a origem de um bug
-// real: no caminho do servidor, ped.Inicio é o início da PREGAÇÃO e o arquivo é o vídeo
-// inteiro, então o corte saía deslocado pelo Inicio — com a duração correta e a cena errada.
-// O fato mora em pipeline.Pedido.OrigemMs; ver spec-09.
-//
-// (Nota histórica: até 2026-07 a fase pesada baixava a "janela contígua" [menor start
-// aprovado, maior end aprovado] e a origem era esse menor start, calculado. Isso deixou de
-// existir quando o download passou a ser do vídeo inteiro — ~79x mais rápido. Se você
-// encontrar menção a janela contígua em outro comentário, está desatualizada.)
-func (r *Renderizador) RenderizarComOrigem(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato, origemMs int) ([]string, error) {
-	paths, err := r.renderizar(ctx, ped, candidatos, origemMs)
+// Um teste varre o código e falha se algum consumidor de vídeo voltar a ler a origem por fora
+// do resolvedor (internal/videocache/resolvedor_unico_test.go).
+func (r *Renderizador) Renderizar(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato, videoPath string, origemMs int) ([]string, error) {
+	paths, err := r.renderizar(ctx, ped, candidatos, videoPath, origemMs)
 	if err != nil {
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = err.Error()
@@ -356,13 +329,24 @@ func (r *Renderizador) RenderizarComOrigem(ctx context.Context, ped *pipeline.Pe
 	return paths, nil
 }
 
-func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato, origemMs int) ([]string, error) {
+// De onde vêm arquivo e origem, hoje, em cada caminho — sempre pelo videocache.Localizar:
+//
+//	cmd/baixar (janela [inicio, fim])   trabalho/<id>/video.mp4      origem = inicio (pedido.json)
+//	servidor / cache (vídeo inteiro)    videos/<videoID>/video.mp4   origem = 0      (video.json)
+//
+// (Nota histórica: até 2026-07 a fase pesada baixava a "janela contígua" [menor start
+// aprovado, maior end aprovado] e a origem era esse menor start, calculado. Isso deixou de
+// existir quando o download passou a ser do vídeo inteiro — ~79x mais rápido. Se você
+// encontrar menção a janela contígua em outro comentário, está desatualizada.)
+func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato, videoPath string, origemMs int) ([]string, error) {
 	if len(candidatos) == 0 {
 		return nil, fmt.Errorf("nenhum candidato para renderizar")
 	}
 
+	// trabDir é a pasta do PEDIDO: onde ficam a transcrição recortada (insumo da legenda
+	// queimada) e os .txt temporários dos blocos. O VÍDEO não vem daqui — vem de videoPath,
+	// que o chamador resolveu, porque ele pode estar no cache (videos/<videoID>/).
 	trabDir := filepath.Join(r.baseDir(), ped.ID)
-	videoPath := filepath.Join(trabDir, "video.mp4")
 
 	// Texto LIMPO da legenda: vem da transcrição já limpa (mesma que a seleção usa),
 	// passada pela desduplicação/segmentação da Fase 3 (harness.Frasear). NÃO usamos o

@@ -3,6 +3,7 @@ package servidor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 
 	"srtclean/internal/download"
 	"srtclean/internal/pipeline"
+	"srtclean/internal/transcricao"
 	"srtclean/internal/validacao"
 )
 
@@ -25,14 +27,15 @@ import (
 type baixadorFake struct {
 	erro     error
 	base     string
-	transc   string        // conteúdo a gravar em transcricao.txt
+	transc     string // texto no formato "[HH:MM:SS] fala" que o fake converte em SRT
+	legendaSRT string // SRT explícito (vence transc), para quem quer controlar os blocos
 	titulo   string        // se != "", escreve em ped.Titulo (como o baixador real faz com o .info.json)
 	liberar  chan struct{} // se != nil, BaixarLegenda espera fechar antes de retornar
 	chamadas int
 	mu       sync.Mutex
 }
 
-func (b *baixadorFake) BaixarLegenda(ctx context.Context, ped *pipeline.Pedido) error {
+func (b *baixadorFake) BaixarLegenda(ctx context.Context, ped *pipeline.Pedido, dirDestino string) error {
 	if b.liberar != nil {
 		<-b.liberar
 	}
@@ -47,9 +50,57 @@ func (b *baixadorFake) BaixarLegenda(ctx context.Context, ped *pipeline.Pedido) 
 	if b.titulo != "" {
 		ped.Titulo = b.titulo // no real vem do legenda.info.json — e é escrito na CÓPIA
 	}
-	dir := filepath.Join(b.base, ped.ID)
-	os.MkdirAll(dir, 0755)
-	return os.WriteFile(filepath.Join(dir, "transcricao.txt"), []byte(b.transc), 0644)
+	// Escreve a LEGENDA no destino (o cache do culto), como o baixador real passou a fazer. A
+	// transcrição não é mais escrita aqui: ela é DERIVADA da legenda pelo videocache, por
+	// janela. O fake precisa produzir um .srt de verdade para a derivação ter o que recortar.
+	os.MkdirAll(dirDestino, 0755)
+	return os.WriteFile(filepath.Join(dirDestino, "legenda.srt"), []byte(b.srt()), 0644)
+}
+
+// srt devolve a legenda que o fake "baixa". Se o teste deu um SRT explícito, usa; senão monta
+// um SRT mínimo a partir do texto de transcrição que o teste pediu, preservando os tempos.
+func (b *baixadorFake) srt() string {
+	if b.legendaSRT != "" {
+		return b.legendaSRT
+	}
+	return srtDeTranscricao(b.transc)
+}
+
+// srtDeTranscricao converte o formato de fixture "[HH:MM:SS] fala" no SRT que o baixador de
+// verdade produz. Existe porque o fake mudou de camada: ele escrevia a transcrição pronta, e
+// agora escreve a LEGENDA — a transcrição passou a ser derivada dela (por janela) pelo
+// videocache. Sem isto, os testes exercitariam um atalho que a produção não tem.
+//
+// A ida e volta é sem perda para os textos das fixtures: cada linha vira um bloco de 3 s, e o
+// srtclean devolve "[HH:MM:SS] fala". Linha sem timestamp recebe um sequencial (3 s por
+// linha), para fixtures curtas como "x" continuarem produzindo texto.
+func srtDeTranscricao(txt string) string {
+	var b strings.Builder
+	n := 0
+	for _, linha := range strings.Split(strings.TrimSpace(txt), "\n") {
+		linha = strings.TrimSpace(linha)
+		if linha == "" {
+			continue
+		}
+		iniMs := n * 3000
+		fala := linha
+		if strings.HasPrefix(linha, "[") {
+			if fim := strings.Index(linha, "]"); fim > 0 {
+				if ms, ok := transcricao.HmsToMs(linha[1:fim]); ok {
+					iniMs = ms
+					fala = strings.TrimSpace(linha[fim+1:])
+				}
+			}
+		}
+		n++
+		fmt.Fprintf(&b, "%d\n%s --> %s\n%s\n\n", n, srtTempo(iniMs), srtTempo(iniMs+3000), fala)
+	}
+	return b.String()
+}
+
+// srtTempo formata ms como HH:MM:SS,mmm (o separador decimal do SRT é vírgula).
+func srtTempo(ms int) string {
+	return fmt.Sprintf("%02d:%02d:%02d,%03d", ms/3600000, (ms%3600000)/60000, (ms%60000)/1000, ms%1000)
 }
 
 // selecionadorFake devolve candidatos fixos (ou erro) sem chamar o modelo.
@@ -134,7 +185,7 @@ func TestCriarPedidoValidoDisparaFaseLeve(t *testing.T) {
 	}}
 	s := servidorTeste(t, b, sel)
 
-	form := url.Values{"youtube_url": {"https://www.youtube.com/watch?v=abc"}, "inicio": {"00:00:00"}, "fim": {"00:10:00"}}
+	form := url.Values{"youtube_url": {"https://www.youtube.com/watch?v=cultoTeste1"}, "inicio": {"00:00:00"}, "fim": {"00:10:00"}}
 	req := httptest.NewRequest("POST", "/pedidos", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -161,7 +212,7 @@ func TestCriarPedidoValidoDisparaFaseLeve(t *testing.T) {
 
 func TestCriarPedidoJSONRetorna201ComID(t *testing.T) {
 	s := servidorTeste(t, &baixadorFake{transc: "x"}, &selecionadorFake{})
-	corpo := `{"youtube_url":"https://youtu.be/abc","inicio":"00:00:00","fim":"00:05:00"}`
+	corpo := `{"youtube_url":"https://youtu.be/cultoTeste1","inicio":"00:00:00","fim":"00:05:00"}`
 	req := httptest.NewRequest("POST", "/pedidos", strings.NewReader(corpo))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -189,9 +240,9 @@ func TestCriarEntradaInvalida(t *testing.T) {
 	}{
 		{"url vazia", "", "00:00:00", "00:10:00"},
 		{"url não-youtube", "https://vimeo.com/123", "00:00:00", "00:10:00"},
-		{"tempo mal formatado", "https://youtu.be/x", "abc", "00:10:00"},
-		{"fim antes do início", "https://youtu.be/x", "00:10:00", "00:05:00"},
-		{"fim igual ao início", "https://youtu.be/x", "00:05:00", "00:05:00"},
+		{"tempo mal formatado", "https://youtu.be/cultoTeste1", "abc", "00:10:00"},
+		{"fim antes do início", "https://youtu.be/cultoTeste1", "00:10:00", "00:05:00"},
+		{"fim igual ao início", "https://youtu.be/cultoTeste1", "00:05:00", "00:05:00"},
 	}
 	for _, c := range casos {
 		t.Run(c.nome, func(t *testing.T) {
@@ -341,7 +392,7 @@ func TestStatusPedidoInexistente404(t *testing.T) {
 
 func criarPedidoOK(t *testing.T, s *Servidor) {
 	t.Helper()
-	body := `{"youtube_url":"https://youtu.be/abc","inicio":"00:00:00","fim":"00:10:00"}`
+	body := `{"youtube_url":"https://youtu.be/cultoTeste1","inicio":"00:00:00","fim":"00:10:00"}`
 	req := httptest.NewRequest("POST", "/pedidos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")

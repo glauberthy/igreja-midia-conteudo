@@ -60,8 +60,15 @@ func TestPedidoSoTemUmCampoDeReferencia(t *testing.T) {
 			referencia = append(referencia, f.Name+" "+f.Type.String())
 		}
 	}
-	// Conhecido e registrado: OrigemMs *int, seguro porque DeclararOrigem troca o ponteiro.
-	esperado := []string{"OrigemMs *int"}
+	// Conhecidos e registrados. Os dois são seguros pelo MESMO motivo: o declarador SUBSTITUI o
+	// ponteiro (p.X = &novo) em vez de escrever através dele (*p.X = novo), então mexer na
+	// cópia não alcança o original. Se um deles passar a ser mutado no lugar, o teste irmão
+	// (TestCopiaPedidoRasaEArmadilhaDoPonteiro) acusa.
+	//
+	//	OrigemMs *int              — DeclararOrigem  (spec-09: origem do video.mp4 do pedido)
+	//	Recorte  *pipeline.Recorte — DeclararRecorte (spec-05 v3: proveniência do recorte da
+	//	                             transcrição — de qual vídeo e de qual janela ela saiu)
+	esperado := []string{"OrigemMs *int", "Recorte *pipeline.Recorte"}
 	if !reflect.DeepEqual(referencia, esperado) {
 		t.Errorf("os campos de referência do Pedido mudaram.\n  agora:    %v\n  esperado: %v\n\n"+
 			"copiaPedido faz cópia RASA (c := *reg.ped). Com campo de referência novo, parte das "+

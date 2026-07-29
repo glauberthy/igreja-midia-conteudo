@@ -233,6 +233,21 @@ func TestDuracaoComMargemGuard(t *testing.T) {
 	}
 }
 
+// origemDoFixture é a origem de tempo do vídeo do fixture: contrato do cmd/baixar, em que o
+// video.mp4 é a JANELA [inicio, fim] e portanto começa em t=0 no `inicio`.
+//
+// Em produção quem resolve isso é o videocache.Localizar, e este pacote NÃO tem como
+// descobrir a origem sozinho — de propósito (spec-09). Aqui é o teste bancando o papel do
+// chamador, e por isso a conta aparece explícita: se um dia o render voltar a "adivinhar",
+// esta linha é o contraste que mostra que a informação vem de fora.
+func origemDoFixture(ped *pipeline.Pedido) int {
+	ms, ok := transcricao.HmsToMs(ped.Inicio)
+	if !ok {
+		panic("fixture com início inválido: " + ped.Inicio)
+	}
+	return ms
+}
+
 func prepararPedido(t *testing.T, base string) (*pipeline.Pedido, []validacao.Candidato) {
 	t.Helper()
 	id := "teste"
@@ -291,7 +306,7 @@ func TestRenderizarComOrigemAlinhaCorte(t *testing.T) {
 	// Origem = start do candidato de MAIOR score (01:30:10): simula o video.mp4 começando
 	// exatamente ali (a janela baixada). O render ordena por score, então short_01 = maior.
 	origemMs, _ := validacao.HmsToMs("01:30:10")
-	if _, err := r.RenderizarComOrigem(context.Background(), ped, cands, origemMs); err != nil {
+	if _, err := r.Renderizar(context.Background(), ped, cands, filepath.Join(base, ped.ID, "video.mp4"), origemMs); err != nil {
 		t.Fatalf("RenderizarComOrigem: %v", err)
 	}
 	if len(fx.chamadas) != 2 {
@@ -310,7 +325,7 @@ func TestRenderizarComOrigemAlinhaCorte(t *testing.T) {
 	// cortados MUITO mais adiante — provando que a origem realmente desloca o corte.
 	fx2 := &fakeExec{}
 	r2 := &Renderizador{Exec: fx2, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final2")}
-	if _, err := r2.Renderizar(context.Background(), ped, cands); err != nil { // origem = 01:29:38
+	if _, err := r2.Renderizar(context.Background(), ped, cands, filepath.Join(base, ped.ID, "video.mp4"), origemDoFixture(ped)); err != nil { // origem = 01:29:38
 		t.Fatalf("Renderizar (CLI): %v", err)
 	}
 	// short_01 (01:30:10) - inicio (01:29:38) = 32s, não 0.
@@ -329,7 +344,7 @@ func TestRenderizarLimpaSubTxt(t *testing.T) {
 	// desligada (o default de hoje, spec-12 suspensa) não haveria arquivo nenhum e o teste
 	// passaria sem testar nada.
 	r := &Renderizador{Exec: fx, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final"), Legenda: true}
-	if _, err := r.Renderizar(context.Background(), ped, cands); err != nil {
+	if _, err := r.Renderizar(context.Background(), ped, cands, filepath.Join(base, ped.ID, "video.mp4"), origemDoFixture(ped)); err != nil {
 		t.Fatalf("Renderizar: %v", err)
 	}
 	if !strings.Contains(strings.Join(fx.chamadas[0], " "), "drawtext=") {
@@ -349,7 +364,7 @@ func TestRenderizarGeraPorScore(t *testing.T) {
 	fx := &fakeExec{}
 	r := &Renderizador{Exec: fx, Bin: "ffmpeg", BaseDir: base, OutDir: outBase}
 
-	paths, err := r.Renderizar(context.Background(), ped, cands)
+	paths, err := r.Renderizar(context.Background(), ped, cands, filepath.Join(base, ped.ID, "video.mp4"), origemDoFixture(ped))
 	if err != nil {
 		t.Fatalf("Renderizar: %v", err)
 	}
@@ -380,7 +395,7 @@ func TestRenderizarAplicaMargemNoCorte(t *testing.T) {
 	// Margem de 400 ms: o -t (duração do corte) deve virar 30s - 0,4s = 29.600.
 	r := &Renderizador{Exec: fx, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final"), MargemFimMs: 400}
 
-	if _, err := r.Renderizar(context.Background(), ped, cands); err != nil {
+	if _, err := r.Renderizar(context.Background(), ped, cands, filepath.Join(base, ped.ID, "video.mp4"), origemDoFixture(ped)); err != nil {
 		t.Fatalf("Renderizar: %v", err)
 	}
 	joined := strings.Join(fx.chamadas[0], " ")
@@ -397,7 +412,7 @@ func TestRenderizarErroFfmpeg(t *testing.T) {
 	ped, cands := prepararPedido(t, base)
 	r := &Renderizador{Exec: &fakeExec{falhar: true}, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final")}
 
-	_, err := r.Renderizar(context.Background(), ped, cands)
+	_, err := r.Renderizar(context.Background(), ped, cands, filepath.Join(base, ped.ID, "video.mp4"), origemDoFixture(ped))
 	if err == nil {
 		t.Fatal("esperava erro do ffmpeg")
 	}
@@ -410,7 +425,7 @@ func TestRenderizarSemCandidatos(t *testing.T) {
 	base := t.TempDir()
 	ped, _ := prepararPedido(t, base)
 	r := &Renderizador{Exec: &fakeExec{}, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final")}
-	if _, err := r.Renderizar(context.Background(), ped, nil); err == nil {
+	if _, err := r.Renderizar(context.Background(), ped, nil, filepath.Join(base, ped.ID, "video.mp4"), 0); err == nil {
 		t.Error("esperava erro para render sem candidatos")
 	}
 }

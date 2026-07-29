@@ -145,7 +145,7 @@ func TestBaixarVideoCompletoDevolveOrigemZero(t *testing.T) {
 	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
 
 	ped := pedidoTeste("inteiro")
-	origemMs, err := b.BaixarVideoCompleto(context.Background(), ped)
+	origemMs, err := b.BaixarVideoCompleto(context.Background(), ped, filepath.Join(base, "cache", "inteiro"))
 	if err != nil {
 		t.Fatalf("BaixarVideoCompleto: %v", err)
 	}

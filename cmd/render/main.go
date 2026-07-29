@@ -27,11 +27,13 @@ import (
 	"srtclean/internal/pipeline"
 	"srtclean/internal/validacao"
 	"srtclean/internal/video"
+	"srtclean/internal/videocache"
 )
 
 func main() {
 	id := flag.String("id", "", "identificador do pedido (obrigatório)")
 	base := flag.String("base", "trabalho", "pasta raiz de trabalho")
+	videos := flag.String("videos", videocache.DirPadrao, "raiz do cache por vídeo (videos/<idDoVídeo>/)")
 	out := flag.String("out", "finalizados", "pasta raiz dos Shorts finais")
 	cand := flag.String("cand", "", "arquivo de candidatos corrigidos (padrão: <base>/<id>/candidatos.corrigido.json)")
 	bin := flag.String("bin", "ffmpeg", "binário do ffmpeg")
@@ -97,7 +99,21 @@ func main() {
 		RodapeAltura:  *rodapeAltura,
 		FaixaLogo:     *faixaLogo,
 	}
-	paths, err := r.Renderizar(context.Background(), ped, cands)
+	// ARQUIVO E ORIGEM vêm do resolvedor ÚNICO, juntos. O vídeo pode estar na pasta do pedido
+	// (fluxo do cmd/baixar, por janela) ou no cache do culto (videos/<idDoVídeo>/) — e a origem
+	// de cada um mora AO LADO dele. Este comando não escolhe: pergunta.
+	//
+	// Foi exatamente aqui que o corte deslocado em 49 min apareceu, quando este comando supunha
+	// que a origem era ped.Inicio. Ver spec-09.
+	// (o nome é fonteVideo porque `fonte` já é a flag do .ttf da legenda)
+	fonteVideo, errFonte := videocache.Novo(*videos).Localizar(*base, ped)
+	if errFonte != nil {
+		fmt.Fprintf(os.Stderr, "erro: %v\n", errFonte)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "render: cortando %s (origem %d ms)\n", fonteVideo.Path, fonteVideo.OrigemMs)
+
+	paths, err := r.Renderizar(context.Background(), ped, cands, fonteVideo.Path, fonteVideo.OrigemMs)
 
 	// Persiste apenas o ESTADO do pedido (o pedido não carrega candidatos — spec-09).
 	if ped.Status != pipeline.EstadoErro {

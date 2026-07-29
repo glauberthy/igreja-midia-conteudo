@@ -33,7 +33,7 @@ func TestTextoDoTrecho(t *testing.T) {
 
 func TestRevisaoJSONShape(t *testing.T) {
 	reg := &registro{
-		ped: pipeline.NovoPedido("ped-1", "https://youtu.be/vid123", "00:00:00", "00:10:00", time.Unix(0, 0)),
+		ped: pipeline.NovoPedido("ped-1", "https://youtu.be/cultoTeste1", "00:00:00", "00:10:00", time.Unix(0, 0)),
 		cands: []validacao.Candidato{
 			{Hook: "Hook A", Start: "00:01:00.000", End: "00:01:35.000", DurationSeconds: 35, Score: 88},
 			{Hook: "Hook B", Start: "00:02:00.000", End: "00:02:34.000", DurationSeconds: 34, Score: 70,
@@ -45,7 +45,7 @@ func TestRevisaoJSONShape(t *testing.T) {
 	if err := json.Unmarshal([]byte(revisaoJSON(reg)), &d); err != nil {
 		t.Fatalf("payload de revisão não é JSON válido: %v", err)
 	}
-	if d.PedidoID != "ped-1" || d.VideoID != "vid123" {
+	if d.PedidoID != "ped-1" || d.VideoID != "cultoTeste1" {
 		t.Errorf("payload sem contexto: %+v", d)
 	}
 	if len(d.Trechos) != 2 {
@@ -65,7 +65,7 @@ func TestRevisaoJSONShape(t *testing.T) {
 // spec-05 (ordenar por score empurraria os marcados para o fim).
 func TestRevisaoOrdemCronologicaPreservaIndice(t *testing.T) {
 	reg := &registro{
-		ped: pipeline.NovoPedido("p", "https://youtu.be/v", "00:00:00", "00:10:00", time.Unix(0, 0)),
+		ped: pipeline.NovoPedido("p", "https://youtu.be/cultoTeste1", "00:00:00", "00:10:00", time.Unix(0, 0)),
 		cands: []validacao.Candidato{
 			// fora de ordem cronológica; o de MAIOR score (índice 0) é o mais tardio.
 			{Hook: "tardio", Start: "00:05:00.000", End: "00:05:35.000", DurationSeconds: 35, Score: 95},

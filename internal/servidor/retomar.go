@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"srtclean/internal/download"
 	"srtclean/internal/pipeline"
 	"srtclean/internal/validacao"
 )
@@ -74,6 +75,28 @@ func (s *Servidor) Retomar(id string) error {
 	ped.Status = pipeline.EstadoAguardandoAprovacao
 	ped.Erro = ""
 
+	// VIDEO_ID em pedido retomado: pedidos criados antes do cache não têm o campo, e sem ele a
+	// fase pesada não sabe onde procurar/guardar o vídeo. É DERIVAÇÃO da URL que já está no
+	// pedido (função determinística), não suposição — diferente da origem de tempo, que não é
+	// derivável de nada e por isso tem de ser declarada.
+	if ped.VideoID == "" {
+		if vid := download.VideoID(ped.YouTubeURL); vid != "" {
+			ped.VideoID = vid
+			if err := ped.Salvar(s.baseDir); err != nil {
+				fmt.Fprintf(os.Stderr, "aviso: não gravei o video_id de %s: %v\n", id, err)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "aviso: pedido %s tem URL da qual não sai id de vídeo (%q); "+
+				"a fase pesada vai recusar até isso ser resolvido\n", id, ped.YouTubeURL)
+		}
+	}
+
+	// MIGRAÇÃO: se este pedido tem um video.mp4 na própria pasta e o cache ainda não tem o
+	// vídeo deste culto, o arquivo é MOVIDO para o cache. É download bom (pode ser 800 MB) e
+	// mover no mesmo disco é instantâneo. Se falhar, o arquivo fica onde está e o Localizar
+	// continua achando ele lá (a precedência é justamente "pedido vence cache").
+	s.migrarVideoParaCache(ped)
+
 	s.mu.Lock()
 	s.pedidos[id] = &registro{
 		ped:    ped,
@@ -85,7 +108,7 @@ func (s *Servidor) Retomar(id string) error {
 	}
 	s.mu.Unlock()
 
-	temVideo := videoUsavel(filepath.Join(dir, "video.mp4"))
+	temVideo := s.videoUsavel(filepath.Join(dir, "video.mp4"))
 	s.logTempos(fmt.Sprintf("retomado %s: %d candidato(s), vídeo em disco: %v", id, len(cands), temVideo))
 	return nil
 }

@@ -3,6 +3,7 @@ package servidor
 import (
 	"fmt"
 
+	"srtclean/internal/pipeline"
 	"srtclean/internal/validacao"
 )
 
@@ -41,6 +42,34 @@ func candidatosAprovados(reg *registro) []validacao.Candidato {
 // propagada corretamente do download até o render; qualquer descasamento produzia Short do
 // trecho errado. Com o vídeo inteiro, o cálculo desaparece — mas a propagação continuou
 // existindo até virar campo declarado, e foi ali que a classe de bug reapareceu.
+
+// registrarRecorte guarda no pedido — e em disco — a PROVENIÊNCIA da transcrição recortada:
+// de qual vídeo e de qual janela ela saiu.
+//
+// Não é burocracia: a transcrição existe em dois lugares (íntegra no cache, recortada no
+// pedido), e duas cópias do mesmo dado é como nasceram os dois bugs mais caros deste projeto.
+// A diferença aqui é que uma é DERIVÁVEL da outra. Declarar a proveniência é o que permite a
+// um teste regenerar o recorte a partir do cache e comparar byte a byte — se o vídeo for
+// rebaixado e a legenda mudar, é esse teste que acusa.
+func (s *Servidor) registrarRecorte(reg *registro, rec pipeline.Recorte) {
+	s.mu.Lock()
+	reg.ped.DeclararRecorte(rec.VideoID, rec.Inicio, rec.Fim)
+	copia := *reg.ped
+	s.mu.Unlock()
+	if err := copia.Salvar(s.baseDir); err != nil {
+		s.logTempos(fmt.Sprintf("aviso: não gravei a proveniência do recorte de %s: %v", copia.ID, err))
+	}
+}
+
+// tituloDoCache lê o título gravado no video.json. Serve o acerto de cache: sem baixar o
+// .info.json de novo, o pedido ainda mostra o nome do culto na tela e no CSV de tempos.
+func (s *Servidor) tituloDoCache(videoID string) string {
+	idx, err := s.cache.LerIndice(videoID)
+	if err != nil {
+		return ""
+	}
+	return idx.Titulo
+}
 
 // registrarOrigem guarda no pedido — e em disco — a origem de tempo que o BAIXADOR devolveu
 // para o video.mp4 que ele escreveu. Não decide o valor: só o registra.

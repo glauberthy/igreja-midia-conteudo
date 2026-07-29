@@ -28,7 +28,7 @@ func servidorComLog(t *testing.T, logPath string) *Servidor {
 func TestRegistrarRodadaOrdenaPorScore(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "rodadas.md")
 	s := servidorComLog(t, log)
-	ped := pipeline.NovoPedido("sermao-1", "https://youtu.be/abc", "01:30:00", "02:10:00", s.agora())
+	ped := pipeline.NovoPedido("sermao-1", "https://youtu.be/cultoTeste1", "01:30:00", "02:10:00", s.agora())
 	cands := []validacao.Candidato{
 		{Hook: "trecho de score medio", Start: "00:01:00", End: "00:01:35", DurationSeconds: 35, Score: 77},
 		{Hook: "trecho de score alto", Start: "00:02:00", End: "00:02:45", DurationSeconds: 45, Score: 90},
@@ -47,7 +47,7 @@ func TestRegistrarRodadaOrdenaPorScore(t *testing.T) {
 	if !strings.Contains(out, "## Rodada 1") {
 		t.Errorf("faltou cabeçalho da rodada 1:\n%s", out)
 	}
-	for _, q := range []string{"sermao-1", "https://youtu.be/abc", "01:30:00 → 02:10:00", "Candidatos: 3"} {
+	for _, q := range []string{"sermao-1", "https://youtu.be/cultoTeste1", "01:30:00 → 02:10:00", "Candidatos: 3"} {
 		if !strings.Contains(out, q) {
 			t.Errorf("faltou contexto %q no log:\n%s", q, out)
 		}
