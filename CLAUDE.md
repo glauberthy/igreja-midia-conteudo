@@ -202,6 +202,41 @@ Todas foram tomadas com medição. O registro completo, com os números, está e
 - Um assunto, um commit.
 - Não reabra decisões registradas em `docs/aprendizados-do-spike.md` nem na seção acima.
 
+## Simplicidade — código profissional, não engenharia de foguete
+
+O sistema resolve um problema concreto de uma igreja. Deve ser **sólido onde a falha é cara** e
+**simples em todo o resto**.
+
+- **A solução mais simples que resolve o problema real.** Se a versão direta funciona, ela é a
+  certa. Elegância não é critério; clareza é.
+- **Defesa proporcional ao custo da falha.** Apagar arquivo em silêncio, gerar o vídeo da cena
+  errada, envenenar o cache — falhas caras e silenciosas, guarda pesada justificada. Um campo
+  novo numa struct, um valor fora de faixa que estoura na hora — baratos e visíveis, não
+  merecem maquinaria.
+- **Prefira tornar o erro impossível a vigiá-lo.** Remover o acesso vale mais que um teste que
+  fiscaliza o acesso, e costuma dar MENOS código. (Foi o que se fez com o resolvedor de origem:
+  o `internal/video` deixou de ter de onde deduzir.)
+- **Toda guarda tem custo de manutenção.** Verificação que dispara falso com frequência vira
+  ruído, e ruído ensina a ignorar. Se uma guarda exige atualizar uma lista de permissão a cada
+  mudança legítima, ela provavelmente devia ser outra coisa.
+- **Não abstraia para futuro hipotético.** Três ocorrências justificam uma abstração; uma não.
+  Pacote novo pede justificativa; função nova, não.
+- **Menos camadas, menos indireção.** Antes de criar um pacote, pergunte se uma função no
+  pacote existente resolve.
+
+O que já existe de maquinaria pesada foi ganho por bugs reais e caros — **não remova**. Mas não
+generalize: o próximo problema provavelmente não precisa do mesmo peso.
+
+**Ao propor guarda, teste de varredura ou pacote novo, escreva uma linha dizendo por que a
+versão simples não bastava.** Se não houver essa linha, faça a simples.
+
+> Caso concreto que já passou do ponto: a varredura por AST que impede leitura da origem fora
+> do resolvedor (`internal/videocache/resolvedor_unico_test.go`), com lista de permissão e um
+> segundo teste vigiando a lista. Protege algo real e caro, mas cobra manutenção a cada
+> consumidor legítimo novo. **Não replicar o padrão.** Se começar a dar falso positivo, a saída
+> é tornar o erro impossível — como se fez removendo o acesso à origem do `internal/video` —, e
+> não afinar a lista.
+
 ## Testes — o que este projeto aprendeu do jeito difícil
 
 **Cinco testes deste projeto passaram com o bug presente.** O padrão é sempre o mesmo:
