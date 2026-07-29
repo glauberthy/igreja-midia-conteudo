@@ -28,7 +28,6 @@ import (
 // Nomes exatos; para famílias de arquivos use padroesRemoviveis.
 var removiveis = []string{
 	"video.mp4",              // o gordo (~570 MB) — baixa de novo se precisar
-	"legenda.srt",            // baixa de novo
 	"legenda.info.json",      // metadados do yt-dlp
 	"mapa.json",              // intermediário da Fase 1
 	"candidatos_brutos.json", // intermediário da Fase 2
@@ -50,6 +49,19 @@ var preservados = []string{
 	"transcricao.txt",        // ~130 KB e é insumo de auditoria (cmd/auditar, spec-16)
 	"revisao-teologica.json", // veredito do confronto doutrinário (spec-14)
 	"pedido.json",            // metadados do pedido (url, janela, status)
+	// legenda.srt SAIU dos removíveis (2026-07-29). O "baixa de novo" foi escrito quando não
+	// havia cache: a legenda era do PEDIDO e apagá-la só custava 3 s se alguém refizesse
+	// aquele pedido. Com o cache por vídeo, a legenda é do CULTO — e apagá-la garantia que o
+	// próximo pedido do mesmo culto pagasse 3 s e uma requisição ao YouTube à toa, esvaziando o
+	// cache por uma regra anterior à existência dele. É a mesma contradição que a spec-06 tinha
+	// ao apagar o vídeo depois de gerar.
+	//
+	// Preservar em vez de "mover para o cache antes de limpar" ou "remover só se já estiver no
+	// cache" porque é a opção mais simples e não acopla a limpeza ao cache: 281 KB medidos num
+	// culto real (35 min, pt-orig) contra 820 MB de vídeo — 0,03%. Não é pressão de disco; o
+	// vídeo era. E, preservada, ela permite que a migração encha o cache quando um pedido do
+	// cmd/baixar é retomado no servidor.
+	"legenda.srt",
 }
 
 // Opcoes parametriza a limpeza.

@@ -85,9 +85,12 @@ Fora:
 remove os brutos elegíveis e devolve o que foi removido, os bytes liberados e os retidos.
 Idempotente (rodar de novo não quebra nem re-conta).
 
-**Apagados** (bruto regenerável): `video.mp4`, `legenda.srt`, `legenda.info.json`,
+**Apagados** (bruto regenerável): `video.mp4`, `legenda.info.json`,
 `short_NN.subNNN.txt`, `mapa.json`, `candidatos_brutos.json`, `candidatos_delim.json`,
 `*.part`/`*.ytdl`.
+
+> `legenda.srt` SAIU desta lista em 2026-07-29 — ver "A legenda deixou de ser apagada" na
+> revisão do fim desta spec.
 
 **Preservados SEMPRE** (histórico auditável): `candidatos.corrigido.json` (fonte de verdade
 validada, spec-09), `transcricao.txt` (insumo do `cmd/auditar`), `revisao-teologica.json`
@@ -342,6 +345,30 @@ justamente o vídeo mais útil, e o próximo pedido pagaria 35 s de download por
 - **A verificação prospectiva de espaço** antes da fase pesada — com uma mudança: ela só
   precisa exigir espaço **quando o download vai de fato acontecer**. Com acerto de cache não
   há nada a reservar, e pedir 2 GB livres para não baixar nada seria falhar sem motivo.
+
+### A legenda deixou de ser apagada
+
+`legenda.srt` estava nos removíveis com a justificativa "baixa de novo". Ela foi escrita quando
+não havia cache: a legenda era do PEDIDO, e apagá-la só custava 3 s se alguém refizesse aquele
+pedido específico.
+
+Com o cache por vídeo, **a legenda é do CULTO** — e apagá-la garantia que o próximo pedido do
+mesmo culto pagasse 3 s e uma requisição ao YouTube à toa, esvaziando o cache por uma regra
+anterior à existência dele. É a mesma classe de contradição desta spec apagando o vídeo depois
+de gerar.
+
+**Ela passou para os preservados.** Havia três saídas; a escolhida é a mais simples e a única
+que não acopla a limpeza ao cache:
+
+| opção | por que não |
+|---|---|
+| mover a legenda para o cache antes de limpar | a limpeza teria de resolver o `video_id` de cada pedido antigo (ler `pedido.json`, montar caminho) — código novo para economizar 281 KB |
+| remover só se já estiver no cache | condicional nova e acoplamento de `internal/retencao` a `internal/videocache` |
+| **preservar (escolhida)** | uma linha de lista; nenhuma condição, nenhum acoplamento |
+
+O que decidiu foi a **medição**: um SRT de culto real (35 min, `pt-orig`) tem **281 KB**, contra
+820 MB de vídeo — **0,03%**. Não é pressão de disco; o vídeo era. E, preservada, ela permite que
+a migração encha o cache quando um pedido do `cmd/baixar` é retomado no servidor.
 
 ### Efeito colateral bom: `-reter` pode crescer
 

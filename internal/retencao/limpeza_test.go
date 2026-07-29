@@ -145,13 +145,17 @@ func TestPreservadosNuncaSaoRemoviveis(t *testing.T) {
 		"transcricao.txt",           // insumo de auditoria (spec-16)
 		"revisao-teologica.json",    // veredito do confronto (spec-14)
 		"pedido.json",               // metadados do pedido
+		// legenda.srt: 281 KB medidos, e desde o cache por vídeo ela é do CULTO. Apagá-la fazia
+		// o próximo pedido do mesmo culto rebaixá-la à toa — esvaziando o cache por uma regra
+		// anterior a ele.
+		"legenda.srt",
 	} {
 		if PodeRemover(nome) {
 			t.Errorf("PERIGO: %q seria apagado pela limpeza", nome)
 		}
 	}
 	// E o inverso: o bruto realmente é removível (senão a limpeza não faz nada).
-	for _, nome := range []string{"video.mp4", "legenda.srt", "short_03.sub012.txt", "video.mp4.part"} {
+	for _, nome := range []string{"video.mp4", "legenda.info.json", "short_03.sub012.txt", "video.mp4.part"} {
 		if !PodeRemover(nome) {
 			t.Errorf("%q deveria ser removível (é bruto regenerável)", nome)
 		}
@@ -247,9 +251,10 @@ func TestIdempotenteEContaBytes(t *testing.T) {
 	criarPedido(t, raiz, "antigo", 24*time.Hour, pedidoCompleto())
 
 	res1, _ := Limpar(Opcoes{RaizTrabalho: raiz, Reter: 1})
-	// bruto do pedido antigo: 1000+100+50+10+10+20+20 = 1210
-	if res1.BytesLiberados != 1210 {
-		t.Errorf("bytes liberados = %d, quero 1210", res1.BytesLiberados)
+	// bruto do pedido antigo, sem a legenda.srt (100 B), que passou a ser preservada:
+	// 1000+50+10+10+20+20 = 1110
+	if res1.BytesLiberados != 1110 {
+		t.Errorf("bytes liberados = %d, quero 1110", res1.BytesLiberados)
 	}
 	// Rodar de novo não quebra nem "libera" de novo.
 	res2, err := Limpar(Opcoes{RaizTrabalho: raiz, Reter: 1})
