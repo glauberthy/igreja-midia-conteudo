@@ -4,6 +4,9 @@
 > por culto. Ver a seção **"v3 — quatro telas navegáveis + cache por vídeo"**. As seções v1 e
 > v2 continuam aqui como registro do que foi decidido e medido; onde a v3 muda uma decisão, a
 > decisão antiga está marcada como superada, não apagada.
+>
+> O rascunho da v3, com as alternativas descartadas e as decisões antes de serem tomadas, está
+> em `docs/plano-spec-05-v3.md`. Ele é histórico; **onde os dois divergirem, vale esta spec.**
 
 ## Objetivo
 
