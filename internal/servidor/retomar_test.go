@@ -169,3 +169,57 @@ func TestVideoUsavelRejeitaResiduo(t *testing.T) {
 		t.Error("arquivo inexistente não pode ser usável")
 	}
 }
+
+// TestCriarGravaPedidoJSON prova, pelo caminho HTTP real, que criar um pedido deixa o
+// pedido.json em disco — sem o qual cmd/render, cmd/auditar e cmd/limpar não conseguem
+// trabalhar sobre pedidos do servidor. Imprime o conteúdo para inspeção com -v.
+func TestCriarGravaPedidoJSON(t *testing.T) {
+	s := servidorPesada(t, candsJanela(), &baixadorVideoFake{}, &renderFake{})
+	criarPedidoOK(t, s)
+	esperarStatus(t, s, "teste-1", "aguardando-aprovacao")
+
+	p := filepath.Join(s.baseDir, "teste-1", "pedido.json")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("o servidor NÃO gravou o pedido.json: %v", err)
+	}
+	t.Logf("pedido.json gravado em %s:\n%s", p, b)
+
+	var ped pipeline.Pedido
+	if err := json.Unmarshal(b, &ped); err != nil {
+		t.Fatalf("pedido.json ilegível: %v", err)
+	}
+	if ped.ID != "teste-1" || ped.YouTubeURL == "" {
+		t.Errorf("pedido.json sem os metadados essenciais: %+v", ped)
+	}
+}
+
+// TestNovoNaoLeDiscoNoBoot é a outra metade: gravar não pode ter virado carregar. A autocura da
+// spec-06 depende de o mapa nascer vazio — é isso que faz um pedido travado por crash desaparecer
+// no restart e o material bruto voltar a ser limpável.
+//
+// Verifica o comportamento (mapa vazio com pedidos completos em disco), não a ausência de uma
+// chamada no código.
+func TestNovoNaoLeDiscoNoBoot(t *testing.T) {
+	base := t.TempDir()
+	// Três pedidos completos em disco, com pedido.json — o cenário que tentaria o boot.
+	for _, id := range []string{"p1", "p2", "p3"} {
+		prepararPedidoEmDisco(t, base, id, true, true)
+	}
+
+	s := Novo(Opcoes{
+		Baixador: &baixadorFake{transc: "x", base: base}, Selecionador: candsJanela(),
+		BaseDir: base, OutDir: t.TempDir(),
+		LogRodadasPath: filepath.Join(base, "r.md"),
+		TemposPath:     filepath.Join(base, "t.csv"),
+		CortesPath:     filepath.Join(base, "c.csv"),
+	})
+	s.mu.Lock()
+	n := len(s.pedidos)
+	s.mu.Unlock()
+	t.Logf("pedidos em disco: 3 (com pedido.json) | carregados no boot: %d", n)
+	if n != 0 {
+		t.Fatalf("o boot carregou %d pedido(s): a autocura da spec-06 quebrou — pedido travado "+
+			"por crash viraria vazamento permanente de disco", n)
+	}
+}

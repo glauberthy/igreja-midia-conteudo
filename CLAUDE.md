@@ -91,3 +91,35 @@ Estas regras não se negociam. Se uma tarefa parecer exigir quebrá-las, pare e 
 - Toda mudança de código precisa passar em `go build ./...` e `go test ./...`.
 - Não reabra decisões já registradas em `docs/aprendizados-do-spike.md`.
 - Prefira a biblioteca padrão do Go; só adicione dependência com justificativa.
+
+## Como reportar
+
+**Prova de entrega (obrigatória).** Ao final de cada tarefa, para **cada** item entregue,
+forneça três coisas:
+
+1. **Onde está** — arquivo e linha da mudança.
+2. **Como eu confirmo sozinho** — um comando que o dono roda no terminal dele, cujo resultado
+   seria **diferente** se a mudança não existisse. Não vale um comando que passa de qualquer
+   jeito.
+3. **O que esperar** — a saída esperada, para ele comparar.
+
+Comece o relatório sempre pela saída de `git show --stat HEAD` (ou o intervalo de commits da
+tarefa), para o dono ver de imediato quais arquivos foram tocados e conferir contra o que foi
+afirmado.
+
+**Não basta afirmar que fez, nem que os testes passaram.** Neste projeto, cinco testes passaram
+com o bug presente, uma substituição de bloco falhou em silêncio e engoliu quatro funções, e um
+`echo` declarou a suíte verde enquanto ela falhava. A verificação tem de ser observável pelo
+dono, não uma afirmação sua.
+
+**Se um item não tiver verificação observável** — comportamento que só aparece no navegador,
+julgamento visual, dependência de rede — **diga isso explicitamente** e classifique como
+"feito, não verificado", em vez de listá-lo junto com o que foi provado. Declarar honestamente
+o que não foi verificado vale mais que uma lista uniforme de itens "prontos".
+
+**Cuidado específico com valores de configuração:** verificar que uma constante existe não prova
+que ela é usada. Neste projeto já aconteceu três vezes de um valor existir num lugar e o caminho
+real usar outro (o render lendo o `pedido.json` antigo; a Fase 5 divergindo da Fase 3; o
+`cmd/servidor` fixando `RodapeAlpha` e tornando a constante do pacote letra morta). Ao entregar
+mudança de configuração, mostre o comando que prova o valor **no caminho que o operador usa**,
+não só onde ele é declarado.

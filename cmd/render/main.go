@@ -42,7 +42,7 @@ func main() {
 	logo := flag.String("logo", "", "caminho do PNG da logo do rodapé (spec-13; vazio = assets/logo_ibi_gsf.png)")
 	logoLarg := flag.Int("logo-larg", 0, "largura da logo no vídeo em px (0 = default)")
 	logoBaixo := flag.Int("logo-ajuste-y", 0, "ajuste vertical da logo a partir do centro da faixa (px; + desce, - sobe)")
-	rodapeAlpha := flag.Float64("rodape-escuro", 1.00, "opacidade do gradiente escuro no rodapé (0 = sem gradiente; ajuda a logo/legenda em fundo claro)")
+	rodapeAlpha := flag.Float64("rodape-escuro", video.RodapeAlphaPadrao, "opacidade do gradiente escuro no rodapé (0 = sem gradiente; ajuda a logo/legenda em fundo claro)")
 	rodapeAltura := flag.Int("rodape-altura", 0, "altura do gradiente escuro do rodapé em px (0 = default)")
 	preset := flag.String("preset", "", "preset do x264 (vazio = default; preset mais lento = imagem mais nítida)")
 	crf := flag.String("crf", "", "crf do x264 (vazio = default; menor = mais qualidade)")

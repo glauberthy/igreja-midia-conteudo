@@ -73,9 +73,11 @@ func main() {
 	rend := &video.Renderizador{
 		Exec: video.ExecutorReal{}, Bin: *ffmpegBin, BaseDir: *base, OutDir: *out,
 		MargemFimMs: 0,
-		// RodapeAlpha/RodapeAltura zerados = usa o padrão medido do pacote video (0.80/1400).
-		// Antes o servidor fixava 1.00 aqui, então mudar o padrão do pacote não teria efeito
-		// nenhum no caminho que o operador usa — a constante existia e era letra morta.
+		// RodapeAlpha PRECISA ser explícito: zero significa "sem gradiente" no contrato do
+		// Renderizador, não "use o padrão". Referencia a constante exportada para o valor viver
+		// num lugar só — antes daqui saía um 1.00 fixo, que anulava o padrão do pacote.
+		// RodapeAltura fica zerado porque ali o zero SIM cai no padrão (rodapeAltura()).
+		RodapeAlpha: video.RodapeAlphaPadrao,
 	}
 
 	s := servidor.Novo(servidor.Opcoes{

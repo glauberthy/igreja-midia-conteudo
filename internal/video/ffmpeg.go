@@ -68,7 +68,6 @@ const (
 	// mais gradual e o pregador não desaparece atrás da base escura. Frames comparativos em
 	// docs/mockups/rodape/ — trocar é uma linha, e as flags -rodape-altura/-rodape-escuro
 	// permitem testar sem recompilar.
-	rodapeAlphaPadrao  = 0.80 // opacidade máxima do gradiente (na base); 0 = sem gradiente
 	rodapeAlturaPadrao = 1400 // altura do gradiente (px), de baixo para cima
 	easeGradiente      = 2.2  // expoente da curva de opacidade (>1 = começa mais suave)
 
@@ -95,6 +94,19 @@ const (
 	presetPadrao = "medium"
 	crfPadrao    = "18"
 )
+
+// RodapeAlphaPadrao é a opacidade máxima do gradiente do rodapé, EXPORTADA de propósito.
+//
+// Não pode ser um fallback interno para o campo zerado, porque zero tem significado próprio no
+// contrato do Renderizador: "sem gradiente" (o cmd/render precisa disso, via -rodape-escuro 0).
+// Como quem chama precisa passar o valor explicitamente, o valor tem de ser visível de fora —
+// senão cada chamador escreve o seu, que é exatamente como o cmd/servidor acabou fixando 1.00 e
+// tornando a constante letra morta.
+//
+// Quem monta um Renderizador para o caminho do operador usa esta constante. Um teste verifica
+// que o valor chega ao comando do ffmpeg (internal/video/caminho_do_operador_test.go), porque
+// conferir a constante não prova que ela é usada.
+const RodapeAlphaPadrao = 0.80
 
 // Executor roda um comando externo e devolve stdout, stderr e o erro de execução.
 type Executor interface {
