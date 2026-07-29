@@ -7,7 +7,12 @@ Visão geral das etapas:
 
 1. **baixar** — legenda automática pt + vídeo do trecho da pregação (`cmd/baixar`, usa `yt-dlp`).
 2. **selecionar** — harness multifase (`cmd/selecionar`, usa o `llama-server`): o modelo mapeia o sermão, escolhe candidatos e os avalia; o código delimita o tempo (30–58 s) e valida. A validação e a rede de retry já rodam embutidas.
-3. **renderizar** — corta, reenquadra 9:16 e queima a legenda de cada candidato (`cmd/render`, usa `ffmpeg`).
+3. **renderizar** — corta, reenquadra 9:16 e aplica a logo do rodapé (`cmd/render`, usa `ffmpeg`).
+
+> **A queima da legenda está SUSPENSA** (spec-12): o carimbo de tempo que temos adianta a
+> legenda em ~3 s. Passe `-legenda` para ligar de volta e testar. A legenda continua sendo
+> insumo do pipeline (seleção, fronteiras do corte, tela de revisão, auditoria) — o que saiu
+> é só o texto queimado na imagem.
 
 ---
 
@@ -93,7 +98,7 @@ go run ./cmd/selecionar \
   -out    "trabalho/$ID/candidatos.corrigido.json" \
   -prompt-dir prompts/
 
-# (3) RENDERIZAR — corta, reenquadra 9:16 e queima a legenda de cada candidato.
+# (3) RENDERIZAR — corta, reenquadra 9:16 e aplica a logo (legenda suspensa; -legenda liga).
 # Corta no end cheio por padrão (spec-10: -margem-fim default 0). Se, com o end
 # preciso, houver vazamento da fala seguinte, aplique recuo: -margem-fim 0.3.
 go run ./cmd/render -id "$ID"

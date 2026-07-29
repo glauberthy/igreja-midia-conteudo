@@ -50,6 +50,8 @@ func main() {
 	endpoint := flag.String("endpoint", harness.EndpointPadrao, "endpoint do modelo (llama-server; URL completa /v1/chat/completions)")
 	prompts := flag.String("prompts", harness.PromptDirPadrao, "pasta dos prompts")
 	declaracao := flag.String("declaracao", harness.DeclaracaoPadrao, "caminho da Declaração Doutrinária")
+	legenda := flag.Bool("legenda", video.LegendaQueimadaPadrao, "queimar a legenda na imagem do Short "+
+		"(spec-12 SUSPENSA: default desligado enquanto o timestamp for adiantado em ~3s)")
 	retomar := flag.String("retomar", "", "retoma um pedido já em disco, direto na revisão (pula legenda+seleção; "+
 		"reaproveita o video.mp4 se existir). Para iterar em render/tela sem refazer o ciclo inteiro.")
 	flag.Parse()
@@ -73,6 +75,10 @@ func main() {
 	rend := &video.Renderizador{
 		Exec: video.ExecutorReal{}, Bin: *ffmpegBin, BaseDir: *base, OutDir: *out,
 		MargemFimMs: 0,
+		// Legenda queimada SUSPENSA (spec-12): explícita aqui pela mesma razão do RodapeAlpha
+		// — o caminho do operador é ESTE, e um valor escrito à mão aqui já tornou a constante
+		// do pacote letra morta uma vez. Vem da flag, cujo default é a constante do pacote.
+		Legenda: *legenda,
 		// RodapeAlpha PRECISA ser explícito: zero significa "sem gradiente" no contrato do
 		// Renderizador, não "use o padrão". Referencia a constante exportada para o valor viver
 		// num lugar só — antes daqui saía um 1.00 fixo, que anulava o padrão do pacote.

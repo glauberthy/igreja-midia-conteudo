@@ -1,5 +1,44 @@
 # Spec 12 — Legenda queimada: texto limpo, 1–2 linhas, posicionada acima da logo
 
+> **Status: SUSPENSA (não obsoleta) desde 2026-07-29.** A queima está desligada por flag; o
+> código permanece inteiro. Ver "Suspensão temporária" abaixo.
+
+## Suspensão temporária (2026-07-29)
+
+Decisão do dono: **suspender a queima da legenda na imagem do Short**. O foco da rodada
+passa a ser qualidade de imagem.
+
+**Motivo.** A legenda aparecia **adiantada** em relação à fala. Não é defeito do desenho
+(posição, fonte, quebra em 2 linhas — tudo isso a spec entregou e continua valendo), é
+defeito do **carimbo de tempo**: todo texto novo de um bloco do SRT herda o instante em que
+o bloco *apareceu*. Erro medido em quatro sermões: **2,5 a 3,4 s de adiantamento** na última
+palavra do bloco (`docs/medicoes/deslocamento-legenda.md`). Legenda 3 s à frente do pregador
+é pior que legenda nenhuma.
+
+**Condição de volta.** O alinhamento forçado (Rota D — timestamp por palavra) resolver o
+carimbo. Quando resolver, o default volta a ligado; nada aqui precisa ser reimplementado.
+
+**Por que flag e não remoção.** Apagar agora custaria refazer esta spec depois. O
+desligamento é um booleano:
+
+| onde | o quê |
+|---|---|
+| `internal/video/ffmpeg.go` | `LegendaQueimadaPadrao = false` (exportada) e `Renderizador.Legenda` |
+| `cmd/render` | `-legenda` (default = a constante) |
+| `cmd/servidor` | `-legenda` (default = a constante), passada explicitamente ao `Renderizador` |
+| `internal/video/caminho_do_operador_test.go` | `TestLegendaSuspensaNoCaminhoDoOperador` — prova que o ffmpeg **não** recebe `drawtext` no caminho do operador, e que com `-legenda` recebe |
+
+Ligar de volta para testar: `go run ./cmd/render -id ID -legenda`.
+
+**O que NÃO foi suspenso.** A legenda continua insumo do pipeline, e nada disso mudou:
+
+- seleção dos trechos (Fases 1 e 2 leem a transcrição);
+- fronteiras de frase que delimitam o corte (Fase 3);
+- faixa de frases clicável da tela de revisão (spec-05);
+- auditoria de fidelidade (spec-16).
+
+Também **permanece a logo** no rodapé (spec-13). O que sai da imagem é só o texto da legenda.
+
 ## Objetivo
 
 Corrigir a legenda queimada nos Shorts. Hoje ela é o SRT bruto do YouTube: 4 linhas

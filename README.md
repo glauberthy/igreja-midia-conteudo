@@ -103,7 +103,8 @@ critérios antes da seguinte.
 - **spec-03 — Download e legenda**: `yt-dlp` encapsulado; baixa o trecho da pregação
   e gera a transcrição. Sem legenda pt → para (DP-001).
 - **spec-04 — Vídeo 9:16 e legenda**: `ffmpeg` encapsulado; corta cada candidato,
-  reenquadra vertical, queima legenda, grava em `finalizados/`.
+  reenquadra vertical, grava em `finalizados/`. A queima da legenda está **suspensa**
+  (spec-12), ligável com `-legenda`.
 - **spec-05 — Servidor e página** (Partes 1 e 2 aceitas; Parte 3 pendente): HTTP em
   porta dedicada, fluxo invertido (selecionar antes de baixar), player e aprovação.
 - **spec-06 — Retenção e limpeza**: descarta o vídeo bruto, preserva texto/logs.
@@ -298,7 +299,7 @@ go run ./cmd/harness -transc trabalho/meu-sermao/transcricao.txt -ate 5
 # 4. Validar/corrigir candidatos crus do modelo (determinístico, sem LLM)
 go run ./cmd/validar -de 1 -ate 5 -corrigir
 
-# 5. Renderizar os Shorts (corte 9:16 + legenda + logo; precisa de ffmpeg)
+# 5. Renderizar os Shorts (corte 9:16 + logo; legenda suspensa — spec-12; precisa de ffmpeg)
 go run ./cmd/render -id meu-sermao
 ```
 

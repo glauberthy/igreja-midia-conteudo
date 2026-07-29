@@ -36,6 +36,8 @@ func main() {
 	cand := flag.String("cand", "", "arquivo de candidatos corrigidos (padrão: <base>/<id>/candidatos.corrigido.json)")
 	bin := flag.String("bin", "ffmpeg", "binário do ffmpeg")
 	margemFim := flag.Float64("margem-fim", 0.0, "margem de recuo no fim do corte, em segundos (0 = corta no end cheio; ver spec-10)")
+	legenda := flag.Bool("legenda", video.LegendaQueimadaPadrao, "queimar a legenda na imagem do Short "+
+		"(spec-12 SUSPENSA: default desligado enquanto o timestamp for adiantado em ~3s; ver docs/medicoes/deslocamento-legenda.md)")
 	fonte := flag.String("fonte", "", "caminho do .ttf da legenda (spec-12; vazio = Google Sans Flex Bold em assets/)")
 	fonteTam := flag.Int("fonte-tam", 0, "tamanho da fonte da legenda em px (0 = default)")
 	legendaCPL := flag.Int("legenda-cpl", 0, "caracteres por linha da legenda; governa o ritmo de troca (0 = default)")
@@ -44,6 +46,7 @@ func main() {
 	logoBaixo := flag.Int("logo-ajuste-y", 0, "ajuste vertical da logo a partir do centro da faixa (px; + desce, - sobe)")
 	rodapeAlpha := flag.Float64("rodape-escuro", video.RodapeAlphaPadrao, "opacidade do gradiente escuro no rodapé (0 = sem gradiente; ajuda a logo/legenda em fundo claro)")
 	rodapeAltura := flag.Int("rodape-altura", 0, "altura do gradiente escuro do rodapé em px (0 = default)")
+	faixaLogo := flag.Int("faixa-logo", 0, "altura da faixa em que a logo é centralizada em px (0 = default; menor = logo mais para baixo)")
 	preset := flag.String("preset", "", "preset do x264 (vazio = default; preset mais lento = imagem mais nítida)")
 	crf := flag.String("crf", "", "crf do x264 (vazio = default; menor = mais qualidade)")
 	flag.Parse()
@@ -83,6 +86,7 @@ func main() {
 		MargemFimMs:   margemFimMs,
 		Preset:        *preset,
 		CRF:           *crf,
+		Legenda:       *legenda,
 		FontePath:     *fonte,
 		TamanhoFonte:  *fonteTam,
 		CharsPorLinha: *legendaCPL,
@@ -91,6 +95,7 @@ func main() {
 		LogoAjusteY:   *logoBaixo,
 		RodapeAlpha:   *rodapeAlpha,
 		RodapeAltura:  *rodapeAltura,
+		FaixaLogo:     *faixaLogo,
 	}
 	paths, err := r.Renderizar(context.Background(), ped, cands)
 

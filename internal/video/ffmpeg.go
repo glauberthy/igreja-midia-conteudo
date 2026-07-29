@@ -13,6 +13,10 @@
 // linhas, na BASE do vídeo (acima da faixa reservada à logo), com fonte Google Sans Flex
 // encorpada carregada direto do .ttf (drawtext:fontfile), branca com contorno/sombra.
 //
+// A queima está SUSPENSA por decisão do dono (ver LegendaQueimadaPadrao e a nota de
+// suspensão na spec-12): o código continua aqui, desligado por flag, porque o que falta é
+// o timestamp preciso (Rota D), não o desenho da legenda.
+//
 // Não altera o áudio/fala; a legenda vem da transcrição, sem reescrever palavras.
 package video
 
@@ -51,7 +55,11 @@ const (
 	contornoLegenda     = 4   // borderw preto (legível sobre qualquer fundo)
 	sombraLegenda       = 2   // shadowx/shadowy
 	espacoLinhasLegenda = 10  // line_spacing
-	faixaLogoPx         = 240 // faixa inferior RESERVADA à logo; a legenda fica acima dela
+	// Faixa inferior reservada à logo: a legenda fica ACIMA dela e a logo é centralizada
+	// DENTRO dela (centro em H - faixa/2). Com a legenda suspensa, a faixa não reserva mais
+	// nada contra o pregador — ela só define a que altura a logo se apoia. Calibrável por
+	// flag (-faixa-logo) para gerar variantes sem recompilar.
+	faixaLogoPadrao = 240
 )
 
 // Logo no rodapé (spec-13). Sobreposta (overlay do PNG com alpha) na faixa reservada,
@@ -64,13 +72,31 @@ const (
 	// Faixa escura do rodapé como GRADIENTE (transparente em cima → escuro embaixo),
 	// suave como na arte de referência (não uma caixa de borda dura). A opacidade sobe com
 	// uma curva (pow) para o começo ser IMPERCEPTÍVEL — sem linha visível no topo.
-	// 1500/0.72 é a variante ESCOLHIDA PELO OPERADOR entre quatro geradas
-	// (docs/mockups/rodape/d_1500_0.72.png). Rampa mais alta e opacidade máxima menor que o
-	// original (1200/1.00): o degradê fica mais gradual e o pregador não desaparece atrás da
-	// base escura. As flags -rodape-altura/-rodape-escuro permitem testar outros valores sem
-	// recompilar.
-	rodapeAlturaPadrao = 1500 // altura do gradiente (px), de baixo para cima
-	easeGradiente      = 2.2  // expoente da curva de opacidade (>1 = começa mais suave)
+	//
+	// 420/0.90 — CURTO E FORTE. Trocou 1500/0.72 quando a legenda foi suspensa (spec-12):
+	// o gradiente existia para dois fins, contraste da legenda e legibilidade da logo
+	// branca; sem legenda sobrou só a logo, que ocupa os 240 px de baixo. Um gradiente de
+	// 1500 px cobria 78% da altura do Short para servir uma faixa de 240 px — era isso que
+	// dava a sensação de "apertado".
+	//
+	// Medido em nove variantes no mesmo frame (docs/medicoes/imagem-sem-legenda.md), com o
+	// pregador de camisa BRANCA — o pior caso para a logo branca:
+	//
+	//   variante          torso (luma, ↑=mais imagem)   sob o texto da logo (luma, ↓=legível)
+	//   1500/0.72 (antes)          87,96                        68,08
+	//   520/0.60                  119,03                       113,29
+	//   420/0.90  <- escolhido    120,16                        99,64
+	//   480/1.00                  118,11                        83,04
+	//   sem gradiente             122,33                       166,06
+	//
+	// 420/0.90 recobra 94% da imagem que o gradiente antigo escurecia (87,96 → 120,16, teto
+	// 122,33) e ainda escurece o fundo da logo de 166 para 100. A opacidade SUBIU (0,72 →
+	// 0,90) porque agora ela só age no rodapé: com rampa de 1500 px, 0,90 apagaria o
+	// pregador; com 420 px, o topo do gradiente fica abaixo do peito.
+	//
+	// As flags -rodape-altura/-rodape-escuro/-faixa-logo testam outros valores sem recompilar.
+	rodapeAlturaPadrao = 420 // altura do gradiente (px), de baixo para cima
+	easeGradiente      = 2.2 // expoente da curva de opacidade (>1 = começa mais suave)
 
 	// Encode: medido, não arbitrado. Nitidez pela energia de altas frequências (laplaciano)
 	// no mesmo trecho, com a cadeia de filtros de produção:
@@ -107,7 +133,28 @@ const (
 // Quem monta um Renderizador para o caminho do operador usa esta constante. Um teste verifica
 // que o valor chega ao comando do ffmpeg (internal/video/caminho_do_operador_test.go), porque
 // conferir a constante não prova que ela é usada.
-const RodapeAlphaPadrao = 0.72
+//
+// 0.90 vem da medição das variantes de rodapé sem legenda — ver rodapeAlturaPadrao acima, que
+// é o par indissociável deste valor (opacidade só se julga junto com a altura da rampa).
+const RodapeAlphaPadrao = 0.90
+
+// LegendaQueimadaPadrao diz se o render QUEIMA a legenda na imagem do Short. Está em
+// `false`: a queima está SUSPENSA, não removida (spec-12, seção "Suspensão temporária").
+//
+// Motivo: a legenda aparecia ADIANTADA. O carimbo de tempo que temos é o início do bloco
+// do SRT, e toda palavra nova do bloco herda esse instante — erro medido de 2,5 a 3,4 s na
+// última palavra (docs/medicoes/deslocamento-legenda.md). Legenda 3 s adiantada sobre a
+// fala do pregador é pior que nenhuma legenda. A correção depende de alinhamento forçado
+// (Rota D); quando ela existir, este default volta para `true`.
+//
+// A legenda CONTINUA insumo do pipeline: seleção (Fases 1–2), fronteiras de frase do corte
+// (Fase 3), faixa de frases da tela de revisão e auditoria. O que está suspenso é só a
+// queima na imagem.
+//
+// Exportada pelo mesmo motivo que RodapeAlphaPadrao: quem monta um Renderizador precisa
+// poder referenciar o padrão em vez de escrever o seu (foi assim que o cmd/servidor
+// fixou um 1.00 e tornou a constante do rodapé letra morta).
+const LegendaQueimadaPadrao = false
 
 // Executor roda um comando externo e devolve stdout, stderr e o erro de execução.
 type Executor interface {
@@ -137,7 +184,13 @@ type Renderizador struct {
 	OutDir      string
 	MargemFimMs int
 
-	// Calibração da legenda (spec-12); zero/"" usa os defaults acima.
+	// Legenda queimada (spec-12). SUSPENSA: o zero-value (false) é o estado atual de
+	// produção — sem queima. Quem quer queimar liga explicitamente. Ver
+	// LegendaQueimadaPadrao para o motivo e a condição de volta.
+	Legenda bool
+
+	// Calibração da legenda (spec-12); zero/"" usa os defaults acima. Só têm efeito com
+	// Legenda = true.
 	FontePath     string // caminho do .ttf da fonte
 	TamanhoFonte  int    // px
 	CharsPorLinha int    // largura da linha (ritmo de troca dos blocos)
@@ -148,6 +201,7 @@ type Renderizador struct {
 	LogoAjusteY  int     // ajuste vertical da logo a partir do centro da faixa (px; + desce)
 	RodapeAlpha  float64 // opacidade do gradiente escuro na base (0 = sem gradiente)
 	RodapeAltura int     // altura do gradiente escuro (px)
+	FaixaLogo    int     // altura da faixa em que a logo é centralizada (px; 0 = default)
 
 	// Preset/CRF do x264. Vazios usam presetPadrao/crfPadrao. Configuráveis porque a
 	// escolha é um trade-off medido (tempo x nitidez), e medir exige variar.
@@ -235,6 +289,13 @@ func (r *Renderizador) rodapeAltura() int {
 	return r.RodapeAltura
 }
 
+func (r *Renderizador) faixaLogo() int {
+	if r.FaixaLogo <= 0 {
+		return faixaLogoPadrao
+	}
+	return r.FaixaLogo
+}
+
 // Renderizar gera um Short por candidato, em ordem de score (maior primeiro), e
 // devolve os caminhos gerados. Em falha, seta Status=erro e Erro. Os candidatos vêm
 // SEMPRE de fora (spec-09: fonte única = arquivo de seleção validado); o pedido não
@@ -282,12 +343,21 @@ func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, can
 	// Texto LIMPO da legenda: vem da transcrição já limpa (mesma que a seleção usa),
 	// passada pela desduplicação/segmentação da Fase 3 (harness.Frasear). NÃO usamos o
 	// SRT bruto rolling (spec-12).
-	transcPath := filepath.Join(trabDir, "transcricao.txt")
-	transcBytes, err := os.ReadFile(transcPath)
-	if err != nil {
-		return nil, fmt.Errorf("lendo transcrição %q (necessária p/ a legenda limpa): %w", transcPath, err)
+	//
+	// Com a queima SUSPENSA (Legenda = false, o padrão de hoje) nem lemos a transcrição:
+	// sem frases, BlocosLegenda devolve nada e nenhum drawtext entra no filtro. O aviso no
+	// stderr existe para "Short sem legenda" nunca ser confundido com falha silenciosa.
+	var frases []harness.Frase
+	if r.Legenda {
+		transcPath := filepath.Join(trabDir, "transcricao.txt")
+		transcBytes, err := os.ReadFile(transcPath)
+		if err != nil {
+			return nil, fmt.Errorf("lendo transcrição %q (necessária p/ a legenda limpa): %w", transcPath, err)
+		}
+		frases = harness.Frasear(string(transcBytes))
+	} else {
+		fmt.Fprintln(os.Stderr, "render: legenda queimada DESLIGADA (spec-12 suspensa; -legenda para ligar)")
 	}
-	frases := harness.Frasear(string(transcBytes))
 
 	est := EstiloLegenda{
 		FontePath:    r.fontePath(),
@@ -295,7 +365,7 @@ func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, can
 		Contorno:     contornoLegenda,
 		Sombra:       sombraLegenda,
 		EspacoLinhas: espacoLinhasLegenda,
-		FaixaLogoPx:  faixaLogoPx,
+		FaixaLogoPx:  r.faixaLogo(),
 	}
 	cpl := r.charsPorLinha()
 	grad := GradConfig{Altura: r.rodapeAltura(), Alpha: r.RodapeAlpha}

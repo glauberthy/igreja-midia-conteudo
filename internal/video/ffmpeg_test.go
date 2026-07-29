@@ -315,9 +315,15 @@ func TestRenderizarLimpaSubTxt(t *testing.T) {
 	base := t.TempDir()
 	ped, cands := prepararPedido(t, base)
 	fx := &fakeExec{}
-	r := &Renderizador{Exec: fx, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final")}
+	// Legenda LIGADA de propósito: é a queima que cria os .txt temporários. Com ela
+	// desligada (o default de hoje, spec-12 suspensa) não haveria arquivo nenhum e o teste
+	// passaria sem testar nada.
+	r := &Renderizador{Exec: fx, Bin: "ffmpeg", BaseDir: base, OutDir: filepath.Join(base, "final"), Legenda: true}
 	if _, err := r.Renderizar(context.Background(), ped, cands); err != nil {
 		t.Fatalf("Renderizar: %v", err)
+	}
+	if !strings.Contains(strings.Join(fx.chamadas[0], " "), "drawtext=") {
+		t.Fatal("com Legenda:true o ffmpeg deveria receber drawtext — o teste dos .txt não valeria nada sem isso")
 	}
 	sobras, _ := filepath.Glob(filepath.Join(base, ped.ID, "short_*.sub*.txt"))
 	if len(sobras) != 0 {
