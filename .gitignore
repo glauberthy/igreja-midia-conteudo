@@ -40,6 +40,11 @@ cmd/render/render
 *.part-Frag*
 invalido_*.txt
 
+# Configuração do Claude Code: .claude/settings.json é VERSIONADO — é contrato do projeto,
+# como um CI seria (os hooks rodam build/vet/test ao fim de cada tarefa e gofmt a cada edição).
+# O .local.json é pessoal de cada máquina/pessoa e não entra.
+.claude/settings.local.json
+
 # Arquivos de sistema/editor
 .DS_Store
 *.swp
