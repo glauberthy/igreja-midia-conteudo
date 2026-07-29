@@ -140,15 +140,25 @@ o instante (`R = 2·T`), renderiza pelo caminho da CLI um pedido no formato do s
 compara o **pixel** do frame. Verificado por mutação: reintroduzindo `ped.Inicio`, o teste
 falha e nomeia a causa.
 
-### Ligação com o cache de vídeo por ID (pendente) — para quem for implementar
+### Ligação com o cache de vídeo por ID — DESENHADO na spec-05 v3
 
-Existe a intenção de guardar o vídeo baixado **por vídeo do YouTube**, algo como
-`videos/<video_id>/video.mp4`, em vez de por pedido, para dois pedidos do mesmo culto não
-baixarem 800 MB duas vezes.
+O cache por vídeo (`videos/<video_id>/`) deixou de ser intenção: está desenhado na **spec-05
+v3** (2026-07-29), para dois pedidos do mesmo culto não baixarem 570 MB duas vezes.
 
-Quando isso for feito, **os arquivos serão sempre o vídeo INTEIRO, com origem 0** — e a
-ambiguidade desaparece estruturalmente, porque deixa de existir a variante "janela" no cache.
-Duas consequências a respeitar:
+A regra que a spec-05 v3 fixou, e que vem direto desta spec:
+
+> **Cada arquivo de vídeo carrega a própria declaração de origem, ao lado dele.**
+> `videos/<id>/video.json` descreve `videos/<id>/video.mp4`;
+> `pedido.json.origem_ms` descreve `trabalho/<id>/video.mp4`.
+
+E um único resolvedor, `videocache.Localizar(videosDir, baseDir, ped) (path, origemMs, err)`,
+como o **único** lugar que decide qual arquivo e qual origem: vídeo na pasta do pedido vence
+(fluxo por janela, mais específico), senão o cache, senão erro claro. É a mesma lição do
+"eleja uma fonte" desta spec, agora aplicada ao par arquivo+origem em vez de aos candidatos.
+
+No cache **os arquivos serão sempre o vídeo INTEIRO, com origem 0** — a ambiguidade desaparece
+estruturalmente ali, porque não existe variante "janela" no cache. Duas consequências a
+respeitar:
 
 1. **Não recrie a suposição.** É tentador dizer "no cache é sempre 0, então nem preciso do
    campo". O campo continua sendo a única forma de o render saber a origem de um arquivo que
@@ -156,10 +166,15 @@ Duas consequências a respeitar:
    pedido. Enquanto os dois caminhos coexistirem, a origem tem de ser declarada.
    Como o escritor **devolve** a origem, quem muda é só o chamador: o baixador fica intacto
    quando o destino do fato passar de `pedido.json` para `videos/<id>/video.json`.
-2. **A declaração acompanha o arquivo.** Se o vídeo passa a ser compartilhado entre pedidos,
-   a origem é propriedade do **arquivo**, não do pedido: o lugar natural passa a ser um
-   `videos/<video_id>/video.json` ao lado do `.mp4`, e o pedido só aponta para ele. Enquanto
-   o vídeo vive dentro de `trabalho/<id>/`, `pedido.json` é o lugar certo.
+2. **A declaração acompanha o arquivo.** Como o vídeo do cache é compartilhado entre pedidos,
+   a origem é propriedade do **arquivo**, não do pedido: fica em `videos/<video_id>/video.json`
+   ao lado do `.mp4`, e o `pedido.json` só aponta para o vídeo (campo `video_id`). Para o vídeo
+   que vive dentro de `trabalho/<id>/` (`cmd/baixar` por janela), `pedido.json.origem_ms`
+   continua sendo o lugar certo. **Dois arquivos, duas declarações, uma regra** — e um
+   resolvedor só.
+3. **O `video_id` vira nome de diretório, então precisa ser validado.** Hoje ele só alimenta
+   um iframe; no cache ele escolhe onde escrevemos. Sem `^[A-Za-z0-9_-]{11}$`, uma URL
+   hostil decide o caminho. É a mesma preocupação do `retencao.caminhoSeguro`, num lugar novo.
 
 ## Nota
 

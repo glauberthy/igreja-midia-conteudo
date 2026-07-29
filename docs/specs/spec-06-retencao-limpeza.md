@@ -1,5 +1,11 @@
 # Spec 06 — Retenção do bruto e limpeza de disco
 
+> **Revisada em 2026-07-29 pela v3 da spec-05 (cache por vídeo).** A premissa desta spec era
+> "o vídeo é descartável assim que os Shorts existem". Com o cache por vídeo, o vídeo passou a
+> ser **reutilizável entre pedidos** — apagá-lo ao concluir joga fora exatamente o que o cache
+> existe para guardar. A política do vídeo mudou; a dos artefatos de pedido não.
+> Ver "Revisão de 2026-07-29" no fim.
+
 ## Objetivo
 
 Evitar que o disco encha: descartar o vídeo bruto (o arquivo grande) dos pedidos
@@ -283,6 +289,73 @@ prazo; (b) arquivar em outro volume; (c) manter só os N últimos pedidos, como 
 Precisa de um sinal de "já entregue" que hoje não existe (o sistema não sabe se o operador
 baixou). Não implementar antes de haver o sinal — apagar um Short que o operador ainda não
 baixou seria perda real.
+
+## Revisão de 2026-07-29 — o vídeo virou cache, e a política dele muda
+
+### O que estava contraditório
+
+Esta spec apagava `trabalho/<id>/video.mp4` dos pedidos anteriores, mantendo o do último. Com
+o **cache por vídeo** (spec-05 v3), o arquivo deixou de pertencer a um pedido: ele é do
+**culto**, mora em `videos/<idDoVídeo>/` e serve qualquer janela, de qualquer pedido, agora ou
+na semana que vem. A política antiga, aplicada ao cache, apagaria o vídeo logo depois de
+baixá-lo — o oposto do objetivo.
+
+### Duas políticas, porque agora são dois níveis
+
+| artefato | onde | política |
+|---|---|---|
+| vídeo, legenda, transcrição do culto | `videos/<idDoVídeo>/` | **prazo em dias + teto de tamanho**, avaliados juntos |
+| candidatos, ajustes, `pedido.json` | `trabalho/<idDoPedido>/` | **contagem de pedidos** (a política atual, inalterada) |
+| Shorts | `finalizados/` | intocado, como já era |
+
+**Valores padrão (decisão do dono): 30 dias e 50 GB** (~90 vídeos de 570 MB). O disco tem
+~516 GB livres; o teto é conservador de propósito.
+
+### Por que prazo E teto, e não um só
+
+- **Só prazo** não protege o disco: uma semana movimentada (vários cultos, testes, refazer com
+  outra janela) enche o disco **antes** de qualquer arquivo completar 30 dias. Foi o ponto do
+  dono, e é o mesmo raciocínio que levou esta spec a rejeitar prazo puro em 2026-07 — só que
+  agora a resposta não é trocar prazo por contagem, é somar o teto.
+- **Só teto** não limpa o que ninguém mais vai usar: um culto de três meses atrás ficaria em
+  disco enquanto houver espaço, sem servir a nada.
+
+Ordem de avaliação:
+
+1. remove os vídeos cujo **último uso** é mais antigo que o prazo;
+2. se o cache **ainda** passa do teto, remove do mais antigo para o mais novo até caber;
+3. o vídeo do pedido **em curso** é intocável — mesma invariante estrutural de hoje.
+
+### Idade pelo último USO, não pelo download
+
+`video.json` carrega `usado_em`, tocado a cada reaproveitamento. Motivo concreto: um culto
+reprocessado toda semana (o operador refazendo com outra janela, ou gerando mais Shorts do
+mesmo sermão) tem `baixado_em` antigo e uso recente. Com FIFO puro, a limpeza apagaria
+justamente o vídeo mais útil, e o próximo pedido pagaria 35 s de download por nada.
+
+### O que NÃO muda
+
+- **Preservados sempre:** `candidatos.corrigido.json`, `transcricao.txt`,
+  `revisao-teologica.json`, `pedido.json`, e tudo em `finalizados/` e `resultados/`.
+- **O pedido que falha é limpo na hora** (resíduo de `.part`/`.ytdl`).
+- **A guarda de caminho** (`caminhoSeguro`) e a precedência de preservados sobre removíveis.
+- **A verificação prospectiva de espaço** antes da fase pesada — com uma mudança: ela só
+  precisa exigir espaço **quando o download vai de fato acontecer**. Com acerto de cache não
+  há nada a reservar, e pedir 2 GB livres para não baixar nada seria falhar sem motivo.
+
+### Efeito colateral bom: `-reter` pode crescer
+
+Com o vídeo fora de `trabalho/`, cada pedido passa a ocupar **KB** (texto e JSON). O `-reter 1`
+existia porque cada pedido carregava ~571 MB. Proposta a confirmar na implementação: subir o
+padrão para **20 pedidos** — mantém histórico de candidatos por semanas sem custo real de
+disco. Não é decisão fechada; fica registrada aqui para não passar batido.
+
+### Novas flags
+
+`cmd/servidor` e `cmd/limpar`: `-videos <dir>` (padrão `videos`), `-video-dias` (padrão 30),
+`-video-teto` (padrão 50GB). `cmd/limpar -dry-run` continua mostrando o que faria — e passa a
+listar o cache separado dos pedidos, porque são políticas diferentes e misturar os números
+esconderia qual delas liberou o quê.
 
 ## Fora de escopo / próximos passos
 

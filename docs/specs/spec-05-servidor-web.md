@@ -1,5 +1,10 @@
 # Spec 05 — Interface web do operador (fluxo invertido: selecionar antes de baixar)
 
+> **Desenho atual: v3** (2026-07-29) — quatro telas navegáveis no cliente e cache de vídeo
+> por culto. Ver a seção **"v3 — quatro telas navegáveis + cache por vídeo"**. As seções v1 e
+> v2 continuam aqui como registro do que foi decidido e medido; onde a v3 muda uma decisão, a
+> decisão antiga está marcada como superada, não apagada.
+
 ## Objetivo
 
 Uma interface web local para o operador leigo (pastor/auxiliar) gerar os Shorts sem usar
@@ -16,8 +21,11 @@ certo, antes do processamento pesado.
   e envia pelo WhatsApp Web manualmente (sem integração de mensageria).
 - **Fluxo invertido** (decidido em ideias-futuras.md): a seleção é 100% texto (legenda),
   então é barato selecionar antes de baixar o vídeo inteiro. Só o aprovado é baixado.
-- **Uma tela** conduzindo todas as etapas (decisão do dono): cola link+tempos -> processa
-  -> lista trechos com player para revisar -> aprova/reprova -> baixa e corta os aprovados.
+- ~~**Uma tela** conduzindo todas as etapas (decisão do dono)~~ — **SUPERADO pela v3**: são
+  **quatro telas navegáveis** (dados → processando → revisão → resultado), com indicador de
+  etapa. O que a decisão original queria dizer continua valendo: uma única PÁGINA, sem
+  recarregar, conduzindo o operador do link ao Short. A v3 mantém isso — as quatro telas
+  ficam no mesmo documento e a troca é local. Ver a seção da v3.
 - **v1 = aprovar/reprovar SEM ajuste fino de corte** (decisao do dono). O ajuste manual
   (marcar inicio/fim ouvindo, via IFrame API) veio na **v2, IMPLEMENTADA** -- ver a secao
   "v2 -- ajuste manual do corte pelo operador" no fim desta spec.
@@ -33,6 +41,246 @@ certo, antes do processamento pesado.
   conflito. Evita over-engineering (React/Vue seria demais para uma tela local esporadica).
   Na v1, o polling de status usa hx-trigger="every 2s"; no FUTURO, trocar o polling por um
   endpoint SSE no servidor Go (HTMX como cliente do SSE) -- ver pendencias.
+
+## v3 — quatro telas navegáveis + cache por vídeo (2026-07-29)
+
+> Esta seção é o desenho ATUAL da interface e do armazenamento. O fluxo do pipeline
+> (selecionar antes de baixar) não muda; muda a interface sobre ele e onde os arquivos moram.
+
+### Por que agora
+
+Três incômodos do uso real, e um problema de disco:
+
+1. **Aperto.** `.folha { max-width: 720px }` com a revisão em duas colunas dentro. É a
+   reclamação principal do operador.
+2. **Sem navegação.** Não existe voltar: o operador vê a etapa que o servidor mandou, e só.
+3. **Etapas invisíveis.** Baixar legenda (3 s) e selecionar (~32 s) apareciam como um
+   "Processando… <estado>", sem dizer onde está.
+4. **Cada pedido rebaixava tudo**, inclusive ~570 MB de vídeo, mesmo sendo o mesmo culto de
+   meia hora antes. E a spec-06 APAGAVA o vídeo ao concluir — o oposto de um cache.
+
+### As quatro telas
+
+```
+┌─ 1 dados ──┐  ┌─ 2 processando ─┐  ┌─ 3 revisão ─┐  ┌─ 4 resultado ─┐
+│ link       │  │ legenda    ✓ 3s │  │ (a tela da  │  │ short_01 ▶ ⬇ 🗑 │
+│ início/fim │→ │ seleção  ▓▓▓32s │→ │  v2, na     │→ │ short_02 ▶ ⬇ 🗑 │
+│ [enviar]   │  │                 │  │  largura    │  │ short_03 ▶ ⬇ 🗑 │
+└────────────┘  └─────────────────┘  │  toda)      │  └────────────────┘
+                                     └─────────────┘
+```
+
+**Legenda e seleção numa etapa só** (decisão do dono): baixar legenda leva 3 s e não merece
+tela própria. A tela "processando" mostra as duas linhas com o estado de cada uma e o tempo
+decorrido — a seleção é a que custa ~32 s e é ela que precisa de sinal de vida.
+
+O indicador de etapa é uma faixa de quatro botões, sempre visível. Estados: `atual`,
+`alcançada` (clicável), `bloqueada` (desabilitada), `erro`.
+
+> Cuidado de nome: já existe `.trilha` na revisão — é a régua de TRECHOS (um quadradinho por
+> candidato). O indicador de ETAPAS é `#etapas` / `.etapas`. Nomes distintos de propósito,
+> para ninguém reaproveitar o CSS errado.
+
+### Navegação no cliente, ações no servidor (requisito do dono)
+
+**As quatro telas ficam no DOM desde o primeiro carregamento.** Trocar de tela é `hidden`
+para lá e para cá, com o estado num objeto do cliente. **Trocar de tela não gera requisição** —
+o operador navega quantas vezes quiser durante a revisão sem esperar servidor.
+
+| quem | o quê |
+|---|---|
+| **JS vanilla** | navegar, mostrar/esconder, indicador de etapa, player, ajuste de corte |
+| **HTMX** | criar pedido, polling do progresso, ajustar corte, aprovar, gerar, apagar Short |
+
+Estado do cliente — um objeto só, ao lado do `REV` que já existe (o `REV` continua sendo o
+estado da revisão: trechos, ajustes, decisões; não muda):
+
+```js
+var APP = {
+  tela: 'dados',
+  pedidoId: null,
+  alcancadas: { dados: true, processando: false, revisao: false, resultado: false },
+  entrada: { url: '', inicio: '', fim: '' },  // reexibe a tela 1 sem pedir ao servidor
+  shorts: [],
+  sujo: false,   // há decisão de revisão não enviada
+};
+function irPara(tela) { /* só hidden + classes do indicador */ }
+```
+
+### O que "navegável" significa, por etapa
+
+Dois verbos, e a diferença é a regra inteira: **ver** é livre; **refazer** destrói trabalho.
+
+| ação | permitido | efeito |
+|---|---|---|
+| ver etapa já alcançada | sempre, sem confirmar | só mostra. Nada no servidor. `REV` intacto |
+| ver `dados` durante a revisão | sim | campos preenchidos em modo leitura + botão de nova janela |
+| ver `processando` depois de pronto | sim | mostra quanto cada etapa levou (vira registro, não spinner) |
+| ver `revisão` a partir do resultado | sim | decisões visíveis, congeladas |
+| avançar para etapa não alcançada | **não** | botão desabilitado; quem libera é o servidor (revisão só com candidatos; resultado só com Shorts) |
+| **buscar outros trechos** | confirmação | descarta candidatos, aprovações e ajustes; re-roda a seleção com `HARNESS_TEMP > 0` |
+| **nova janela** (outro início/fim) | confirmação | mesmo descarte; **novo pedido**, vídeo reaproveitado do cache |
+| **gerar de novo** (do resultado) | confirmação | re-renderiza; sobrescreve os Shorts daquele pedido |
+
+A confirmação **nomeia o que se perde**: "isso descarta 4 aprovações e 2 ajustes de corte".
+Um "tem certeza?" genérico não informa nada.
+
+**Não existe "refazer a seleção" avulso** (decisão do dono). Com o default `HARNESS_TEMP=0`,
+re-rodar devolve os mesmos candidatos: seria uma espera de 32 s sem efeito. O botão é
+**"buscar outros trechos"**, que re-roda com temperatura maior — exatamente o desenho já
+registrado na seção "Temperatura padrão = 0". Quem quer outro resultado com temperatura 0
+troca a janela.
+
+### F5: reidratação a partir do servidor
+
+Ao carregar (carregar não é navegar), **uma** requisição: `GET /pedido-atual` → `204` se não
+há nada, ou o mesmo payload do `GET /pedidos/{id}`.
+
+| status no servidor | tela ao abrir |
+|---|---|
+| nada em memória | `dados` |
+| fase leve em curso | `processando`, polling religado |
+| `aguardando-aprovacao` | `revisao`, reidratada do payload (o JSON dos trechos já vem lá, `RevisaoDados`) |
+| fase pesada em curso | `processando` (bloco da fase pesada) |
+| `concluido` | `resultado`, com a lista de Shorts |
+| `erro` | a tela da etapa que falhou, com a mensagem |
+
+**O que o F5 NÃO recupera: as decisões da revisão em andamento** (aprovado/reprovado e
+ajustes ainda não enviados) — elas vivem só no `REV`. Decisão do dono: **avisar e aceitar a
+perda** (`beforeunload` quando `APP.sujo`). Persistir decisão a cada clique transformaria a
+revisão numa conversa constante com o servidor, o oposto do requisito; guardar rascunho no
+`localStorage` criaria um segundo lugar com estado. Fica registrado como melhoria possível,
+não como dívida.
+
+O `-retomar <id>` continua sendo o caminho para trazer de volta pedido de OUTRA execução; a
+reidratação cobre o pedido que o servidor tem em memória.
+
+### Largura e respiro (decisão do dono)
+
+- `.folha`: **720px → 1180px**. O rodapé fixo acompanha. 1180 dá ~560px por coluna na
+  revisão; mais que isso começa a espalhar o olho em telas grandes.
+- Escala de espaçamento em variáveis (`--esp-1: 8px` … `--esp-5: 32px`) substituindo os
+  valores soltos: padding dos cartões 20/22 → 28, `gap` das colunas 18 → 28.
+- Faixa de frases: `max-height` 420 → 560px (é onde a falta de espaço mais aparece).
+- `@media (max-width: 760px)` continua (uma coluna) — o operador às vezes abre no celular.
+
+### Tela de resultado
+
+Um cartão por Short: `<video controls preload="metadata">` (arquivo local, não YouTube),
+duração, tamanho, e três ações: **assistir** embutido, **baixar**, **apagar** (confirmação
+nomeando o arquivo). Apagar remove só o arquivo — o registro em `cortes.csv` é medição do
+desvio da legenda, não inventário de arquivos, e continua.
+
+`DELETE /finalizados/{id}/{arquivo}` reusa a **mesma** validação de nome do
+`handleBaixarFinal` (coberta por `TestBaixarFinalRecusaArquivoForaDaWhitelist`). Um endpoint
+que APAGA com travessia de caminho é muito pior que um que baixa.
+
+#### Compartilhar: a limitação, registrada com honestidade
+
+Não há caminho bom, e a spec registra isso em vez de fingir que há:
+
+- **integração com WhatsApp não existe** e é decisão registrada (envio é manual);
+- **Web Share API com arquivo** (`navigator.share({files})`) é instável fora do celular: no
+  desktop, ou não expõe o alvo certo, ou falha silenciosamente;
+- **um botão que abrisse o WhatsApp sem anexar o vídeo seria pior que não ter** — promete o
+  fluxo e entrega meia ação, e o operador só descobre no meio do envio.
+
+O fluxo real, escrito na tela em uma linha: **baixar e enviar pelo WhatsApp Web.** Sem botão
+falso.
+
+### Cache por vídeo — dois níveis de armazenamento
+
+Os artefatos têm naturezas diferentes, e é isso que define onde moram:
+
+```
+videos/<idDoVídeo>/          # imutável, reutilizável, PESADO (~570 MB)
+  video.mp4
+  video.json                 # {video_id, origem_ms, baixado_em, usado_em, bytes, titulo}
+  legenda.srt
+  legenda.info.json
+  transcricao.txt            # do vídeo INTEIRO
+
+trabalho/<idDoPedido>/       # depende da janela e das decisões; leve (KB)
+  pedido.json                # {..., video_id}
+  transcricao.txt            # RECORTADA à janela (derivada; é o que a seleção lê)
+  candidatos.corrigido.json
+
+finalizados/<idDoPedido>/short_NN.mp4
+```
+
+**Por que a transcrição aparece nos dois lugares:** hoje ela é recortada à janela no momento
+do download (`internal/download/ytdlp.go`, com tempos ABSOLUTOS preservados). O cache tem de
+ser do vídeo **inteiro** para servir qualquer janela; o recorte continua por pedido, porque é
+o que a seleção e o `cmd/auditar` leem. É texto — recortar de novo é barato, e muito melhor
+que mudar o contrato dos consumidores.
+
+**O ID do vídeo NÃO nomeia a pasta do pedido.** Pedido segue `web-<timestamp>-<n>`. Duas
+pregações na mesma transmissão (acontece), ou o operador refazendo com outra janela,
+compartilham o vídeo e mantêm candidatos separados. Usar o id do vídeo como nome do pedido
+faria o segundo sobrescrever os candidatos do primeiro.
+
+**Sinergia com a decisão de baixar o vídeo inteiro:** como o download é do vídeo completo
+(medido: 7,3 s contra 577 s da janela), o cache serve **qualquer** janela sem verificação de
+cobertura. Se o download fosse por trecho, cada acerto de cache exigiria checar se a janela
+pedida cabe no que está em disco — e essa checagem é exatamente o tipo de aritmética que já
+produziu bug de origem aqui.
+
+Fluxo:
+
+```
+POST /pedidos
+ └─ extrai video_id da URL → grava em pedido.json
+ └─ fase leve:  videos/<vid>/ completo?
+      sim → reusa legenda + transcrição (0 s), toca usado_em
+      não → baixa a legenda para o cache
+    → recorta a transcrição à janela em trabalho/<id>/ → seleção
+ └─ (aprovação humana)
+ └─ fase pesada: videos/<vid>/video.mp4 existe?
+      sim → PULA o download (~35 s e ~570 MB de banda)
+      não → baixa o vídeo inteiro para o cache, grava video.json
+    → render recebe (caminho, origem) do localizador
+```
+
+### A origem do vídeo mora AO LADO do vídeo (ligação com a spec-09)
+
+Esta é a classe de bug que já custou duas rodadas, então o desenho é explícito:
+
+> **Cada arquivo de vídeo carrega a própria declaração de origem, ao lado dele.**
+> `videos/<id>/video.json` descreve `videos/<id>/video.mp4`.
+> `pedido.json.origem_ms` descreve `trabalho/<id>/video.mp4` (fluxo do `cmd/baixar` por
+> janela, que continua existindo).
+
+Um localizador único — o **único** lugar que resolve "qual arquivo e qual origem":
+
+```go
+// internal/videocache
+func Localizar(videosDir, baseDir string, ped *pipeline.Pedido) (path string, origemMs int, err error)
+```
+
+Regra em uma frase: **vídeo na pasta do pedido vence** (é o fluxo por janela, mais
+específico); senão o cache; se nenhum dos dois, **erro claro dizendo o que falta**. Nunca
+dedução — nem por duração de arquivo, nem por `ped.Inicio`. Quem chama: fase pesada do
+servidor e `cmd/render`. O `internal/video` não muda: já recebe a origem por parâmetro.
+
+### Extração do ID do vídeo
+
+Já existe e já cobre `/live/` (`internal/servidor/videoid.go` + teste). O que a v3 muda:
+
+- **muda de lugar** para `internal/download` (exportada como `download.VideoID`), porque
+  agora o download também precisa dela;
+- **passa a ser validada com rigor** — `^[A-Za-z0-9_-]{11}$` — porque o valor deixa de ser
+  parâmetro de iframe e passa a ser **nome de diretório**. Sem validar, uma URL hostil
+  escolhe onde escrevemos; é a mesma preocupação do `retencao.caminhoSeguro`;
+- casos de teste obrigatórios: `watch?v=`, `youtu.be/`, `&t=`, `&list=`, **`/live/<id>`** (é
+  como o YouTube endereça transmissão ao vivo, o caso desta igreja),
+  `/live/<id>?feature=share`, `/embed/`, `/shorts/`, `m.youtube.com`, host em maiúsculas, URL
+  de outro site (rejeita) e entrada hostil como `../../etc` (rejeita).
+
+### Fora do escopo da v3
+
+- Persistir decisões da revisão (F5 recuperar aprovações) — decidido: avisar e aceitar.
+- SSE em vez de polling — segue registrado em `docs/ideias-futuras.md`.
+- Qualquer forma de compartilhamento automático.
 
 ## Fluxo (uma tela, etapas)
 
@@ -216,9 +464,11 @@ listar os finais. Decisoes:
 
 - **IMPLEMENTADO: baixa o VIDEO INTEIRO com o downloader nativo paralelo**
   (`--concurrent-fragments 8`, sem `--download-sections`) e corta local no render. Substituiu
-  a janela contigua por decisao de medicao (abaixo). Contrato: `origemVideoCompleto = 0` — o
-  arquivo comeca no inicio do video, entao o render corta em tempo ABSOLUTO, sem calculo de
-  origem a propagar. `download.BaixarVideoCompleto`.
+  a janela contigua por decisao de medicao (abaixo). Contrato: **origem 0** — o arquivo comeca
+  no inicio do video, entao o render corta em tempo ABSOLUTO, sem calculo de origem a
+  propagar. `download.BaixarVideoCompleto` **devolve** essa origem (era uma constante
+  `origemVideoCompleto` no servidor; virou valor de retorno do escritor do arquivo, porque
+  duas afirmacoes do mesmo fato divergem — ver spec-09).
 
 - **MEDIDO (com runtime JS instalado): o fator dominante e PARALELISMO, nao assinatura nem
   travessia.** Todas as abordagens medidas no mesmo sermao (`IxmiQGL9CMQ`, 46 min, yt-dlp
@@ -278,8 +528,8 @@ listar os finais. Decisoes:
     mover o `-ss` para DEPOIS do `-i`, o ffmpeg decodifica tudo ate o ponto: 20,74 s / 183 s
     de CPU — 8x mais lento. Travado por `TestArgsFFmpegSeekAntesDoInput`.
 
-- **Alinhamento de tempo (como ficou).** Servidor: video inteiro -> `origemVideoCompleto = 0`
-  -> o render corta em tempo ABSOLUTO. CLI (`cmd/baixar` + `cmd/render`): o video.mp4 e a
+- **Alinhamento de tempo (como ficou).** Servidor: video inteiro -> origem 0 (devolvida pelo
+  baixador e gravada em `pedido.json`/`video.json`) -> o render corta em tempo ABSOLUTO. CLI (`cmd/baixar` + `cmd/render`): o video.mp4 e a
   janela `[ped.Inicio, ped.Fim]`, entao a origem e `ped.Inicio` (`video.Renderizar`, que
   chama `RenderizarComOrigem` com essa origem). As duas origens convivem porque o render
   recebe a origem EXPLICITA; testado em `TestRenderizarComOrigemAlinhaCorte` (o `-ss` do
@@ -379,7 +629,7 @@ conteudo era bom -- desperdicio do trecho e do trabalho do modelo. A v2 fecha is
 
 A v1 avisava que o tempo do player podia nao corresponder ao do arquivo baixado. **Nao
 corresponde mais ao problema: os dois relogios sao o MESMO.** O download passou a ser o
-video INTEIRO com origem 0 (`origemVideoCompleto`), e o player do YouTube tambem conta do
+video INTEIRO com origem 0, e o player do YouTube tambem conta do
 inicio do video. Logo `player.getCurrentTime()` devolve o tempo absoluto que o corte vai
 usar, **sem conversao nenhuma**. O alerta antigo vinha do `--download-sections`, que nao e
 mais usado (ver a decisao da fase pesada, acima).
@@ -793,6 +1043,83 @@ preenchimento do mesmo fluxo, e a decisao continua sendo do operador.
       dos dois lados e presente mesmo no ajuste invalido, sem falsa precisao, `seekTo` correto,
       tempos em ms).
 - [x] `go build`, `go vet` e `go test -race ./...` verdes.
+
+## Critérios de aceite da v3
+
+**Telas e navegação**
+- [ ] As quatro telas (`dados`, `processando`, `revisao`, `resultado`) existem no DOM desde o
+      primeiro carregamento; a troca é `hidden`, no cliente.
+- [ ] Trocar de tela **não gera requisição**: nenhum elemento do indicador de etapas tem
+      atributo `hx-*`, e `irPara` não chama `fetch`/`htmx.ajax`. Verificado por teste sobre o
+      template, não por inspeção visual.
+- [ ] O indicador de etapa mostra `atual` / `alcançada` / `bloqueada` / `erro`, e etapa não
+      alcançada não é clicável.
+- [ ] A tela `processando` mostra as DUAS linhas (legenda e seleção) com estado e tempo.
+- [ ] Ver etapa anterior nunca pede confirmação e nunca perde a revisão em andamento.
+- [ ] Ação destrutiva (buscar outros trechos, nova janela, gerar de novo) confirma **nomeando
+      o que se perde** (nº de aprovações e de ajustes).
+- [ ] Não existe botão "refazer a seleção" com temperatura 0.
+
+**F5**
+- [ ] `GET /pedido-atual` devolve 204 sem pedido, e o payload de status com pedido.
+- [ ] Abrir a página com pedido em cada estado cai na tela correspondente (tabela da v3).
+- [ ] Com decisão de revisão não enviada, sair da página avisa (`beforeunload`).
+
+**Largura**
+- [ ] `.folha` e o rodapé fixo em 1180px; escala de espaçamento em variáveis; faixa de frases
+      com 560px de altura máxima; uma coluna abaixo de 760px.
+
+**Resultado**
+- [ ] Cada Short tem `<video>` embutido que toca o arquivo local, tamanho, duração, baixar e
+      apagar.
+- [ ] Apagar confirma nomeando o arquivo e remove só o arquivo (o `cortes.csv` não muda).
+- [ ] O endpoint de apagar recusa nome fora da whitelist (mesma guarda do download), com teste.
+- [ ] A tela diz, em uma linha, que o envio é baixar + WhatsApp Web. **Não** existe botão de
+      compartilhar.
+
+**Cache por vídeo**
+- [ ] `videos/<idDoVídeo>/` guarda `video.mp4`, `video.json`, `legenda.srt`,
+      `legenda.info.json` e a `transcricao.txt` do vídeo INTEIRO.
+- [ ] `trabalho/<idDoPedido>/` guarda `pedido.json` (com `video_id`), a transcrição
+      RECORTADA à janela e `candidatos.corrigido.json`.
+- [ ] Dois pedidos do mesmo vídeo com **janelas diferentes**: um único download, dois
+      `candidatos.corrigido.json` distintos, nenhum sobrescrito.
+- [ ] Acerto de cache **não chama** o baixador de vídeo (teste), e a fase pesada cai de ~35 s
+      de download para 0.
+- [ ] O id do vídeo **não** é usado como nome de pasta de pedido.
+- [ ] `download.VideoID` cobre `watch?v=`, `youtu.be/`, `&t=`, `&list=`, `/live/<id>`,
+      `/embed/`, `/shorts/`, `m.youtube.com`, host em maiúsculas; **rejeita** URL de outro
+      site e entrada hostil (`../../etc`), validando `^[A-Za-z0-9_-]{11}$` antes de virar
+      caminho.
+
+**Origem (spec-09)**
+- [ ] `videocache.Localizar` é o único lugar que resolve arquivo + origem; vídeo na pasta do
+      pedido vence o do cache; sem nenhum dos dois, erro claro.
+- [ ] `cmd/render` sobre pedido cujo vídeo está no CACHE renderiza a **cena certa**,
+      verificado por conteúdo de frame (reusar `internal/video/origem_do_video_test.go`).
+
+**Geral**
+- [ ] `go build ./...`, `go vet ./...` e `go test -race ./...` verdes.
+
+## Como validar a v3
+
+```bash
+# 1) navegação sem requisição e integridade das referências de JS
+go test ./internal/servidor/ -run 'Telas|Etapas|Referencias' -v
+
+# 2) cache: dois pedidos, mesmo vídeo, janelas diferentes -> um download só
+go test ./internal/servidor/ ./internal/videocache/ -v
+
+# 3) origem com vídeo no cache (verificação por CONTEÚDO do frame)
+go test ./internal/video/ -run Origem -v
+
+# 4) ponta a ponta real, medindo o ganho do cache
+go run ./cmd/servidor -porta 7799 -sublang pt-orig
+#    primeiro pedido: baixa (~35 s de vídeo). segundo pedido, MESMO culto, outra janela:
+#    a fase pesada não baixa nada.
+tail -2 resultados/tempos.csv    # comparar a coluna baixar_video_s: ~35 -> ~0
+du -sh videos/*                  # um diretório por culto, não por pedido
+```
 
 ## Nota
 
