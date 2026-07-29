@@ -64,9 +64,36 @@ const (
 	// Faixa escura do rodapé como GRADIENTE (transparente em cima → escuro embaixo),
 	// suave como na arte de referência (não uma caixa de borda dura). A opacidade sobe com
 	// uma curva (pow) para o começo ser IMPERCEPTÍVEL — sem linha visível no topo.
-	rodapeAlphaPadrao  = 1.00 // opacidade máxima do gradiente (na base); 0 = sem gradiente
-	rodapeAlturaPadrao = 1200 // altura do gradiente (px), de baixo para cima
+	// Rampa mais ALTA e opacidade máxima MENOR que o original (era 1200/1.00): o degradê fica
+	// mais gradual e o pregador não desaparece atrás da base escura. Frames comparativos em
+	// docs/mockups/rodape/ — trocar é uma linha, e as flags -rodape-altura/-rodape-escuro
+	// permitem testar sem recompilar.
+	rodapeAlphaPadrao  = 0.80 // opacidade máxima do gradiente (na base); 0 = sem gradiente
+	rodapeAlturaPadrao = 1400 // altura do gradiente (px), de baixo para cima
 	easeGradiente      = 2.2  // expoente da curva de opacidade (>1 = começa mais suave)
+
+	// Encode: medido, não arbitrado. Nitidez pela energia de altas frequências (laplaciano)
+	// no mesmo trecho, com a cadeia de filtros de produção:
+	//
+	//   saída            quadro  legenda  tempo/short
+	//   veryfast crf20    1.860    4.960     3,08 s   (era o default)
+	//   veryfast crf18    1.887    4.980     3,25 s
+	//   medium   crf20    1.921    5.031     5,29 s
+	//   medium   crf18    1.931    5.038     5,25 s   <- escolhido
+	//   slow     crf18    1.924    5.035    15,90 s
+	//   (source 720p, antes de ampliar: 1.991)
+	//
+	// Duas conclusões que mudaram a escolha:
+	//
+	//  1. o PRESET domina o CRF: veryfast->medium rende +3,3%, crf20->18 rende +1,5%;
+	//  2. `slow` NÃO rende nada sobre `medium` (1.924 contra 1.931, dentro do ruído) e custa
+	//     3x o tempo. A hipótese inicial era slow/crf18; a medição parou em medium.
+	//
+	// O ganho total é modesto (+3,8% no quadro) e NÃO resolve a percepção de "imagem mole" —
+	// essa vem da ampliação de 720p, não do encode. Mudou porque custa pouco: +2,2 s por Short,
+	// ~9 s num pedido de quatro, contra ~86 s de download.
+	presetPadrao = "medium"
+	crfPadrao    = "18"
 )
 
 // Executor roda um comando externo e devolve stdout, stderr e o erro de execução.
@@ -108,6 +135,11 @@ type Renderizador struct {
 	LogoAjusteY  int     // ajuste vertical da logo a partir do centro da faixa (px; + desce)
 	RodapeAlpha  float64 // opacidade do gradiente escuro na base (0 = sem gradiente)
 	RodapeAltura int     // altura do gradiente escuro (px)
+
+	// Preset/CRF do x264. Vazios usam presetPadrao/crfPadrao. Configuráveis porque a
+	// escolha é um trade-off medido (tempo x nitidez), e medir exige variar.
+	Preset string
+	CRF    string
 }
 
 // NovoRenderizador cria um Renderizador com o executor real e os padrões.
@@ -163,6 +195,26 @@ func (r *Renderizador) logoLargura() int {
 	}
 	return r.LogoLargura
 }
+
+// presetOu/crfOu aplicam o padrão para quem passa vazio — em um lugar só, para o método do
+// Renderizador e a função livre nunca divergirem.
+func presetOu(p string) string {
+	if p == "" {
+		return presetPadrao
+	}
+	return p
+}
+
+func crfOu(c string) string {
+	if c == "" {
+		return crfPadrao
+	}
+	return c
+}
+
+func (r *Renderizador) preset() string { return presetOu(r.Preset) }
+func (r *Renderizador) crf() string    { return crfOu(r.CRF) }
+
 func (r *Renderizador) rodapeAltura() int {
 	if r.RodapeAltura <= 0 {
 		return rodapeAlturaPadrao
@@ -320,7 +372,7 @@ func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, can
 		if comLogo {
 			logoInput = logo.Path
 		}
-		args := ArgsFFmpeg(videoPath, logoInput, outPath, cutStartMs, durMs, filtro, complexo)
+		args := ArgsFFmpeg(videoPath, logoInput, outPath, cutStartMs, durMs, filtro, complexo, r.preset(), r.crf())
 
 		if _, stderr, err := r.Exec.Rodar(ctx, r.bin(), args...); err != nil {
 			return nil, fmt.Errorf("ffmpeg no short %02d: %w — %s", i+1, err, resumoStderr(stderr))
@@ -353,7 +405,7 @@ func duracaoComMargem(startMs, endMs, margemMs int) (int, error) {
 // ArgsFFmpeg monta os argumentos do ffmpeg: cortar [cutStartMs, +durMs] e aplicar o
 // filtro. Se `complexo`, usa -filter_complex (o filtro deve terminar em [vout]) e mapeia
 // vídeo+áudio; senão, usa -vf. logoPath != "" entra como 2º input (referenciável por [1:v]).
-func ArgsFFmpeg(videoPath, logoPath, outPath string, cutStartMs, durMs int, filtro string, complexo bool) []string {
+func ArgsFFmpeg(videoPath, logoPath, outPath string, cutStartMs, durMs int, filtro string, complexo bool, preset, crf string) []string {
 	args := []string{"-y", "-ss", segundos(cutStartMs), "-i", videoPath}
 	if logoPath != "" {
 		args = append(args, "-i", logoPath)
@@ -365,7 +417,7 @@ func ArgsFFmpeg(videoPath, logoPath, outPath string, cutStartMs, durMs int, filt
 	}
 	args = append(args,
 		"-t", segundos(durMs),
-		"-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+		"-c:v", "libx264", "-preset", presetOu(preset), "-crf", crfOu(crf),
 		"-c:a", "aac", "-b:a", "128k",
 		"-movflags", "+faststart",
 		outPath,

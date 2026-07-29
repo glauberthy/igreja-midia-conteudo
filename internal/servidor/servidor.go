@@ -243,6 +243,19 @@ func (s *Servidor) handleCriar(w http.ResponseWriter, r *http.Request) {
 	met := &Metricas{ID: id, DuracaoSermaoS: duracaoJanelaS(ent.Inicio, ent.Fim)}
 	met.IniciarPedido(s.agora())
 	reg := &registro{ped: ped, metricas: met}
+	// Grava os metadados em disco (pedido.json). Duas razões:
+	//
+	// (a) sem isso, cmd/render, cmd/auditar e cmd/limpar NÃO funcionam sobre pedidos criados
+	//     pelo servidor — carregam o pedido.json e falhavam com "no such file";
+	// (b) habilita a retomada (cmd/servidor -retomar <id>), que evita refazer os ~40 s de
+	//     seleção a cada iteração de teste.
+	//
+	// Isto NÃO desfaz a autocura da spec-06: gravar não é carregar. O Novo() continua nascendo
+	// com o mapa vazio, então um pedido travado por crash segue desaparecendo no restart. Só a
+	// flag explícita -retomar traz um pedido de volta.
+	if err := ped.Salvar(s.baseDir); err != nil {
+		fmt.Fprintf(os.Stderr, "aviso: não gravei o pedido.json de %s: %v\n", id, err)
+	}
 	s.mu.Lock()
 	s.pedidos[id] = reg
 	s.mu.Unlock()
@@ -407,32 +420,47 @@ func (s *Servidor) faseHeavy(reg *registro) {
 		return
 	}
 
-	s.setStatus(reg, pipeline.EstadoBaixandoVideo)
-	// Cópia: o Baixador escreve Status/Erro no Pedido (contrato do cmd/baixar, onde não há
-	// concorrência). Aqui o registro é compartilhado com o handleStatus, então deixá-lo
-	// escrever direto é corrida de verdade (pega pelo -race). O servidor é dono do status.
-	// Progresso, não tempo total: ver Prazos.VideoSemProgresso. O tamanho do culto varia
-	// demais (994 MB visto; 2h dariam ~1,8 GB) para um teto fixo ter margem honesta.
 	dirPedido := filepath.Join(s.baseDir, idPedido)
-	err := etapaComProgresso(ctx, "o download do vídeo", dirPedido,
-		s.prazos.VideoSemProgresso, s.prazos.VideoTeto,
-		func(ctx context.Context) error {
-			return s.baixadorVideo.BaixarVideoCompleto(ctx, s.copiaPedido(reg))
-		})
-	if err != nil {
-		s.setErro(reg, mensagemErroDownload(err))
-		return
-	}
 	videoPath := filepath.Join(dirPedido, "video.mp4")
-	s.metrica(reg, func(m *Metricas) {
-		m.BaixarVideoMs = m.marcar(s.agora())
-		m.BytesVideo = tamanhoArquivo(videoPath)
-	})
+
+	// REUSO: se o vídeo já está em disco, não baixa de novo. Cumpre uma promessa que a spec-06
+	// já fazia por escrito ("o pedido retido pode ser regerado sem baixar de novo") mas que o
+	// código não aproveitava. Economiza os ~86 s do download em toda regeração, e é o que torna
+	// viável iterar em render e tela.
+	if videoUsavel(videoPath) {
+		s.logTempos(fmt.Sprintf("vídeo já em disco (%s): reaproveitando, sem baixar de novo",
+			retencao.FormatarBytes(tamanhoArquivo(videoPath))))
+		s.metrica(reg, func(m *Metricas) {
+			m.BaixarVideoMs = m.marcar(s.agora())
+			m.BytesVideo = tamanhoArquivo(videoPath)
+			m.VideoReusado = true
+		})
+	} else {
+		s.setStatus(reg, pipeline.EstadoBaixandoVideo)
+		// Cópia: o Baixador escreve Status/Erro no Pedido (contrato do cmd/baixar, onde não há
+		// concorrência). Aqui o registro é compartilhado com o handleStatus, então deixá-lo
+		// escrever direto é corrida de verdade (pega pelo -race). O servidor é dono do status.
+		// Progresso, não tempo total: ver Prazos.VideoSemProgresso. O tamanho do culto varia
+		// demais (994 MB visto; 2h dariam ~1,8 GB) para um teto fixo ter margem honesta.
+		err := etapaComProgresso(ctx, "o download do vídeo", dirPedido,
+			s.prazos.VideoSemProgresso, s.prazos.VideoTeto,
+			func(ctx context.Context) error {
+				return s.baixadorVideo.BaixarVideoCompleto(ctx, s.copiaPedido(reg))
+			})
+		if err != nil {
+			s.setErro(reg, mensagemErroDownload(err))
+			return
+		}
+		s.metrica(reg, func(m *Metricas) {
+			m.BaixarVideoMs = m.marcar(s.agora())
+			m.BytesVideo = tamanhoArquivo(videoPath)
+		})
+	}
 
 	s.setStatus(reg, pipeline.EstadoRenderizando)
 	// Origem 0: o video.mp4 é o vídeo inteiro, então t=0 do arquivo == t=0 do vídeo.
 	var paths []string
-	err = etapaComPrazo(ctx, "a renderização", s.prazos.Renderize, func(ctx context.Context) error {
+	err := etapaComPrazo(ctx, "a renderização", s.prazos.Renderize, func(ctx context.Context) error {
 		var e error
 		paths, e = s.renderizador.RenderizarComOrigem(ctx, s.copiaPedido(reg), aprovados, origemVideoCompleto)
 		return e
@@ -904,4 +932,16 @@ func mensagemErroDownload(err error) string {
 	default:
 		return "falha ao baixar a legenda: " + err.Error()
 	}
+}
+
+// videoUsavel diz se o video.mp4 em disco serve para renderizar sem baixar de novo.
+//
+// O tamanho mínimo é a guarda que importa: um .part renomeado, um download morto na metade ou
+// um arquivo de 0 byte passariam por "existe" e fariam o render falhar com erro de ffmpeg,
+// longe da causa. Um culto de 40 min a 720p passa de 300 MB, então 20 MB é conservador o
+// bastante para aceitar vídeos curtos de teste e rejeitar resíduo.
+func videoUsavel(path string) bool {
+	const minimoBytes = 20 << 20
+	fi, err := os.Stat(path)
+	return err == nil && !fi.IsDir() && fi.Size() >= minimoBytes
 }

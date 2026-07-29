@@ -207,6 +207,10 @@
               // clicável já abrir preenchida.
               viz: dados.trechos.map(function(){ return null; }),
               debounce: null, meia: false, relogio: null, ultimaPonta: 'fim',
+              // faixaChave identifica o conjunto de frases atualmente renderizado na faixa.
+              // Reconstruir a lista zera o scrollTop, então só se reconstrói quando o conjunto
+              // muda de verdade — ver desenharFrases.
+              faixaChave: null,
               // Fluxo de DOIS CLIQUES (substitui a heurística do meio do trecho): o primeiro
               // clique define o início, o segundo o fim, o terceiro recomeça. Por trecho,
               // para trocar de trecho não herdar o estado do anterior.
@@ -447,27 +451,55 @@
       if (b) b.textContent = REV.meia ? '🐇 Velocidade normal' : '🐢 Meia velocidade';
     }
 
+    // desenharFrases NÃO reconstrói a lista a cada ajuste.
+    //
+    // Bug que isto corrige: reatribuir innerHTML zera o scrollTop do container. Como a faixa
+    // agora tem rolagem própria, cada clique jogava a lista de volta ao topo e o operador tinha
+    // de procurar onde estava — no meio de um fluxo de dois cliques, isso quebra a sequência.
+    //
+    // A correção real é não recriar: os elementos são construídos UMA VEZ por conjunto de
+    // frases, e cada ajuste apenas alterna a classe `dentro` nos botões que já existem.
+    // Preservar/restaurar o scrollTop também resolveria o sintoma, mas manteria o desperdício
+    // de recriar uma dúzia de nós e reatar os handlers a cada tecla.
     function desenharFrases(e) {
       var wrap = document.getElementById('aj-frases');
       if (!wrap) return;
       var fs = e.vizinhanca;
       if (!fs || !fs.length) {
-        // Sem ajuste ainda: pede a vizinhança ao servidor com os tempos originais, para a
-        // faixa já aparecer preenchida quando o operador abrir o painel.
         wrap.innerHTML = '<p class="fino-rotulo" style="padding:8px 10px">Carregando as frases…</p>';
+        REV.faixaChave = null;
         return;
       }
-      wrap.innerHTML = fs.map(function (f, i) {
-        // Bloco agrupado (item 6): duas ou mais falas no mesmo carimbo da legenda são
-        // indivisíveis para o corte. Dizer isso evita o clique que "não faz nada".
-        var marca = (f.falas > 1) ? '<span class="t">· ' + f.falas + ' falas no mesmo segundo</span>' : '';
-        return '<button type="button" class="frase' + (f.dentro ? ' dentro' : '') + '" data-i="' + i + '">' +
-               '<span class="t">' + f.rotulo + '</span>' + escapar(f.texto) + marca + '</button>';
-      }).join('');
+
+      // A chave identifica o CONJUNTO de frases. Só quando ele muda de verdade (trocar de
+      // trecho, ou o servidor devolver uma vizinhança deslocada) a lista é reconstruída.
+      var chave = fs.map(function (f) { return f.inicio_ms; }).join(',');
+      if (chave !== REV.faixaChave) {
+        wrap.innerHTML = fs.map(function (f, i) {
+          // Bloco agrupado: duas ou mais falas no mesmo carimbo da legenda são indivisíveis
+          // para o corte. Dizer isso evita o clique que "não faz nada".
+          var marca = (f.falas > 1) ? '<span class="t">· ' + f.falas + ' falas no mesmo segundo</span>' : '';
+          return '<button type="button" class="frase" data-i="' + i + '">' +
+                 '<span class="t">' + f.rotulo + '</span>' + escapar(f.texto) + marca + '</button>';
+        }).join('');
+        wrap.querySelectorAll('.frase').forEach(function (b) {
+          // fs é lido do estado no momento do clique, não capturado: a lista de nós sobrevive
+          // a vários ajustes, e o conteúdo da vizinhança pode ter sido atualizado no meio.
+          b.addEventListener('click', function () {
+            var atual = efetivoAtual().vizinhanca || fs;
+            var idx = +b.dataset.i;
+            if (atual[idx]) clicarFrase(atual[idx], atual);
+          });
+        });
+        REV.faixaChave = chave;
+        rolarAteSelecionadas(wrap); // só ao (re)construir: no ajuste a posição é do operador
+      }
+
+      // O ajuste mexe apenas no destaque — sem tocar no innerHTML, o scrollTop fica onde está.
       wrap.querySelectorAll('.frase').forEach(function (b) {
-        b.addEventListener('click', function () { clicarFrase(fs[+b.dataset.i], fs); });
+        var f = fs[+b.dataset.i];
+        if (f) b.classList.toggle('dentro', !!f.dentro);
       });
-      rolarAteSelecionadas(wrap);
     }
 
     // rolarAteSelecionadas põe as frases do corte à vista. Sem isto, ao trocar de trecho a
@@ -618,7 +650,11 @@
       if (REV.prontoPlayer) { clearInterval(REV.timer); REV.player.seekTo(e.iniMs / 1000, true); REV.player.pauseVideo(); }
     }
 
-    function irPara(i) { REV.atual = Math.max(0, Math.min(REV.dados.trechos.length - 1, i)); desenhar(); }
+    function irPara(i) {
+      REV.atual = Math.max(0, Math.min(REV.dados.trechos.length - 1, i));
+      REV.faixaChave = null; // trecho novo = conjunto de frases novo; força a reconstrução
+      desenhar();
+    }
     function decidir(valor) {
       if (valor === 'aprovado' && !efetivoAtual().ok) return; // guarda: ajuste inválido
       REV.estado[REV.atual] = valor;

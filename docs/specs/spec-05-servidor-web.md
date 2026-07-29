@@ -614,6 +614,72 @@ rolaria a pagina inteira e desfaria o ganho de caber numa tela.
 Um selo `tocando a emenda…` avisa quando o som veio do sistema — a emenda toca sozinha, e sem
 aviso o operador nao sabe se foi ele que clicou em algo por acidente.
 
+### Retomada (`-retomar <id>`): iterar sem refazer o ciclo
+
+Iterar em render ou em tela custava o ciclo inteiro por tentativa: ~40 s de selecao mais ~86 s
+de download para olhar 3 s de render. Duas mudancas:
+
+**O servidor grava `pedido.json`.** Sem isso, `cmd/render`, `cmd/auditar` e `cmd/limpar` NAO
+funcionavam sobre pedidos criados pelo servidor — carregavam o arquivo e falhavam com "no such
+file". Era uma lacuna, nao uma decisao.
+
+**`cmd/servidor -retomar <id>`** poe um pedido que ja existe em disco direto em "aguardando
+aprovacao", com os candidatos validados e o texto falado reconstruido da transcricao (nao de
+cache, para nao divergir do que um pedido novo mostraria). As metricas comecam zeradas: o CSV
+mede o ciclo DESTA execucao, nao a soma com a original.
+
+**O video.mp4 e reaproveitado** quando ja esta em disco — cumprindo uma promessa que a spec-06
+ja fazia por escrito ("o pedido retido pode ser regerado sem baixar de novo") mas que o codigo
+nao aproveitava. `videoUsavel` exige tamanho minimo de 20 MB: um `.part` renomeado ou download
+morto na metade passaria por "existe" e faria o render falhar com erro de ffmpeg, longe da causa.
+O CSV de tempos ganhou a coluna `video_reusado`, senao um pedido reaproveitado entraria na media
+de download como se tivesse baixado em 0 s.
+
+**Por que e flag explicita, e nao carregamento automatico.** A spec-06 depende de o servidor NAO
+carregar estado do disco: e isso que faz um pedido travado por crash desaparecer no restart e o
+material bruto voltar a ser limpavel. Carregar tudo automaticamente transformaria pedido travado
+em vazamento permanente. Com a flag, quem retoma e uma pessoa nomeando o pedido; o mapa continua
+nascendo vazio e `TestReinicioLiberaPedidoOrfao` continua verdadeiro.
+
+Pedidos anteriores a essa mudanca nao tem `pedido.json`; a retomada reconstroi o minimo do
+`legenda.info.json`. O que NAO se recupera e a janela da pregacao (nunca foi persistida), e o
+`Inicio` reconstruido vira `00:00:00` — porque o `cmd/render` usa `ped.Inicio` como a ORIGEM do
+arquivo, e o video em disco e o inteiro. A degradacao e anunciada por aviso, nao silenciosa.
+
+### Encode: medido, e a hipotese estava parcialmente errada
+
+Nitidez medida pela energia de altas frequencias (laplaciano) no mesmo trecho, com a cadeia de
+filtros de producao:
+
+| saida | quadro | faixa da legenda | tempo/Short |
+|---|---|---|---|
+| veryfast crf20 (era o default) | 1.860 | 4.960 | 3,08 s |
+| veryfast crf18 | 1.887 | 4.980 | 3,25 s |
+| medium crf20 | 1.921 | 5.031 | 5,29 s |
+| **medium crf18 (escolhido)** | **1.931** | **5.038** | **5,25 s** |
+| slow crf18 | 1.924 | 5.035 | 15,90 s |
+| *source 720p, antes de ampliar* | *1.991* | — | — |
+
+Duas conclusoes mudaram a escolha:
+
+1. **o PRESET domina o CRF** — veryfast→medium rende +3,3%, crf20→18 rende +1,5%;
+2. **`slow` nao rende nada sobre `medium`** (1.924 contra 1.931, dentro do ruido) e custa 3x o
+   tempo. A hipotese era slow/crf18; a medicao parou em medium/crf18.
+
+Honestidade sobre o ganho: +3,8% no quadro, e a olho nu nao distingui os frames (SSIM entre o
+antigo e o melhor esforco: 0,9927; PSNR 47 dB). Mudou porque custa pouco — +2,2 s por Short,
+~9 s num pedido de quatro contra ~86 s de download. **Isso NAO resolve a percepcao de "imagem
+mole"**, que vem da ampliacao de 720p, nao do encode.
+
+### Degrade do rodape: mais gradual
+
+De 1200/1.00 para **1400/0.80** — rampa mais alta e opacidade maxima menor, para o pregador nao
+desaparecer atras da base escura. Frames comparativos em `docs/mockups/rodape/`.
+
+Achado ao mudar: o `cmd/servidor` fixava `RodapeAlpha: 1.00` no codigo, entao a constante
+`rodapeAlphaPadrao` do pacote era **letra morta** no caminho que o operador usa. Agora o servidor
+deixa zerado e herda o padrao medido.
+
 ### Registro dos cortes: acumular o dado, sem agir sobre ele
 
 Cada ajuste manual e uma **medicao** do desvio da legenda: o operador, ao empurrar as pontas ate

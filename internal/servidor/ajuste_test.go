@@ -1263,3 +1263,32 @@ func TestCliqueNoFimUsaOComecoDaProximaFala(t *testing.T) {
 		t.Error("fimDaFraseSeguinte não procura a próxima fala da faixa")
 	}
 }
+
+// TestFaixaNaoEhReconstruidaAoAjustar é o bug do salto de rolagem: reatribuir innerHTML zera o
+// scrollTop, e a faixa (que tem rolagem própria) voltava ao topo a cada clique — no meio de um
+// fluxo de dois cliques, isso quebra a sequência.
+func TestFaixaNaoEhReconstruidaAoAjustar(t *testing.T) {
+	js := jsDaPagina(t)
+
+	// A chave do conjunto: só reconstrói quando as frases mudam de verdade.
+	if !strings.Contains(js, "chave !== REV.faixaChave") {
+		t.Error("a faixa deveria ser reconstruída só quando o conjunto de frases muda")
+	}
+	// O ajuste mexe apenas no destaque.
+	if !strings.Contains(js, "b.classList.toggle('dentro'") {
+		t.Error("o ajuste deveria alternar a classe, não recriar os elementos")
+	}
+	// Trocar de trecho força a reconstrução (conjunto novo). jsDaPagina remove comentários,
+	// então a busca é pelo código puro — dentro do irPara.
+	ip := js[strings.Index(js, "function irPara"):]
+	ip = ip[:strings.Index(ip, "function decidir")]
+	if !strings.Contains(ip, "REV.faixaChave = null") {
+		t.Error("irPara deveria invalidar a chave, senão o trecho novo reusa a lista antiga")
+	}
+	// E o auto-scroll só acontece na (re)construção: no ajuste, a posição é do operador.
+	corpo := js[strings.Index(js, "function desenharFrases"):]
+	corpo = corpo[:strings.Index(corpo, "function rolarAteSelecionadas")]
+	if strings.Count(corpo, "rolarAteSelecionadas(wrap)") != 1 {
+		t.Error("rolarAteSelecionadas deveria ser chamado uma vez, dentro da reconstrução")
+	}
+}

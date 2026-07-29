@@ -73,8 +73,11 @@ type Metricas struct {
 
 	// Desfecho. Pedidos que FALHAM também entram no CSV: o tempo gasto até a falha é real
 	// e o operador vai refazer — registrar só o sucesso deixaria a média otimista.
-	Completou bool   // true = ciclo completo; false = terminou em erro
-	Erro      string // motivo, quando não completou
+	// VideoReusado marca que o vídeo já estava em disco (não houve download). Sem esta coluna,
+	// um pedido reaproveitado entraria na média de download como se tivesse baixado em 0s.
+	VideoReusado bool
+	Completou    bool   // true = ciclo completo; false = terminou em erro
+	Erro         string // motivo, quando não completou
 
 	// Etapas (ms).
 	BaixarLegendaMs int64
@@ -134,7 +137,7 @@ func (m *Metricas) RenderPorShortMs() int64 {
 
 const cabecalhoTempos = "quando,pedido,titulo,sermao_s,transcricao_tokens,candidatos,aprovados," +
 	"video_mb,retries,baixar_legenda_s,selecionar_s,validar_s,baixar_video_s,renderizar_s," +
-	"render_por_short_s,total_maquina_s,aguardando_humano_s,completou,erro\n"
+	"render_por_short_s,total_maquina_s,aguardando_humano_s,video_reusado,completou,erro\n"
 
 // LinhaCSV formata o pedido como uma linha do arquivo de auditoria. Tempos em segundos com
 // 1 casa (mais legível que ms para comparar a olho, e suficiente para média).
@@ -158,6 +161,7 @@ func (m *Metricas) LinhaCSV() string {
 		seg(m.RenderPorShortMs()),
 		seg(m.TotalMaquinaMs()),
 		seg(m.AguardandoMs),
+		simNao(m.VideoReusado),
 		completouTexto(m.Completou),
 		csvCampo(m.Erro),
 	}, ",") + "\n"
@@ -226,6 +230,13 @@ func (s *Servidor) gravarTempos(m *Metricas) {
 }
 
 // completouTexto formata o desfecho para o CSV (sim/nao — fácil de filtrar com awk/grep).
+func simNao(b bool) string {
+	if b {
+		return "sim"
+	}
+	return "nao"
+}
+
 func completouTexto(ok bool) string {
 	if ok {
 		return "sim"

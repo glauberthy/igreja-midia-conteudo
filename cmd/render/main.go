@@ -44,6 +44,8 @@ func main() {
 	logoBaixo := flag.Int("logo-ajuste-y", 0, "ajuste vertical da logo a partir do centro da faixa (px; + desce, - sobe)")
 	rodapeAlpha := flag.Float64("rodape-escuro", 1.00, "opacidade do gradiente escuro no rodapé (0 = sem gradiente; ajuda a logo/legenda em fundo claro)")
 	rodapeAltura := flag.Int("rodape-altura", 0, "altura do gradiente escuro do rodapé em px (0 = default)")
+	preset := flag.String("preset", "", "preset do x264 (vazio = default; preset mais lento = imagem mais nítida)")
+	crf := flag.String("crf", "", "crf do x264 (vazio = default; menor = mais qualidade)")
 	flag.Parse()
 
 	if *id == "" {
@@ -79,6 +81,8 @@ func main() {
 	r := &video.Renderizador{
 		Exec: video.ExecutorReal{}, Bin: *bin, BaseDir: *base, OutDir: *out,
 		MargemFimMs:   margemFimMs,
+		Preset:        *preset,
+		CRF:           *crf,
 		FontePath:     *fonte,
 		TamanhoFonte:  *fonteTam,
 		CharsPorLinha: *legendaCPL,

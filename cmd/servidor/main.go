@@ -50,6 +50,8 @@ func main() {
 	endpoint := flag.String("endpoint", harness.EndpointPadrao, "endpoint do modelo (llama-server; URL completa /v1/chat/completions)")
 	prompts := flag.String("prompts", harness.PromptDirPadrao, "pasta dos prompts")
 	declaracao := flag.String("declaracao", harness.DeclaracaoPadrao, "caminho da Declaração Doutrinária")
+	retomar := flag.String("retomar", "", "retoma um pedido já em disco, direto na revisão (pula legenda+seleção; "+
+		"reaproveita o video.mp4 se existir). Para iterar em render/tela sem refazer o ciclo inteiro.")
 	flag.Parse()
 
 	// Contagem de retries para a auditoria de desempenho: os hooks de log do harness e do
@@ -70,7 +72,10 @@ func main() {
 	// Render da fase pesada: margem-fim 0 (spec-10) e os padrões visuais (spec-12/13).
 	rend := &video.Renderizador{
 		Exec: video.ExecutorReal{}, Bin: *ffmpegBin, BaseDir: *base, OutDir: *out,
-		MargemFimMs: 0, RodapeAlpha: 1.00,
+		MargemFimMs: 0,
+		// RodapeAlpha/RodapeAltura zerados = usa o padrão medido do pacote video (0.80/1400).
+		// Antes o servidor fixava 1.00 aqui, então mudar o padrão do pacote não teria efeito
+		// nenhum no caminho que o operador usa — a constante existia e era letra morta.
 	}
 
 	s := servidor.Novo(servidor.Opcoes{
@@ -85,6 +90,16 @@ func main() {
 		ReterPedidos:     *reter,
 		LimpezaDesligada: *semLimpeza,
 	})
+
+	// Retomada: falha na SUBIDA se o pedido não servir. Melhor um erro claro aqui que o
+	// operador abrir a tela e encontrar o formulário vazio, sem entender por que.
+	if *retomar != "" {
+		if err := s.Retomar(*retomar); err != nil {
+			fmt.Fprintf(os.Stderr, "erro ao retomar: %v\n", err)
+			os.Exit(1)
+		}
+		log.Printf("pedido %s retomado: abra a página e ele estará na revisão", *retomar)
+	}
 
 	addr := fmt.Sprintf(":%d", *porta)
 	log.Printf("servidor de Shorts no ar em http://localhost%s (Ctrl-C para sair)", addr)

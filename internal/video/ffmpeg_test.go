@@ -29,7 +29,7 @@ const transcricaoFixture = `[01:30:10] Deus nos criou para viver em comunhão co
 // 40 min — o offset não custa nada); -ss depois = 20,74 s e 183 s de CPU (8x mais lento).
 // É a mesma lição do download (issue #686 do yt-dlp), agora em arquivo local.
 func TestArgsFFmpegSeekAntesDoInput(t *testing.T) {
-	args := ArgsFFmpeg("video.mp4", "logo.png", "out.mp4", 1318000, 32000, "[0:v]null[vout]", true)
+	args := ArgsFFmpeg("video.mp4", "logo.png", "out.mp4", 1318000, 32000, "[0:v]null[vout]", true, "", "")
 
 	posSS, posI := -1, -1
 	for i, a := range args {
@@ -54,7 +54,7 @@ func TestArgsFFmpegSeekAntesDoInput(t *testing.T) {
 }
 
 func TestArgsFFmpegSemLogoUsaVf(t *testing.T) {
-	args := ArgsFFmpeg("trabalho/x/video.mp4", "", "finalizados/x/short_01.mp4", 65000, 30000, "crop=ih*9/16:ih,scale=1080:1920", false)
+	args := ArgsFFmpeg("trabalho/x/video.mp4", "", "finalizados/x/short_01.mp4", 65000, 30000, "crop=ih*9/16:ih,scale=1080:1920", false, "", "")
 	joined := strings.Join(args, " ")
 
 	if !strings.Contains(joined, "-ss 65.000") {
@@ -72,7 +72,7 @@ func TestArgsFFmpegSemLogoUsaVf(t *testing.T) {
 }
 
 func TestArgsFFmpegComplexoComLogo(t *testing.T) {
-	args := ArgsFFmpeg("trabalho/x/video.mp4", "assets/ibi_assinatura_shorts.png", "out.mp4", 65000, 30000, "[0:v]crop[v0];[v0][logo]overlay[vout]", true)
+	args := ArgsFFmpeg("trabalho/x/video.mp4", "assets/ibi_assinatura_shorts.png", "out.mp4", 65000, 30000, "[0:v]crop[v0];[v0][logo]overlay[vout]", true, "", "")
 	joined := strings.Join(args, " ")
 
 	if !strings.Contains(joined, "-i assets/ibi_assinatura_shorts.png") {
@@ -88,7 +88,7 @@ func TestArgsFFmpegComplexoComLogo(t *testing.T) {
 
 func TestArgsFFmpegComplexoSemLogo(t *testing.T) {
 	// Gradiente sem logo: filter_complex mas SEM 2º input.
-	args := ArgsFFmpeg("trabalho/x/video.mp4", "", "out.mp4", 0, 30000, "[0:v]crop[v0];[v0][grad]overlay[vout]", true)
+	args := ArgsFFmpeg("trabalho/x/video.mp4", "", "out.mp4", 0, 30000, "[0:v]crop[v0];[v0][grad]overlay[vout]", true, "", "")
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "-i out.mp4") || strings.Count(joined, "-i ") != 1 {
 		t.Errorf("sem logo não deveria ter 2º input: %s", joined)
