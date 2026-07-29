@@ -64,11 +64,12 @@ const (
 	// Faixa escura do rodapé como GRADIENTE (transparente em cima → escuro embaixo),
 	// suave como na arte de referência (não uma caixa de borda dura). A opacidade sobe com
 	// uma curva (pow) para o começo ser IMPERCEPTÍVEL — sem linha visível no topo.
-	// Rampa mais ALTA e opacidade máxima MENOR que o original (era 1200/1.00): o degradê fica
-	// mais gradual e o pregador não desaparece atrás da base escura. Frames comparativos em
-	// docs/mockups/rodape/ — trocar é uma linha, e as flags -rodape-altura/-rodape-escuro
-	// permitem testar sem recompilar.
-	rodapeAlturaPadrao = 1400 // altura do gradiente (px), de baixo para cima
+	// 1500/0.72 é a variante ESCOLHIDA PELO OPERADOR entre quatro geradas
+	// (docs/mockups/rodape/d_1500_0.72.png). Rampa mais alta e opacidade máxima menor que o
+	// original (1200/1.00): o degradê fica mais gradual e o pregador não desaparece atrás da
+	// base escura. As flags -rodape-altura/-rodape-escuro permitem testar outros valores sem
+	// recompilar.
+	rodapeAlturaPadrao = 1500 // altura do gradiente (px), de baixo para cima
 	easeGradiente      = 2.2  // expoente da curva de opacidade (>1 = começa mais suave)
 
 	// Encode: medido, não arbitrado. Nitidez pela energia de altas frequências (laplaciano)
@@ -106,7 +107,7 @@ const (
 // Quem monta um Renderizador para o caminho do operador usa esta constante. Um teste verifica
 // que o valor chega ao comando do ffmpeg (internal/video/caminho_do_operador_test.go), porque
 // conferir a constante não prova que ela é usada.
-const RodapeAlphaPadrao = 0.80
+const RodapeAlphaPadrao = 0.72
 
 // Executor roda um comando externo e devolve stdout, stderr e o erro de execução.
 type Executor interface {

@@ -104,9 +104,11 @@ func TestDegradeNoCaminhoDoOperador(t *testing.T) {
 	if !strings.Contains(linha, querAltura) {
 		t.Errorf("a altura %s não chegou ao ffmpeg:\n%s", querAltura, linha)
 	}
-	// E os valores são os medidos, não os antigos.
-	if RodapeAlphaPadrao != 0.80 || rodapeAlturaPadrao != 1400 {
-		t.Errorf("os padrões do rodapé mudaram: alpha=%.2f altura=%d (medidos: 0.80/1400)",
+	// Trava a decisão registrada: 1500/0.72 é a variante que o OPERADOR escolheu entre as
+	// quatro geradas (docs/mockups/rodape/d_1500_0.72.png). Mudar exige mudar aqui de propósito
+	// — não deve acontecer por efeito colateral de outra alteração.
+	if RodapeAlphaPadrao != 0.72 || rodapeAlturaPadrao != 1500 {
+		t.Errorf("os padrões do rodapé mudaram: alpha=%.2f altura=%d (escolha do operador: 0.72/1500)",
 			RodapeAlphaPadrao, rodapeAlturaPadrao)
 	}
 	if strings.Contains(linha, "1.00*255*pow") {
