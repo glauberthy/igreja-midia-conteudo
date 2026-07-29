@@ -10,7 +10,7 @@
 # O recorte da LOGO é fixo — ela está sempre no mesmo lugar.
 #
 # Reproduz a cadeia de filtros de produção (internal/video/ffmpeg.go): crop 9:16 central +
-# scale lanczos + gradiente do rodapé (420/0,90) + logo. Ao emitir 720, os quatro valores em
+# scale lanczos + gradiente do rodapé (520/0,60) + logo. Ao emitir 720, os quatro valores em
 # pixels de saída são escalados por 2/3 — resolução não é um número só.
 set -eu
 V=${1:?video de entrada}
@@ -23,15 +23,15 @@ LOGO=assets/ibi_assinatura_shorts.png
 render() { # larg alt grad faixa logo_w saida
   ffmpeg -y -v error -ss "$T" -i "$V" -i "$LOGO" -filter_complex \
 "[0:v]crop=ih*9/16:ih,scale=$1:$2:flags=lanczos,setsar=1[v0];\
-color=c=black:s=$1x$3:d=1,format=rgba,geq=r=0:g=0:b=0:a='0.90*255*pow(Y/H\,2.2)'[grad];\
+color=c=black:s=$1x$3:d=1,format=rgba,geq=r=0:g=0:b=0:a='0.60*255*pow(Y/H\,2.2)'[grad];\
 [v0][grad]overlay=0:H-h[vg];[1:v]scale=$5:-2[logo];[vg][logo]overlay=x=(W-w)/2:y=H-$4/2-h/2+0[vout]" \
     -map "[vout]" -map "0:a?" -t 34 \
     -c:v libx264 -preset medium -crf 18 -c:a aac -b:a 128k -movflags +faststart "$6"
 }
 
 echo "== tempo de render (34 s de Short) =="
-/usr/bin/time -f "1080x1920: %e s" bash -c "$(declare -f render); V='$V' T='$T' LOGO='$LOGO'; render 1080 1920 420 240 550 $OUT/s1080.mp4"
-/usr/bin/time -f " 720x1280: %e s" bash -c "$(declare -f render); V='$V' T='$T' LOGO='$LOGO'; render 720 1280 280 160 367 $OUT/s720.mp4"
+/usr/bin/time -f "1080x1920: %e s" bash -c "$(declare -f render); V='$V' T='$T' LOGO='$LOGO'; render 1080 1920 520 240 550 $OUT/s1080.mp4"
+/usr/bin/time -f " 720x1280: %e s" bash -c "$(declare -f render); V='$V' T='$T' LOGO='$LOGO'; render 720 1280 347 160 367 $OUT/s720.mp4"
 
 echo; echo "== tamanho do arquivo =="
 ls -l --block-size=K "$OUT/s1080.mp4" "$OUT/s720.mp4" | awk '{printf "%-12s %s\n", $NF, $5}'

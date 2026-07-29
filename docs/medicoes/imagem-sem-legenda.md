@@ -29,7 +29,7 @@ errada por descuido.
 
 ---
 
-## 1. Gradiente do rodapé: 1500/0,72 → 420/0,90
+## 1. Gradiente do rodapé: 1500/0,72 → 520/0,60
 
 O gradiente servia a dois fins: contraste da legenda e legibilidade da logo branca. Sem
 legenda sobrou a logo, que ocupa os **240 px de baixo** — mas o gradiente cobria **1500 px,
@@ -51,29 +51,39 @@ Duas medidas, porque o trade-off tem dois lados:
 |---|---|---|---|
 | a (antes) | 1500 / 0,72 / 240 | 87,96 | 68,08 |
 | b | 700 / 0,65 / 240 | 114,00 | 97,65 |
-| c | 520 / 0,60 / 240 | 119,03 | 113,29 |
-| **i (escolhida)** | **420 / 0,90 / 240** | **120,16** | **99,64** |
+| **c (escolhida)** | **520 / 0,60 / 240** | **119,03** | **113,29** |
+| i | 420 / 0,90 / 240 | 120,16 | 99,64 |
 | j | 480 / 1,00 / 240 | 118,11 | 83,04 |
 | d | 420 / 0,55 / 200 | 121,04 | 106,16 |
 | e | 340 / 0,72 / 180 | 121,82 | 93,51 |
 | g | 500 / 0,80 / 300 | 118,44 | 123,02 |
 | f | sem gradiente | 122,33 | 166,06 |
 
-**420/0,90** recupera 94% da imagem que o gradiente antigo escurecia (87,96 → 120,16, de um
-teto de 122,33) e ainda escurece o fundo da logo de 166 para 100.
+**Escolha do operador: 520/0,60.** Recupera 90% da imagem que o gradiente antigo escurecia
+(87,96 → 119,03, de um teto de 122,33) e ainda escurece o fundo da logo de 166 para 113.
 
-Duas observações contra-intuitivas que a medição resolveu:
+A medição sozinha apontava 420/0,90; o operador preferiu a rampa mais longa e menos opaca,
+pelo degradê mais suave. O que a escolha troca, medido: **a imagem do pregador é a mesma**
+(119,03 contra 120,16 — 1,1 ponto de luma, imperceptível) e o custo são **13 pontos de
+contraste sob o texto branco** da logo (113,29 contra 99,64). Ou seja, o preço da suavidade é
+legibilidade da marca, não imagem do pregador. Registro completo do trade-off na spec-13.
 
-- **a opacidade máxima SUBIU** (0,72 → 0,90) enquanto o gradiente clareia a imagem. Não é
-  contradição: com rampa de 1500 px, 0,90 apagaria o pregador; com 420 px o topo do
-  gradiente fica abaixo do peito, e a opacidade só age onde a logo está.
+Se a logo se mostrar apagada num culto de rodapé claro, o caminho medido é `420/0,90` (mesma
+imagem, +13 de contraste) ou `480/1,00` (−1 de imagem, +30 de contraste), sem recompilar.
+
+Uma observação contra-intuitiva que a medição resolveu:
+
+- **as variantes de opacidade ALTA clareiam a imagem** (420/0,90 preserva mais torso que
+  700/0,65). Não é contradição: o que escurece o pregador é o comprimento da rampa, não a
+  opacidade máxima — com 420 px, o topo do gradiente fica abaixo do peito, e 0,90 age só
+  onde a logo está.
 - **descer a logo** (faixa 240 → 180, variantes d/e) melhora os dois números, porque põe o
   texto na parte escura da rampa. Não foi adotado: com faixa 180 a logo fica a 11 px da
   borda inferior, dentro da área onde o player do Shorts desenha barra de progresso e
   descrição. A faixa fica em 240 (41 px de margem), a posição que o operador já escolheu.
 
 Frames para conferir a olho: `docs/mockups/rodape-sem-legenda/`
-(`a_antes_1500_0.72.png`, `c_520_0.60.png`, `i_420_0.90_ESCOLHIDO.png`, `j_480_1.00.png`,
+(`a_antes_1500_0.72.png`, `c_520_0.60_ESCOLHIDO.png`, `i_420_0.90.png`, `j_480_1.00.png`,
 `f_sem_gradiente.png`, e o recorte ampliado `zoom_area_da_logo_a_c_i_j.png`).
 
 ---
@@ -119,9 +129,9 @@ não perde *informação*, mas perde *nitidez na tela*. Somado aos 64% da logo, 
 **Recomendação: manter 1080×1920.** Comparação visual da logo:
 `docs/medicoes/logo_1080_nativo_vs_720_ampliado.png` (topo nativo, base ampliada).
 
-Confirmado num segundo culto (`xZNTJcehAV0`, outro pregador, outra cena): logo 2178 → 778
-(**−64%**, o mesmo número), rosto 18,79 → 13,90 (−26%), e a contraprova na resolução da fonte
-306,8 contra 310,6 (idênticos). Repetir:
+Confirmado num segundo culto (`xZNTJcehAV0`, outro pregador, outra cena), já com o gradiente
+520/0,60 adotado: logo 2017 → 724 (**−64%**, o mesmo número), rosto 18,72 → 13,92 (−26%), e a
+contraprova na resolução da fonte 309,6 contra 310,5 (idênticos). Repetir:
 
 ```bash
 docs/medicoes/medir_resolucao.sh trabalho/ID/video.mp4 3830
@@ -130,7 +140,7 @@ docs/medicoes/medir_resolucao.sh trabalho/ID/video.mp4 3830
 Nota para quem for mexer nisso um dia: a resolução **não** é um número só. Tamanho de fonte,
 largura da logo, altura do gradiente e faixa da logo estão todos em pixels de saída; emitir
 720 exige escalar os quatro (foi o que a medição fez à mão: logo 550→367, gradiente
-420→280, faixa 240→160).
+520→347, faixa 240→160).
 
 ---
 

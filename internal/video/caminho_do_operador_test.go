@@ -95,10 +95,20 @@ func TestDegradeNoCaminhoDoOperador(t *testing.T) {
 	args := argsDoOperador(t)
 	linha := strings.Join(args, " ")
 
-	// O filtro do gradiente carrega a opacidade e a altura direto na expressão do geq.
+	// O trecho LITERAL que o ffmpeg tem de receber com a escolha do operador (520/0.60).
+	// Escrito à mão de propósito: montado a partir das constantes, o teste passaria com
+	// qualquer valor, desde que consistente — e o que se quer travar é ESTE valor.
+	const trechoEsperado = `color=c=black:s=1080x520:d=1,format=rgba,geq=r=0:g=0:b=0:a='0.60*255*pow(Y/H\,2.2)'`
+	t.Logf("trecho do gradiente esperado:\n%s", trechoEsperado)
+	if !strings.Contains(linha, trechoEsperado) {
+		t.Errorf("o gradiente 520/0.60 (escolha do operador) não chegou ao ffmpeg.\nquero: %s\nlinha: %s",
+			trechoEsperado, linha)
+	}
+
+	// As mesmas duas peças, agora derivadas das constantes: pega o caso em que alguém muda a
+	// constante e esquece o literal acima (ou vice-versa) — os dois têm de concordar.
 	querAlpha := fmt.Sprintf("%.2f*255*pow", RodapeAlphaPadrao)
 	querAltura := fmt.Sprintf("x%d", rodapeAlturaPadrao)
-	t.Logf("trecho do gradiente esperado: %s ... %s", querAlpha, querAltura)
 
 	if !strings.Contains(linha, querAlpha) {
 		t.Errorf("a opacidade %s não chegou ao ffmpeg:\n%s", querAlpha, linha)
@@ -108,10 +118,11 @@ func TestDegradeNoCaminhoDoOperador(t *testing.T) {
 	}
 	// Trava o par altura/opacidade em vigor. 1500/0.72 foi a escolha do operador enquanto a
 	// legenda era queimada; com a legenda suspensa (spec-12) o gradiente passou a servir só a
-	// logo e virou 420/0.90, medido em docs/medicoes/imagem-sem-legenda.md. Mudar exige mudar
-	// aqui de propósito — não deve acontecer por efeito colateral de outra alteração.
-	if RodapeAlphaPadrao != 0.90 || rodapeAlturaPadrao != 420 {
-		t.Errorf("os padrões do rodapé mudaram: alpha=%.2f altura=%d (medido: 0.90/420)",
+	// logo, e entre as nove variantes medidas (docs/medicoes/imagem-sem-legenda.md) o operador
+	// escolheu 520/0.60 — a mais suave e mais clara. Mudar exige mudar aqui de propósito —
+	// não deve acontecer por efeito colateral de outra alteração.
+	if RodapeAlphaPadrao != 0.60 || rodapeAlturaPadrao != 520 {
+		t.Errorf("os padrões do rodapé mudaram: alpha=%.2f altura=%d (escolha do operador: 0.60/520)",
 			RodapeAlphaPadrao, rodapeAlturaPadrao)
 	}
 	// O gradiente longo NÃO pode voltar por acidente: 1500 px cobriam 78% da altura do Short

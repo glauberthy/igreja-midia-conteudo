@@ -73,29 +73,31 @@ const (
 	// suave como na arte de referência (não uma caixa de borda dura). A opacidade sobe com
 	// uma curva (pow) para o começo ser IMPERCEPTÍVEL — sem linha visível no topo.
 	//
-	// 420/0.90 — CURTO E FORTE. Trocou 1500/0.72 quando a legenda foi suspensa (spec-12):
-	// o gradiente existia para dois fins, contraste da legenda e legibilidade da logo
-	// branca; sem legenda sobrou só a logo, que ocupa os 240 px de baixo. Um gradiente de
-	// 1500 px cobria 78% da altura do Short para servir uma faixa de 240 px — era isso que
-	// dava a sensação de "apertado".
+	// 520/0.60 — ESCOLHA DO OPERADOR entre nove variantes medidas, quando a legenda foi
+	// suspensa (spec-12). O gradiente existia para dois fins, contraste da legenda e
+	// legibilidade da logo branca; sem legenda sobrou só a logo, que ocupa os 240 px de
+	// baixo. O valor anterior, 1500 px, cobria 78% da altura do Short para servir uma faixa
+	// de 240 px — era isso que dava a sensação de "apertado".
 	//
-	// Medido em nove variantes no mesmo frame (docs/medicoes/imagem-sem-legenda.md), com o
-	// pregador de camisa BRANCA — o pior caso para a logo branca:
+	// Medido no mesmo frame (docs/medicoes/imagem-sem-legenda.md), com o pregador de camisa
+	// BRANCA — o pior caso para a logo branca:
 	//
 	//   variante          torso (luma, ↑=mais imagem)   sob o texto da logo (luma, ↓=legível)
 	//   1500/0.72 (antes)          87,96                        68,08
-	//   520/0.60                  119,03                       113,29
-	//   420/0.90  <- escolhido    120,16                        99,64
+	//   520/0.60  <- escolhido    119,03                       113,29
+	//   420/0.90                  120,16                        99,64
 	//   480/1.00                  118,11                        83,04
 	//   sem gradiente             122,33                       166,06
 	//
-	// 420/0.90 recobra 94% da imagem que o gradiente antigo escurecia (87,96 → 120,16, teto
-	// 122,33) e ainda escurece o fundo da logo de 166 para 100. A opacidade SUBIU (0,72 →
-	// 0,90) porque agora ela só age no rodapé: com rampa de 1500 px, 0,90 apagaria o
-	// pregador; com 420 px, o topo do gradiente fica abaixo do peito.
+	// O trade-off da escolha, explícito: rampa mais LONGA e menos OPACA (520/0.60) devolve
+	// 100% da imagem que 420/0.90 devolveria (119,03 contra 120,16 — a diferença é
+	// imperceptível) com um degradê mais suave, ao custo de 13 pontos de luma sob o texto da
+	// logo (113,29 contra 99,64), ou seja MENOS contraste para o branco. Continua muito
+	// melhor que sem gradiente nenhum (166,06, onde o texto quase desaparece na camisa) e
+	// bem mais claro que os 68,08 de antes. A escolha é de aparência, e é do operador.
 	//
 	// As flags -rodape-altura/-rodape-escuro/-faixa-logo testam outros valores sem recompilar.
-	rodapeAlturaPadrao = 420 // altura do gradiente (px), de baixo para cima
+	rodapeAlturaPadrao = 520 // altura do gradiente (px), de baixo para cima
 	easeGradiente      = 2.2 // expoente da curva de opacidade (>1 = começa mais suave)
 
 	// Encode: medido, não arbitrado. Nitidez pela energia de altas frequências (laplaciano)
@@ -134,9 +136,11 @@ const (
 // que o valor chega ao comando do ffmpeg (internal/video/caminho_do_operador_test.go), porque
 // conferir a constante não prova que ela é usada.
 //
-// 0.90 vem da medição das variantes de rodapé sem legenda — ver rodapeAlturaPadrao acima, que
-// é o par indissociável deste valor (opacidade só se julga junto com a altura da rampa).
-const RodapeAlphaPadrao = 0.90
+// 0.60 é a escolha do operador entre as variantes de rodapé sem legenda — ver
+// rodapeAlturaPadrao acima, que é o par indissociável deste valor: opacidade só se julga
+// junto com a altura da rampa (0.60 em 520 px é bem mais escuro no rodapé que 0.60 em
+// 1500 px, porque a curva sobe no mesmo espaço).
+const RodapeAlphaPadrao = 0.60
 
 // LegendaQueimadaPadrao diz se o render QUEIMA a legenda na imagem do Short. Está em
 // `false`: a queima está SUSPENSA, não removida (spec-12, seção "Suspensão temporária").
