@@ -834,6 +834,10 @@ func (s *Servidor) faseLeve(reg *registro) {
 	// (outra janela, outro pedido, hoje ou semana passada), a legenda já está em disco e o
 	// download de 3 s não acontece. Tocar() marca o uso para a expiração contar idade pelo
 	// último USO, não pelo download.
+	// BAIXA SÓ O QUE FALTA. Esta pergunta é sobre a LEGENDA (3 s); a do vídeo (820 MB) é outra,
+	// na fase pesada. As duas são independentes de propósito: é o que faz um cache migrado —
+	// vídeo já movido, legenda ainda não, porque a limpeza do pedido já a tinha apagado —
+	// baixar 3 s e não encostar no vídeo.
 	if s.cache.TemLegenda(videoID) {
 		s.logTempos(fmt.Sprintf("legenda do vídeo %s já no cache: reaproveitando", videoID))
 		if err := s.cache.Tocar(videoID); err != nil {
@@ -847,7 +851,9 @@ func (s *Servidor) faseLeve(reg *registro) {
 	}); err != nil {
 		s.setErro(reg, mensagemErroDownload(err))
 		return
-	} else if err := s.cache.GerarTranscricaoIntegra(videoID); err != nil {
+	}
+	// A transcrição íntegra é derivada da legenda: se faltar, regenera — nos dois ramos acima.
+	if err := s.cache.GarantirTranscricaoIntegra(videoID); err != nil {
 		s.setErro(reg, comPrefixo("falha ao gerar a transcrição do culto: ", err))
 		return
 	}

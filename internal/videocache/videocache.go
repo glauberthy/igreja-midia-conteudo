@@ -158,18 +158,35 @@ func (c *Cache) TemVideo(videoID string) bool {
 	return c.Usavel(filepath.Join(dir, NomeVideo))
 }
 
-// TemLegenda diz se a legenda e a transcrição íntegra do culto já estão no cache.
+// TemLegenda diz se a LEGENDA do culto já está no cache.
+//
+// Pergunta só pela legenda.srt, que é a FONTE. A transcrição íntegra é derivada dela e é
+// regenerada quando falta (GarantirTranscricaoIntegra) — antes esta função exigia as duas, e
+// o efeito era baixar 3 s de legenda de novo só porque um arquivo derivado tinha sumido.
+//
+// Não existe uma pergunta "o cache está completo": existem duas perguntas independentes,
+// TemVideo e TemLegenda, cada uma abrindo o download do que falta. É o que faz um cache
+// migrado (vídeo movido, legenda ainda não) baixar só a legenda e não tocar nos 820 MB.
 func (c *Cache) TemLegenda(videoID string) bool {
 	dir, err := c.DirVideo(videoID)
 	if err != nil {
 		return false
 	}
-	for _, n := range []string{NomeLegenda, NomeTransc} {
-		if fi, err := os.Stat(filepath.Join(dir, n)); err != nil || fi.Size() == 0 {
-			return false
-		}
+	fi, err := os.Stat(filepath.Join(dir, NomeLegenda))
+	return err == nil && fi.Size() > 0
+}
+
+// GarantirTranscricaoIntegra gera a transcrição íntegra se ela não estiver lá. É derivada da
+// legenda, determinística e barata — então "faltando" se resolve regenerando, nunca baixando.
+func (c *Cache) GarantirTranscricaoIntegra(videoID string) error {
+	dir, err := c.DirVideo(videoID)
+	if err != nil {
+		return err
 	}
-	return true
+	if fi, err := os.Stat(filepath.Join(dir, NomeTransc)); err == nil && fi.Size() > 0 {
+		return nil
+	}
+	return c.GerarTranscricaoIntegra(videoID)
 }
 
 // LerIndice lê o video.json do culto.

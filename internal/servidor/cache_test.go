@@ -199,6 +199,197 @@ func TestSegundoPedidoNaoRebaixaALegenda(t *testing.T) {
 	}
 }
 
+// TestCacheComVideoSemLegendaBaixaSoALegenda é o estado que a MIGRAÇÃO produz de verdade, e o
+// que ele não pode custar.
+//
+// Depois de migrar, o cache tem video.mp4 + video.json e NÃO tem legenda — porque a legenda já
+// tinha sido apagada da pasta do pedido pela limpeza (spec-06 lista legenda.srt como
+// "baixa de novo"), então não havia o que copiar. Se "cache incompleto" disparasse o conjunto,
+// os 820 MB que a migração acabou de salvar seriam rebaixados.
+//
+// Não há uma pergunta "está completo": há duas independentes, uma por artefato. Este teste é o
+// que garante que elas continuem independentes.
+func TestCacheComVideoSemLegendaBaixaSoALegenda(t *testing.T) {
+	bv := &baixadorVideoFake{}
+	rf := &renderFake{}
+	s := servidorComCache(t, candsJanela(), bv, rf)
+	bf := s.baixador.(*baixadorFake)
+
+	// Estado pós-migração: vídeo e índice no cache, legenda ausente.
+	dirVideo, err := s.cache.DirVideo("cultoTeste1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dirVideo, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := escreverVideoFalso(filepath.Join(dirVideo, "video.mp4")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.cache.Registrar("cultoTeste1", 0, "Culto"); err != nil {
+		t.Fatal(err)
+	}
+	mtimeAntes := modificadoEm(t, filepath.Join(dirVideo, "video.mp4"))
+
+	id := criarPedido(t, s, "https://youtu.be/cultoTeste1", "00:00:00", "00:10:00")
+	esperarStatus(t, s, id, pipeline.EstadoAguardandoAprovacao)
+
+	// BAIXOU a legenda (era o que faltava)...
+	bf.mu.Lock()
+	chamadasLegenda := bf.chamadas
+	bf.mu.Unlock()
+	if chamadasLegenda != 1 {
+		t.Errorf("a legenda foi baixada %d vez(es), quero 1: ela faltava no cache", chamadasLegenda)
+	}
+	if !s.cache.TemLegenda("cultoTeste1") {
+		t.Error("a legenda não entrou no cache")
+	}
+
+	// ...e a transcrição íntegra foi gerada dela (é derivada, não baixada).
+	if _, err := os.Stat(filepath.Join(dirVideo, "transcricao.txt")); err != nil {
+		t.Errorf("a transcrição íntegra do culto não foi gerada: %v", err)
+	}
+
+	// E O VÍDEO NÃO FOI TOCADO. É o ponto do teste.
+	aprovarJSON(t, s, id, []int{0})
+	esperarStatus(t, s, id, pipeline.EstadoConcluido)
+	bv.mu.Lock()
+	baixouVideo := bv.chamado
+	bv.mu.Unlock()
+	if baixouVideo {
+		t.Error("o vídeo foi baixado de novo: faltava só a legenda, e rebaixar joga fora os " +
+			"820 MB que a migração acabou de preservar")
+	}
+	if depois := modificadoEm(t, filepath.Join(dirVideo, "video.mp4")); depois != mtimeAntes {
+		t.Errorf("o arquivo de vídeo foi reescrito (mtime %v → %v): nada devia encostar nele",
+			mtimeAntes, depois)
+	}
+}
+
+// TestTranscricaoIntegraAusenteNaoDisparaDownload: a íntegra é DERIVADA da legenda. Se faltar
+// (falha na geração, limpeza manual), regenerar é a resposta — baixar 3 s de legenda de novo
+// seria pagar rede por um arquivo que sai de um arquivo que já está em disco.
+func TestTranscricaoIntegraAusenteNaoDisparaDownload(t *testing.T) {
+	bv := &baixadorVideoFake{}
+	rf := &renderFake{}
+	s := servidorComCache(t, candsJanela(), bv, rf)
+	bf := s.baixador.(*baixadorFake)
+
+	dirVideo, _ := s.cache.DirVideo("cultoTeste1")
+	os.MkdirAll(dirVideo, 0755)
+	if err := os.WriteFile(filepath.Join(dirVideo, "legenda.srt"),
+		[]byte(srtDeTranscricao(transcricaoLongaDoCulto())), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// (sem transcricao.txt: é o estado que se quer exercitar)
+
+	id := criarPedido(t, s, "https://youtu.be/cultoTeste1", "00:00:00", "00:10:00")
+	esperarStatus(t, s, id, pipeline.EstadoAguardandoAprovacao)
+
+	bf.mu.Lock()
+	chamadas := bf.chamadas
+	bf.mu.Unlock()
+	if chamadas != 0 {
+		t.Errorf("baixou a legenda %d vez(es): ela já estava no cache, e a íntegra que faltava é "+
+			"derivada dela", chamadas)
+	}
+	if _, err := os.Stat(filepath.Join(dirVideo, "transcricao.txt")); err != nil {
+		t.Errorf("a íntegra não foi regenerada: %v", err)
+	}
+}
+
+// TestLinhaDoCSVDeRetomadaNaoTemLixo conserta o instrumento antes de acumular mais dado.
+//
+// A linha de um pedido RETOMADO saía com `quando` em 0001-01-01 e `candidatos` em 0: a
+// retomada criava métricas sem data e sem o que já estava em disco. É o CSV com que se mediu o
+// ganho do cache — e é o mesmo argumento do viés de amostra do cortes.csv: quem for ler
+// precisa poder distinguir o ciclo que PULOU etapas do ciclo que as fez rápido.
+func TestLinhaDoCSVDeRetomadaNaoTemLixo(t *testing.T) {
+	bv := &baixadorVideoFake{}
+	rf := &renderFake{}
+	s := servidorComCache(t, candsJanela(), bv, rf)
+
+	// Ciclo completo, para haver pedido em disco para retomar.
+	id := criarPedido(t, s, "https://youtu.be/cultoTeste1", "00:10:00", "00:30:00")
+	esperarStatus(t, s, id, pipeline.EstadoAguardandoAprovacao)
+	aprovarJSON(t, s, id, []int{0})
+	esperarStatus(t, s, id, pipeline.EstadoConcluido)
+
+	// Servidor novo, retomando (é o caminho que produzia a linha suja).
+	csv := filepath.Join(t.TempDir(), "tempos.csv")
+	s2 := Novo(Opcoes{
+		Baixador:       &baixadorFake{transc: transcricaoLongaDoCulto(), base: s.baseDir},
+		Selecionador:   candsJanela(),
+		BaixadorVideo:  &baixadorVideoFake{},
+		Renderizador:   &renderFake{outDir: s.outDir},
+		BaseDir:        s.baseDir,
+		VideosDir:      s.cache.Dir,
+		OutDir:         s.outDir,
+		LogRodadasPath: filepath.Join(s.baseDir, "rodadas2.md"),
+		TemposPath:     csv,
+		CortesPath:     filepath.Join(s.baseDir, "cortes2.csv"),
+		Agora:          func() time.Time { return time.Date(2026, 7, 29, 15, 30, 0, 0, time.UTC) },
+		GerarID:        func() string { return "nao-usado" },
+	})
+	if err := s2.Retomar(id); err != nil {
+		t.Fatal(err)
+	}
+	aprovarJSON(t, s2, id, []int{0})
+	esperarStatus(t, s2, id, pipeline.EstadoConcluido)
+	esperarArquivo(t, csv)
+
+	b, err := os.ReadFile(csv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linhas := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(linhas) != 2 {
+		t.Fatalf("esperava cabeçalho + 1 linha, veio %d: %s", len(linhas), b)
+	}
+	cab, linha := strings.Split(linhas[0], ","), strings.Split(linhas[1], ",")
+	campo := func(nome string) string {
+		for i, c := range cab {
+			if c == nome && i < len(linha) {
+				return linha[i]
+			}
+		}
+		t.Fatalf("coluna %q não existe no cabeçalho: %v", nome, cab)
+		return ""
+	}
+
+	if strings.HasPrefix(campo("quando"), "0001") {
+		t.Errorf("a data saiu zerada (%s): a análise não teria como ordenar nem filtrar por "+
+			"período", campo("quando"))
+	}
+	if campo("candidatos") == "0" {
+		t.Error("candidatos = 0 numa retomada que tinha candidatos em disco: é lixo, não dado")
+	}
+	if campo("sermao_s") == "0" {
+		t.Error("sermao_s = 0: é o principal previsor de custo do pedido")
+	}
+	// A MARCA que permite filtrar: sem ela, uma média de selecionar_s misturaria este ciclo
+	// (que nunca selecionou) com os que selecionaram.
+	if campo("retomado") != "sim" {
+		t.Errorf("retomado = %q, quero sim", campo("retomado"))
+	}
+	if campo("selecionar_s") != "0.0" {
+		t.Errorf("selecionar_s = %s: a retomada pula a seleção, e é isso que a coluna retomado "+
+			"explica", campo("selecionar_s"))
+	}
+	if campo("completou") != "sim" {
+		t.Errorf("completou = %q, quero sim", campo("completou"))
+	}
+}
+
+func modificadoEm(t *testing.T, path string) time.Time {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi.ModTime()
+}
+
 // TestRetomarEncontraOVideoNoCacheEPulaODownload: o -retomar é o caminho de iteração do
 // desenvolvimento e do operador que quer regerar. Com o cache, ele não pode voltar a baixar.
 func TestRetomarEncontraOVideoNoCacheEPulaODownload(t *testing.T) {

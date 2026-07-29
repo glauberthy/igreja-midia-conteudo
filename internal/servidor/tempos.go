@@ -76,6 +76,13 @@ type Metricas struct {
 	// VideoReusado marca que o vídeo já estava em disco (não houve download). Sem esta coluna,
 	// um pedido reaproveitado entraria na média de download como se tivesse baixado em 0s.
 	VideoReusado bool
+	// Retomado marca o pedido que veio do `-retomar`: ele PULA a fase leve (legenda e seleção),
+	// então tem legenda_s e selecionar_s zerados por construção, não por rapidez.
+	//
+	// Existe pela mesma razão da coluna VideoReusado e do registro dos não-ajustados no
+	// cortes.csv: sem ela, qualquer média de selecionar_s misturaria ciclos que nunca
+	// selecionaram, e quem for ler o CSV não teria como saber quais filtrar.
+	Retomado bool
 	Completou    bool   // true = ciclo completo; false = terminou em erro
 	Erro         string // motivo, quando não completou
 
@@ -137,7 +144,7 @@ func (m *Metricas) RenderPorShortMs() int64 {
 
 const cabecalhoTempos = "quando,pedido,titulo,sermao_s,transcricao_tokens,candidatos,aprovados," +
 	"video_mb,retries,baixar_legenda_s,selecionar_s,validar_s,baixar_video_s,renderizar_s," +
-	"render_por_short_s,total_maquina_s,aguardando_humano_s,video_reusado,completou,erro\n"
+	"render_por_short_s,total_maquina_s,aguardando_humano_s,video_reusado,retomado,completou,erro\n"
 
 // LinhaCSV formata o pedido como uma linha do arquivo de auditoria. Tempos em segundos com
 // 1 casa (mais legível que ms para comparar a olho, e suficiente para média).
@@ -162,6 +169,7 @@ func (m *Metricas) LinhaCSV() string {
 		seg(m.TotalMaquinaMs()),
 		seg(m.AguardandoMs),
 		simNao(m.VideoReusado),
+		simNao(m.Retomado),
 		completouTexto(m.Completou),
 		csvCampo(m.Erro),
 	}, ",") + "\n"

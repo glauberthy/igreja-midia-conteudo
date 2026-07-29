@@ -97,14 +97,30 @@ func (s *Servidor) Retomar(id string) error {
 	// continua achando ele lá (a precedência é justamente "pedido vence cache").
 	s.migrarVideoParaCache(ped)
 
+	// Métricas novas: o pedido retomado mede o ciclo DESTA execução, não o da original. Somar
+	// os dois falsearia o CSV de desempenho.
+	//
+	// O que a retomada SABE tem de entrar, senão a linha do CSV sai com lixo em vez de dado: a
+	// data (IniciarPedido), o número de candidatos que já estão em disco, e a marca de que este
+	// ciclo pulou a fase leve. Sem isso, a linha vinha com `quando` em 0001-01-01 e
+	// `candidatos` em 0 — e o CSV é o instrumento com que se mediu o ganho do cache; medir com
+	// instrumento sujo é pior que não medir, porque parece dado.
+	met := &Metricas{
+		ID:             id,
+		Titulo:         ped.Titulo,
+		DuracaoSermaoS: duracaoJanelaS(ped.Inicio, ped.Fim),
+		NumCandidatos:  len(cands),
+		Retomado:       true,
+	}
+	met.IniciarPedido(s.agora())
+	met.TokensTranscricao = tokensAprox(transc)
+
 	s.mu.Lock()
 	s.pedidos[id] = &registro{
-		ped:    ped,
-		cands:  cands,
-		textos: textos,
-		// Métricas novas: o pedido retomado mede o ciclo DESTA execução, não o da original.
-		// Somar os dois falsearia o CSV de desempenho.
-		metricas: &Metricas{ID: id, DuracaoSermaoS: duracaoJanelaS(ped.Inicio, ped.Fim)},
+		ped:      ped,
+		cands:    cands,
+		textos:   textos,
+		metricas: met,
 	}
 	s.mu.Unlock()
 
