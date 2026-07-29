@@ -119,6 +119,14 @@ não perde *informação*, mas perde *nitidez na tela*. Somado aos 64% da logo, 
 **Recomendação: manter 1080×1920.** Comparação visual da logo:
 `docs/medicoes/logo_1080_nativo_vs_720_ampliado.png` (topo nativo, base ampliada).
 
+Confirmado num segundo culto (`xZNTJcehAV0`, outro pregador, outra cena): logo 2178 → 778
+(**−64%**, o mesmo número), rosto 18,79 → 13,90 (−26%), e a contraprova na resolução da fonte
+306,8 contra 310,6 (idênticos). Repetir:
+
+```bash
+docs/medicoes/medir_resolucao.sh trabalho/ID/video.mp4 3830
+```
+
 Nota para quem for mexer nisso um dia: a resolução **não** é um número só. Tamanho de fonte,
 largura da logo, altura do gradiente e faixa da logo estão todos em pixels de saída; emitir
 720 exige escalar os quatro (foi o que a medição fez à mão: logo 550→367, gradiente
@@ -240,6 +248,23 @@ fonte):
 
 O pipeline perde **22%** do detalhe da fonte — encode + reamostragem. É a perda que está ao
 nosso alcance.
+
+Repetido no Short do ciclo desta rodada (culto `xZNTJcehAV0`, outro pregador, outra cena):
+
+| | laplaciano |
+|---|---|
+| fonte 720p | 876,28 |
+| Short 1080×1920 | 617,41 |
+
+Perda de **30%**. O valor absoluto não se compara com o do outro culto (876 contra 125)
+porque a cena tem muito mais textura — camisa xadrez contra camisa lisa. **Só a razão se
+compara entre cenas**: 0,78 e 0,70. A perda do pipeline fica na casa dos 22–30%.
+
+Repetir:
+
+```bash
+docs/medicoes/medir_nitidez_rosto.sh finalizados/ID/short_01.mp4 2 trabalho/ID/video.mp4 3830
+```
 
 **As duas capturas do dono** (`docs/mockups/rodape/`), com o mesmo recorte de rosto em cada,
 normalizadas para 202×252:
