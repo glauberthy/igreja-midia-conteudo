@@ -23,16 +23,19 @@ type baixadorVideoFake struct {
 	mu      sync.Mutex
 }
 
-func (b *baixadorVideoFake) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) error {
+// O fake DEVOLVE a origem, como o baixador real: o arquivo que ele finge escrever é o vídeo
+// inteiro, logo origem 0. Se um dia o fake e o real discordarem no valor, o teste do fluxo
+// completo (que confere a origem em disco) acusa.
+func (b *baixadorVideoFake) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) (int, error) {
 	b.mu.Lock()
 	b.chamado = true
 	b.mu.Unlock()
 	if b.erro != nil {
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = b.erro.Error()
-		return b.erro
+		return 0, b.erro
 	}
-	return nil
+	return 0, nil
 }
 
 type renderFake struct {

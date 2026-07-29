@@ -26,6 +26,7 @@ type baixadorFake struct {
 	erro     error
 	base     string
 	transc   string        // conteúdo a gravar em transcricao.txt
+	titulo   string        // se != "", escreve em ped.Titulo (como o baixador real faz com o .info.json)
 	liberar  chan struct{} // se != nil, BaixarLegenda espera fechar antes de retornar
 	chamadas int
 	mu       sync.Mutex
@@ -42,6 +43,9 @@ func (b *baixadorFake) BaixarLegenda(ctx context.Context, ped *pipeline.Pedido) 
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = b.erro.Error()
 		return b.erro
+	}
+	if b.titulo != "" {
+		ped.Titulo = b.titulo // no real vem do legenda.info.json — e é escrito na CÓPIA
 	}
 	dir := filepath.Join(b.base, ped.ID)
 	os.MkdirAll(dir, 0755)

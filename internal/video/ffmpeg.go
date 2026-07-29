@@ -324,15 +324,28 @@ func (r *Renderizador) Renderizar(ctx context.Context, ped *pipeline.Pedido, can
 	return r.RenderizarComOrigem(ctx, ped, candidatos, origemMs)
 }
 
-// RenderizarComOrigem é o mesmo render, mas com a ORIGEM DE TEMPO explícita: origemMs é o
-// instante ABSOLUTO (no vídeo do YouTube) que corresponde ao t=0 do arquivo video.mp4.
+// RenderizarComOrigem é o mesmo render, mas com a ORIGEM DE TEMPO recebida por PARÂMETRO em
+// vez de lida do pedido: origemMs é o instante ABSOLUTO (no vídeo do YouTube) que corresponde
+// ao t=0 do arquivo video.mp4.
 //
-// É o que a fase pesada do servidor (spec-05 parte 3) usa: lá o video.mp4 NÃO é a pregação
-// inteira, e sim a janela contígua [menor start aprovado, maior end aprovado] baixada via
-// --download-sections. Como esse arquivo começa em t=0 no menor start aprovado (não em
-// ped.Inicio), a origem do corte tem que ser esse start — senão o ffmpeg procuraria um
-// instante que não existe no arquivo (Short vazio/errado). O corte de cada candidato é
-// SEMPRE (start - origemMs); só a origem muda entre CLI (ped.Inicio) e servidor (janela).
+// É o que a fase pesada do servidor (spec-05) usa, porque lá a origem vem do BAIXADOR (valor
+// devolvido por BaixarVideoCompleto) e o servidor a repassa direto, além de gravá-la no
+// pedido.json. O corte de cada candidato é SEMPRE (start - origemMs).
+//
+// De onde vem a origem, hoje, em cada caminho:
+//
+//	cmd/baixar + cmd/render   janela [inicio, fim]  ->  origem = inicio  (pedido.json)
+//	servidor (fase pesada)    vídeo inteiro         ->  origem = 0       (do baixador)
+//
+// NÃO deduza a origem de ped.Inicio. Era o que o Renderizar fazia, e é a origem de um bug
+// real: no caminho do servidor, ped.Inicio é o início da PREGAÇÃO e o arquivo é o vídeo
+// inteiro, então o corte saía deslocado pelo Inicio — com a duração correta e a cena errada.
+// O fato mora em pipeline.Pedido.OrigemMs; ver spec-09.
+//
+// (Nota histórica: até 2026-07 a fase pesada baixava a "janela contígua" [menor start
+// aprovado, maior end aprovado] e a origem era esse menor start, calculado. Isso deixou de
+// existir quando o download passou a ser do vídeo inteiro — ~79x mais rápido. Se você
+// encontrar menção a janela contígua em outro comentário, está desatualizada.)
 func (r *Renderizador) RenderizarComOrigem(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato, origemMs int) ([]string, error) {
 	paths, err := r.renderizar(ctx, ped, candidatos, origemMs)
 	if err != nil {
@@ -423,8 +436,9 @@ func (r *Renderizador) renderizar(ctx context.Context, ped *pipeline.Pedido, can
 			return nil, fmt.Errorf("candidato %d com tempos inválidos: start=%q end=%q", i+1, cand.Start, cand.End)
 		}
 
-		// Corte relativo ao video.mp4 (que começa em t=0 na origem: ped.Inicio no CLI, ou
-		// o menor start aprovado na fase pesada do servidor). Ver RenderizarComOrigem.
+		// Corte relativo ao video.mp4, que começa em t=0 na origem DECLARADA por quem baixou o
+		// arquivo (janela do cmd/baixar: o inicio; vídeo inteiro do servidor: 0). Ver
+		// RenderizarComOrigem e pipeline.Pedido.OrigemMs.
 		cutStartMs := startMs - origemMs
 		if cutStartMs < 0 {
 			cutStartMs = 0

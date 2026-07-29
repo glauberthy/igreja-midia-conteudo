@@ -53,7 +53,7 @@ func TestExperimentoRealDownloadTravado(t *testing.T) {
 	inicio := time.Now()
 	err := etapaComProgresso(context.Background(), "o download do vídeo", dir,
 		semProgresso, 5*time.Minute,
-		func(ctx context.Context) error { return b.BaixarVideoCompleto(ctx, ped) })
+		func(ctx context.Context) error { _, e := b.BaixarVideoCompleto(ctx, ped); return e })
 	decorrido := time.Since(inicio)
 
 	// ELO 1 — o watchdog disparou por falta de progresso (e não pelo teto).

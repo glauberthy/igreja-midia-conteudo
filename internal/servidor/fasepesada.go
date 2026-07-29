@@ -26,34 +26,39 @@ func candidatosAprovados(reg *registro) []validacao.Candidato {
 	return out
 }
 
-// origemVideoCompleto é a origem de tempo quando o arquivo baixado é o VÍDEO INTEIRO: o
-// t=0 do arquivo é o t=0 do vídeo, então não há deslocamento nenhum e o render corta em
-// tempo ABSOLUTO (start/end do candidato, como vieram da seleção).
+// NOTA HISTÓRICA — aqui existia a constante origemVideoCompleto = 0, e a fase pesada a
+// passava direto ao render. Saiu porque era o servidor AFIRMANDO um fato do baixador: dois
+// lugares dizendo "vídeo inteiro → origem 0", e dois lugares que afirmam a mesma coisa
+// divergem. Agora o baixador DEVOLVE a origem do arquivo que escreveu e a fase pesada só
+// guarda (registrarOrigem) e repassa.
 //
-// É o contrato mais simples possível — e essa simplicidade é metade do motivo de baixar o
-// vídeo inteiro (a outra metade é velocidade: 7,3 s contra 577 s da janela contígua). Com a
-// janela contígua havia uma origem calculada (menor start, piso ao segundo) que precisava
-// ser propagada corretamente do download até o render; qualquer descasamento aí produzia
-// Short do trecho errado. Com origem 0, esse cálculo — e a classe de bug — deixam de existir.
-const origemVideoCompleto = 0
+// O comentário que justificava o zero continua valendo e mora no lugar certo:
+// download.BaixarVideoCompleto e download.origemVideoInteiro.
+//
+// Vale registrar por que o valor é simples: baixar o vídeo inteiro foi escolhido metade por
+// velocidade (7,3 s contra 577 s da janela contígua) e metade por causa deste contrato. Com a
+// janela contígua havia uma origem CALCULADA (menor start, piso ao segundo) que precisava ser
+// propagada corretamente do download até o render; qualquer descasamento produzia Short do
+// trecho errado. Com o vídeo inteiro, o cálculo desaparece — mas a propagação continuou
+// existindo até virar campo declarado, e foi ali que a classe de bug reapareceu.
 
-// declararOrigemVideoInteiro registra no pedido — e em disco — que o video.mp4 baixado é o
-// vídeo INTEIRO, ou seja, que o t=0 do arquivo é o t=0 do vídeo do YouTube.
+// registrarOrigem guarda no pedido — e em disco — a origem de tempo que o BAIXADOR devolveu
+// para o video.mp4 que ele escreveu. Não decide o valor: só o registra.
 //
-// Por que gravar em disco: o pedido.json é o que o cmd/render, o cmd/auditar e a retomada
-// leem depois. Sem a declaração persistida, o `cmd/render -id <pedido do servidor>` volta a
-// ser um comando que não tem como saber a origem do arquivo que ele mesmo vai cortar.
+// Por que gravar em disco: o pedido.json é o que o cmd/render e a retomada leem depois. Sem a
+// declaração persistida, o `cmd/render -id <pedido do servidor>` volta a ser um comando sem
+// como saber a origem do arquivo que ele mesmo vai cortar.
 //
 // Falha de I/O aqui é AVISO, não erro do pedido: o render desta execução recebe a origem em
 // memória e continua. O que fica prejudicado é só o uso posterior pela CLI.
-func (s *Servidor) declararOrigemVideoInteiro(reg *registro) {
+func (s *Servidor) registrarOrigem(reg *registro, origemMs int) {
 	s.mu.Lock()
-	reg.ped.DeclararOrigem(origemVideoCompleto)
+	reg.ped.DeclararOrigem(origemMs)
 	copia := *reg.ped
 	s.mu.Unlock()
 	if err := copia.Salvar(s.baseDir); err != nil {
 		s.logTempos(fmt.Sprintf("aviso: não gravei origem_ms=%d no pedido.json de %s: %v "+
 			"(o render desta execução não é afetado; o cmd/render depois vai reclamar)",
-			origemVideoCompleto, copia.ID, err))
+			origemMs, copia.ID, err))
 	}
 }

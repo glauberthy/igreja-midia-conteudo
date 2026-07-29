@@ -87,7 +87,8 @@ func TestBaixarSucesso(t *testing.T) {
 	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
 
 	ped := pedidoTeste("teste")
-	if err := b.Baixar(context.Background(), ped); err != nil {
+	origemMs, err := b.Baixar(context.Background(), ped)
+	if err != nil {
 		t.Fatalf("Baixar: %v", err)
 	}
 
@@ -117,23 +118,26 @@ func TestBaixarSucesso(t *testing.T) {
 		t.Errorf("transcrição não foi recortada à janela da pregação: %q", txt)
 	}
 
-	// QUEM ESCREVE O VÍDEO DECLARA ONDE ELE COMEÇA. Aqui o download é por JANELA
-	// (--download-sections), então o video.mp4 começa em t=0 no início da janela: 00:05:30 =
-	// 330000 ms. O render lê este fato; antes ele SUPUNHA ped.Inicio, e a suposição estava
-	// errada no caminho do servidor (vídeo inteiro) — ver spec-09.
-	origem, err := ped.Origem()
-	if err != nil {
-		t.Fatalf("o download por janela não declarou a origem de tempo: %v", err)
+	// QUEM ESCREVE O VÍDEO DIZ ONDE ELE COMEÇA — DEVOLVENDO, não escrevendo no Pedido. Aqui o
+	// download é por JANELA (--download-sections), então o arquivo começa em t=0 no início da
+	// janela: 00:05:30 = 330000 ms.
+	if origemMs != 330000 {
+		t.Errorf("origem devolvida = %d ms, quero 330000 (00:05:30, o início da janela baixada)", origemMs)
 	}
-	if origem != 330000 {
-		t.Errorf("origem declarada = %d ms, quero 330000 (00:05:30, o início da janela baixada)", origem)
+	// E o Baixador NÃO mexe no Pedido: guardar é decisão de quem chama (o cmd/baixar declara;
+	// o servidor recebe e persiste). Se voltar a escrever aqui, a escrita se perde em silêncio
+	// no caminho do servidor, que passa uma CÓPIA do pedido — foi exatamente assim que a
+	// origem virou bug. Ver spec-09.
+	if ped.OrigemMs != nil {
+		t.Errorf("o Baixador escreveu a origem no Pedido (%d): ele deve DEVOLVER, não mutar — "+
+			"mutação através de cópia se perde sem deixar rastro", *ped.OrigemMs)
 	}
 }
 
-// TestBaixarVideoCompletoDeclaraOrigemZero: o outro caminho, o do servidor. O arquivo é o
+// TestBaixarVideoCompletoDevolveOrigemZero: o outro caminho, o do servidor. O arquivo é o
 // vídeo INTEIRO, então a origem é 0 — e NÃO ped.Inicio, que aqui é o início da pregação
-// (00:05:30). Os dois caminhos escrevem no mesmo campo o que cada um de fato produziu.
-func TestBaixarVideoCompletoDeclaraOrigemZero(t *testing.T) {
+// (00:05:30). Cada caminho devolve o que de fato produziu.
+func TestBaixarVideoCompletoDevolveOrigemZero(t *testing.T) {
 	base := t.TempDir()
 	fx := &fakeExec{handler: func(dir string, args []string) ([]byte, error) {
 		return nil, os.WriteFile(filepath.Join(dir, "video.mp4"), []byte("mp4"), 0644)
@@ -141,15 +145,16 @@ func TestBaixarVideoCompletoDeclaraOrigemZero(t *testing.T) {
 	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
 
 	ped := pedidoTeste("inteiro")
-	if err := b.BaixarVideoCompleto(context.Background(), ped); err != nil {
+	origemMs, err := b.BaixarVideoCompleto(context.Background(), ped)
+	if err != nil {
 		t.Fatalf("BaixarVideoCompleto: %v", err)
 	}
-	origem, err := ped.Origem()
-	if err != nil {
-		t.Fatalf("o download do vídeo inteiro não declarou a origem: %v", err)
+	if origemMs != 0 {
+		t.Errorf("origem devolvida = %d ms, quero 0 (o arquivo é o vídeo inteiro)", origemMs)
 	}
-	if origem != 0 {
-		t.Errorf("origem declarada = %d ms, quero 0 (o arquivo é o vídeo inteiro)", origem)
+	if ped.OrigemMs != nil {
+		t.Errorf("o Baixador escreveu a origem no Pedido (%d): aqui ele recebe uma CÓPIA no "+
+			"servidor, e a escrita se perderia sem rastro", *ped.OrigemMs)
 	}
 	// A armadilha, explícita: Inicio continua sendo o início da PREGAÇÃO, não a origem.
 	if ped.Inicio != "00:05:30" {
@@ -157,10 +162,11 @@ func TestBaixarVideoCompletoDeclaraOrigemZero(t *testing.T) {
 	}
 }
 
-// TestBaixarFalhoNaoDeclaraOrigem: declaração só depois do sucesso. Um pedido cujo download
-// falhou não tem vídeo, e declarar origem de um arquivo que não existe faria o render
-// prosseguir sobre lixo em vez de recusar.
-func TestBaixarFalhoNaoDeclaraOrigem(t *testing.T) {
+// TestBaixarFalhoDevolveErro: quem chama só declara a origem quando err == nil, então o
+// contrato que o download tem de cumprir é ERRAR de forma inequívoca. Um pedido cujo download
+// falhou não tem vídeo, e declarar origem de um arquivo inexistente faria o render prosseguir
+// sobre lixo em vez de recusar.
+func TestBaixarFalhoDevolveErro(t *testing.T) {
 	base := t.TempDir()
 	fx := &fakeExec{handler: func(dir string, args []string) ([]byte, error) {
 		if ehLegenda(args) {
@@ -172,11 +178,17 @@ func TestBaixarFalhoNaoDeclaraOrigem(t *testing.T) {
 	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
 
 	ped := pedidoTeste("falhou")
-	if err := b.Baixar(context.Background(), ped); err == nil {
+	origemMs, err := b.Baixar(context.Background(), ped)
+	if err == nil {
 		t.Fatal("esperava erro no download do vídeo")
 	}
+	if origemMs != 0 {
+		t.Errorf("origem devolvida = %d num download que falhou: devolva o zero-value, "+
+			"o valor não tem significado sem arquivo", origemMs)
+	}
 	if ped.OrigemMs != nil {
-		t.Errorf("origem declarada (%d) num download que falhou: não há vídeo para descrever", *ped.OrigemMs)
+		t.Errorf("origem escrita no Pedido (%d) num download que falhou: não há vídeo para descrever",
+			*ped.OrigemMs)
 	}
 }
 
@@ -189,7 +201,7 @@ func TestBaixarSemLegenda(t *testing.T) {
 	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
 
 	ped := pedidoTeste("semleg")
-	err := b.Baixar(context.Background(), ped)
+	_, err := b.Baixar(context.Background(), ped)
 
 	if !errors.Is(err, ErrSemLegenda) {
 		t.Fatalf("esperava ErrSemLegenda, veio: %v", err)
@@ -216,7 +228,7 @@ func TestBaixarTempoInvalido(t *testing.T) {
 	}
 	for nome, tempos := range casos {
 		ped := pipeline.NovoPedido("t", "url", tempos[0], tempos[1], time.Unix(0, 0).UTC())
-		err := b.Baixar(context.Background(), ped)
+		_, err := b.Baixar(context.Background(), ped)
 		if !errors.Is(err, ErrTempoInvalido) {
 			t.Errorf("%s: esperava ErrTempoInvalido, veio %v", nome, err)
 		}
@@ -295,7 +307,7 @@ func TestBaixarAntiBotRefazComEsperaCrescente(t *testing.T) {
 	}}
 	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
 
-	if err := b.Baixar(context.Background(), pedidoTeste("antibot")); err != nil {
+	if _, err := b.Baixar(context.Background(), pedidoTeste("antibot")); err != nil {
 		t.Fatalf("deveria suceder na 3ª tentativa: %v", err)
 	}
 	// Espera CRESCENTE entre as tentativas (30s, 60s) — não insiste rápido demais.
@@ -313,7 +325,7 @@ func TestBaixarAntiBotEsgotaComErroNomeado(t *testing.T) {
 	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
 
 	ped := pedidoTeste("antibot2")
-	err := b.Baixar(context.Background(), ped)
+	_, err := b.Baixar(context.Background(), ped)
 	if !errors.Is(err, ErrAntiBot) {
 		t.Fatalf("esperava ErrAntiBot, veio: %v", err)
 	}
@@ -333,7 +345,7 @@ func TestBaixarErroDefinitivoNaoRefaz(t *testing.T) {
 		return []byte("ERROR: [youtube] xyz: Video unavailable"), errors.New("exit status 1")
 	}}
 	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
-	if err := b.Baixar(context.Background(), pedidoTeste("indisp2")); !errors.Is(err, ErrVideoIndisponivel) {
+	if _, err := b.Baixar(context.Background(), pedidoTeste("indisp2")); !errors.Is(err, ErrVideoIndisponivel) {
 		t.Fatalf("esperava ErrVideoIndisponivel, veio: %v", err)
 	}
 	if chamadas != 1 || len(*esperas) != 0 {
@@ -365,7 +377,7 @@ func TestBaixarVideoIndisponivel(t *testing.T) {
 	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
 
 	ped := pedidoTeste("indisp")
-	err := b.Baixar(context.Background(), ped)
+	_, err := b.Baixar(context.Background(), ped)
 	if !errors.Is(err, ErrVideoIndisponivel) {
 		t.Fatalf("esperava ErrVideoIndisponivel, veio: %v", err)
 	}

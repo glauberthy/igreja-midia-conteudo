@@ -54,8 +54,13 @@ type Selecionador interface {
 // BaixadorVideo baixa o vídeo do pedido para a fase pesada (spec-05 parte 3). Baixa o
 // vídeo INTEIRO com o downloader nativo paralelo — medido como ~79x mais rápido que baixar
 // só a janela dos aprovados (o gargalo é paralelismo, não volume; ver spec-05).
+//
+// DEVOLVE a origem de tempo do arquivo que escreveu (instante absoluto correspondente ao t=0
+// do video.mp4), para o servidor guardar no pedido. É retorno, e não escrita no Pedido, de
+// propósito: o servidor entrega uma CÓPIA do pedido (ver copiaPedido), então uma atribuição
+// feita lá dentro se perderia sem deixar rastro.
 type BaixadorVideo interface {
-	BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) error
+	BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) (int, error)
 }
 
 // RenderizadorVideo renderiza os candidatos aprovados a partir do video.mp4 baixado, com a
@@ -396,9 +401,13 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 //
 // Alinhamento de tempo: baixa o vídeo INTEIRO (downloader nativo paralelo), então o arquivo
 // começa no início do vídeo e a origem é ZERO — o corte de cada trecho usa o start/end
-// ABSOLUTO, sem nenhum cálculo de origem a propagar. Isso substituiu a janela contígua
-// (origem = menor start): além de ~79x mais rápido (577 s → 7,3 s, medido), elimina a
-// classe de bug de "origem trocada" entre download e render.
+// ABSOLUTO, sem nenhum CÁLCULO de origem. Isso substituiu a janela contígua (origem = menor
+// start): além de ~79x mais rápido (577 s → 7,3 s, medido), tirou a aritmética do caminho.
+//
+// A PROPAGAÇÃO, porém, continuou existindo — e foi ali que a classe de bug reapareceu, no
+// cmd/render, que supunha a origem em vez de recebê-la. Hoje o valor vem DEVOLVIDO pelo
+// baixador, é gravado no pedido.json (registrarOrigem) e repassado ao render. Este servidor
+// não decide qual é a origem; só guarda o que o escritor do arquivo informou. Ver spec-09.
 func (s *Servidor) faseHeavy(reg *registro) {
 	ctx := context.Background()
 
@@ -447,22 +456,27 @@ func (s *Servidor) faseHeavy(reg *registro) {
 		// escrever direto é corrida de verdade (pega pelo -race). O servidor é dono do status.
 		// Progresso, não tempo total: ver Prazos.VideoSemProgresso. O tamanho do culto varia
 		// demais (994 MB visto; 2h dariam ~1,8 GB) para um teto fixo ter margem honesta.
+		var origemBaixada int
 		err := etapaComProgresso(ctx, "o download do vídeo", dirPedido,
 			s.prazos.VideoSemProgresso, s.prazos.VideoTeto,
 			func(ctx context.Context) error {
-				return s.baixadorVideo.BaixarVideoCompleto(ctx, s.copiaPedido(reg))
+				var e error
+				origemBaixada, e = s.baixadorVideo.BaixarVideoCompleto(ctx, s.copiaPedido(reg))
+				return e
 			})
 		if err != nil {
 			s.setErro(reg, mensagemErroDownload(err))
 			return
 		}
-		// Baixamos o vídeo INTEIRO: declaramos a origem no pedido e gravamos em disco. O
-		// Baixador recebe uma CÓPIA do pedido (a corrida com o handleStatus), então a
-		// declaração que ele faz lá morre com a cópia — quem persiste é aqui.
+		// O QUEM SABE DIZ, QUEM PRECISA GUARDA: o baixador devolveu a origem do arquivo que
+		// escreveu; aqui ela entra no pedido e vai para o disco. Este servidor não afirma qual
+		// é a origem — se um dia a fase pesada baixar outra coisa que não o vídeo inteiro, o
+		// valor muda no baixador e aqui continua correto.
 		//
-		// Sem isto, o `cmd/render -id <este pedido>` não teria como saber que o arquivo é o
-		// vídeo inteiro e recusaria (ou, na versão antiga, cortaria a cena errada).
-		s.declararOrigemVideoInteiro(reg)
+		// Gravar em disco é o que permite ao cmd/render (e à retomada) saber depois que este
+		// video.mp4 é o vídeo inteiro. Sem isso, o render recusaria — e, na versão anterior à
+		// existência do campo, cortava a cena errada com a duração certa.
+		s.registrarOrigem(reg, origemBaixada)
 		s.metrica(reg, func(m *Metricas) {
 			m.BaixarVideoMs = m.marcar(s.agora())
 			m.BytesVideo = tamanhoArquivo(videoPath)
@@ -820,6 +834,45 @@ func (s *Servidor) metrica(reg *registro, fn func(m *Metricas)) {
 // com os handlers HTTP, então deixar uma goroutine escrever ali direto é corrida real: o
 // handleStatus lê Status sob lock enquanto o download escreveria sem. O servidor é o dono
 // do status; da cópia aproveitamos só o que o baixador legitimamente descobre (o título).
+//
+// # A ARMADILHA DESTE PADRÃO
+//
+// Escrever num campo da cópia NÃO afeta o original, e isso não aparece em lugar nenhum: não
+// há erro de compilação, não há aviso, o valor simplesmente não chega. Foi assim que a origem
+// de tempo do vídeo virou bug (spec-09) e é por isso que aplicarTitulo existe.
+//
+// Regra: **fato novo que uma dependência descobre sai por RETORNO, não por escrita no Pedido.**
+// Retorno ignorado é visível na linha de quem ignora; mutação perdida é invisível.
+//
+// Auditoria dos quatro usos (2026-07-29):
+//
+//	linha  quem recebe            escreve na cópia        volta?
+//	460    BaixarVideoCompleto    Status, Erro            NÃO — descarte deliberado (a origem
+//	                                                      vem por retorno)
+//	496    RenderizarComOrigem    Status, Erro            NÃO — descarte deliberado
+//	759    (ninguém: só lê .ID)   —                       n/a
+//	764    BaixarLegenda          Status, Erro, Titulo    só o Titulo (aplicarTitulo)
+//
+// Os descartes de Status/Erro são intencionais e seguros: o servidor decide o status a partir
+// do ERRO devolvido (setErro/setStatus), justamente para não depender de escrita na cópia.
+//
+// A auditoria achou um segundo buraco além da origem: o copy-back do título não era testado no
+// PONTO DE USO — apagar `s.aplicarTitulo(reg, copia)` da faseLeve deixava a suíte inteira verde
+// e o título desaparecia do pedido.json e do log de rodadas. Coberto por
+// TestTituloDoBaixadorChegaAoPedidoNaFaseLeve. Se aparecer um copy-back novo, ele precisa de
+// teste no ponto de uso, não só na função.
+//
+// # CÓPIA RASA: cuidado com campos de referência
+//
+// `c := *reg.ped` é cópia RASA. Hoje o único campo de referência do Pedido é `OrigemMs *int`,
+// e ele é seguro por construção: DeclararOrigem SUBSTITUI o ponteiro (`p.OrigemMs = &v`), então
+// a cópia passa a apontar para outro int e o original não muda. Mas escrever ATRAVÉS do
+// ponteiro (`*c.OrigemMs = v`) vazaria para o original — metade das mutações se perde, metade
+// vaza, e não há como perceber sem ler campo a campo.
+//
+// Ao adicionar campo de slice, map ou ponteiro ao Pedido, ou esta função passa a copiar em
+// profundidade, ou o campo entra na regra do retorno. Um teste guarda as duas metades disto:
+// TestCopiaPedidoRasaEArmadilhaDoPonteiro.
 func (s *Servidor) copiaPedido(reg *registro) *pipeline.Pedido {
 	s.mu.Lock()
 	defer s.mu.Unlock()

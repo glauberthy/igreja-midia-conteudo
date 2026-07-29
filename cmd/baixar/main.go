@@ -100,7 +100,18 @@ func main() {
 	}
 
 	b := &download.Baixador{Exec: download.ExecutorReal{}, Bin: *bin, BaseDir: *base, SubLangs: *sublang, Formato: *formato}
-	err := b.Baixar(context.Background(), ped)
+	origemMs, err := b.Baixar(context.Background(), ped)
+
+	// A ORIGEM DE TEMPO do arquivo é fato do escritor, guardado por quem chama: o Baixador
+	// devolve, aqui declaramos no pedido, e o pedido.json leva o fato para o cmd/render. Aqui
+	// o vídeo é a JANELA [inicio, fim], então a origem é o inicio — mas quem afirma isso é o
+	// download, não este comando (ver download.Baixar).
+	//
+	// Só em caso de sucesso: sem vídeo não há arquivo para descrever, e declarar origem de um
+	// arquivo inexistente faria o render prosseguir sobre lixo em vez de recusar.
+	if err == nil {
+		ped.DeclararOrigem(origemMs)
+	}
 
 	// Persiste o pedido em qualquer caso (inclusive com status=erro).
 	if salvarErr := ped.Salvar(*base); salvarErr != nil {

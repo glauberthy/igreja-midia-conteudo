@@ -171,13 +171,22 @@ func (b *Baixador) formato() string {
 //
 // Ordem: fase leve (legenda + transcrição; ver BaixarLegenda) → baixa o vídeo do
 // intervalo. É o caminho do cmd/baixar (CLI), que baixa tudo de uma vez.
-func (b *Baixador) Baixar(ctx context.Context, ped *pipeline.Pedido) error {
-	if err := b.executar(ctx, ped); err != nil {
+//
+// DEVOLVE A ORIGEM de tempo do video.mp4 escrito: o instante absoluto do vídeo original a
+// que o t=0 do arquivo corresponde (aqui, o início da janela). Quem chama guarda onde quiser
+// — tipicamente ped.DeclararOrigem. Só é válida quando err == nil.
+//
+// Por que devolver em vez de escrever no Pedido: escrever se perde em silêncio quando o
+// chamador passa uma CÓPIA (é o caso do servidor, ver copiaPedido lá). Valor de retorno
+// ignorado aparece no código de quem ignora; mutação descartada não aparece em lugar nenhum.
+func (b *Baixador) Baixar(ctx context.Context, ped *pipeline.Pedido) (int, error) {
+	origemMs, err := b.executar(ctx, ped)
+	if err != nil {
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = err.Error()
-		return err
+		return 0, err
 	}
-	return nil
+	return origemMs, nil
 }
 
 // BaixarLegenda executa SÓ a fase leve: baixa a legenda automática (sem o vídeo) e
@@ -194,9 +203,9 @@ func (b *Baixador) BaixarLegenda(ctx context.Context, ped *pipeline.Pedido) erro
 	return nil
 }
 
-func (b *Baixador) executar(ctx context.Context, ped *pipeline.Pedido) error {
+func (b *Baixador) executar(ctx context.Context, ped *pipeline.Pedido) (int, error) {
 	if err := b.baixarLegenda(ctx, ped); err != nil {
-		return err
+		return 0, err
 	}
 	return b.baixarVideo(ctx, ped)
 }
@@ -263,9 +272,9 @@ func (b *Baixador) baixarLegenda(ctx context.Context, ped *pipeline.Pedido) erro
 	return nil
 }
 
-// baixarVideo baixa o trecho [inicio, fim] do vídeo. Pressupõe a pasta já criada
-// pela fase leve. Não mexe em ped.Status (quem chama decide).
-func (b *Baixador) baixarVideo(ctx context.Context, ped *pipeline.Pedido) error {
+// baixarVideo baixa o trecho [inicio, fim] do vídeo e devolve a origem de tempo do arquivo.
+// Pressupõe a pasta já criada pela fase leve. Não mexe em ped.Status (quem chama decide).
+func (b *Baixador) baixarVideo(ctx context.Context, ped *pipeline.Pedido) (int, error) {
 	return b.baixarVideoJanela(ctx, ped, ped.Inicio, ped.Fim)
 }
 
@@ -282,12 +291,19 @@ func (b *Baixador) baixarVideo(ctx context.Context, ped *pipeline.Pedido) error 
 // vídeo, então a origem é 0 e o corte de cada trecho usa o start/end ABSOLUTO.
 //
 // Em falha, preenche ped.Status = erro e ped.Erro.
-func (b *Baixador) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) error {
+//
+// DEVOLVE A ORIGEM do arquivo escrito: aqui é sempre ZERO, porque o arquivo é o vídeo
+// inteiro — o t=0 dele é o t=0 do vídeo do YouTube. Não é o `ped.Inicio`, que neste caminho
+// é o início da PREGAÇÃO, coisa diferente. Devolver em vez de escrever no Pedido não é
+// preciosismo: este método recebe uma CÓPIA do pedido no servidor, e uma atribuição feita
+// aqui morreria com a cópia sem deixar rastro (foi assim que a origem virou bug). Ver o
+// contrato completo em pipeline.Pedido.DeclararOrigem.
+func (b *Baixador) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) (int, error) {
 	dir := filepath.Join(b.baseDir(), ped.ID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = err.Error()
-		return fmt.Errorf("criando pasta de trabalho: %w", err)
+		return 0, fmt.Errorf("criando pasta de trabalho: %w", err)
 	}
 	err := comRetry(ctx, "baixando vídeo", func() error {
 		_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsVideoCompleto(ped.YouTubeURL, dir, b.formato())...)
@@ -305,42 +321,47 @@ func (b *Baixador) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido
 	if err != nil {
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = err.Error()
-		return err
+		return 0, err
 	}
-	// Quem escreve o vídeo declara onde ele começa: aqui o arquivo é o vídeo INTEIRO, então
-	// t=0 do arquivo é t=0 do vídeo original. O render lê este fato; não supõe ped.Inicio
-	// (que neste caminho é o início da PREGAÇÃO, coisa diferente).
-	ped.DeclararOrigem(0)
-	return nil
+	return origemVideoInteiro, nil
 }
+
+// origemVideoInteiro é a origem de tempo de um arquivo que contém o vídeo INTEIRO: zero, por
+// definição — o t=0 do arquivo é o t=0 do vídeo do YouTube.
+//
+// Nomeado em vez de um `0` solto porque zero aqui é uma AFIRMAÇÃO ("o arquivo começa no
+// começo"), não um valor default. A diferença importa: `origem_ms` ausente significa "ninguém
+// sabe" e faz o render recusar; `origem_ms: 0` significa "é o vídeo inteiro".
+const origemVideoInteiro = 0
 
 // BaixarVideoJanela baixa APENAS a janela [inicio, fim] do vídeo (via --download-sections).
 // MANTIDO para o cmd/baixar (CLI) e compatibilidade; a fase pesada do servidor usa
 // BaixarVideoCompleto, que é ~79x mais rápido (ver a nota lá). Em falha, preenche
 // ped.Status = erro e ped.Erro.
-func (b *Baixador) BaixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) error {
+// DEVOLVE A ORIGEM do arquivo escrito: o `inicio` da janela em ms (ver Baixar).
+func (b *Baixador) BaixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) (int, error) {
 	dir := filepath.Join(b.baseDir(), ped.ID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = err.Error()
-		return fmt.Errorf("criando pasta de trabalho: %w", err)
+		return 0, fmt.Errorf("criando pasta de trabalho: %w", err)
 	}
-	if err := b.baixarVideoJanela(ctx, ped, inicio, fim); err != nil {
+	origemMs, err := b.baixarVideoJanela(ctx, ped, inicio, fim)
+	if err != nil {
 		ped.Status = pipeline.EstadoErro
 		ped.Erro = err.Error()
-		return err
+		return 0, err
 	}
-	return nil
+	return origemMs, nil
 }
 
-func (b *Baixador) baixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) error {
+// baixarVideoJanela baixa a janela e DEVOLVE a origem de tempo do arquivo: o `inicio` em ms,
+// porque o --download-sections rebaseia o arquivo a zero nesse instante.
+func (b *Baixador) baixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) (int, error) {
 	dir := filepath.Join(b.baseDir(), ped.ID)
-	// Quem escreve o vídeo declara onde ele começa: baixado por janela, o arquivo começa em
-	// t=0 no `inicio` da janela. Declarado ANTES do download e mantido só em caso de sucesso
-	// (abaixo) — o render lê este fato em vez de supor ped.Inicio.
 	origemMs, ok := transcricao.HmsToMs(inicio)
 	if !ok {
-		return fmt.Errorf("%w: início %q não é HH:MM:SS", ErrTempoInvalido, inicio)
+		return 0, fmt.Errorf("%w: início %q não é HH:MM:SS", ErrTempoInvalido, inicio)
 	}
 	err := comRetry(ctx, "baixando vídeo", func() error {
 		_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsVideo(ped.YouTubeURL, inicio, fim, dir, b.formato())...)
@@ -356,10 +377,9 @@ func (b *Baixador) baixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, 
 		return nil
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	ped.DeclararOrigem(origemMs)
-	return nil
+	return origemMs, nil
 }
 
 // argsLegenda monta o yt-dlp para baixar SÓ a legenda automática (idioma subLangs), em .srt.

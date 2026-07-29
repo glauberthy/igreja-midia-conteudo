@@ -17,13 +17,13 @@ import (
 // devolve erro, não progride — só espera o ctx ser cancelado.
 type baixadorVideoTravado struct{ base string }
 
-func (b *baixadorVideoTravado) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) error {
+func (b *baixadorVideoTravado) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) (int, error) {
 	// Deixa no disco o mp4 parcial que um download travado deixaria.
 	dir := filepath.Join(b.base, ped.ID)
 	os.MkdirAll(dir, 0755)
 	os.WriteFile(filepath.Join(dir, "video.mp4"), make([]byte, 8192), 0644)
 	<-ctx.Done()
-	return ctx.Err()
+	return 0, ctx.Err()
 }
 
 // selecionadorTravado é o equivalente para o modelo que para de responder.
@@ -175,26 +175,26 @@ type baixadorVideoLento struct {
 	intervalo time.Duration
 }
 
-func (b *baixadorVideoLento) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) error {
+func (b *baixadorVideoLento) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido) (int, error) {
 	dir := filepath.Join(b.base, ped.ID)
 	os.MkdirAll(dir, 0755)
 	f, err := os.Create(filepath.Join(dir, "video.mp4"))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer f.Close()
 	for i := 0; i < b.pedacos; i++ {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return 0, ctx.Err()
 		case <-time.After(b.intervalo):
 		}
 		if _, err := f.Write(make([]byte, 1024)); err != nil {
-			return err
+			return 0, err
 		}
 		f.Sync()
 	}
-	return nil
+	return 0, nil
 }
 
 // TestDownloadLentoMasVivoNaoEhMorto é o outro lado do watchdog, e o motivo de ele existir:

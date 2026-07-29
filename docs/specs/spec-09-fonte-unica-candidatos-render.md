@@ -113,7 +113,16 @@ declará-lo**: `pipeline.Pedido.OrigemMs` (`origem_ms` no JSON). Quem **escreve*
 declara onde ele começa — `cmd/baixar` declara `inicio`, `BaixarVideoCompleto` declara `0` —
 e o render **lê**, nunca deduz.
 
-Três decisões que valem para qualquer repetição:
+Quatro decisões que valem para qualquer repetição:
+
+- **O escritor DEVOLVE o fato; quem chama guarda.** `BaixarVideoCompleto` e
+  `baixarVideoJanela` retornam a origem em vez de escrevê-la no `Pedido`. Motivo: o servidor
+  entrega uma **cópia** do pedido às dependências (`copiaPedido`), e atribuição em cópia se
+  perde **em silêncio** — sem erro de compilação, sem aviso. Retorno ignorado aparece na linha
+  de quem ignora; mutação descartada não aparece em lugar nenhum. Isso também eliminou uma
+  duplicação que havia surgido no primeiro remendo: o download declarava (inerte, na cópia) e o
+  servidor reafirmava — dois lugares dizendo "vídeo inteiro → origem 0", e dois lugares que
+  afirmam a mesma coisa divergem.
 
 - **Ponteiro, não `int`.** Zero é valor legítimo (vídeo inteiro) e tem de ser distinguível de
   "ninguém declarou". Confundir os dois é a origem do bug.
@@ -145,6 +154,8 @@ Duas consequências a respeitar:
    campo". O campo continua sendo a única forma de o render saber a origem de um arquivo que
    ele não baixou — e o `cmd/baixar` por janela continua existindo, gravando na pasta do
    pedido. Enquanto os dois caminhos coexistirem, a origem tem de ser declarada.
+   Como o escritor **devolve** a origem, quem muda é só o chamador: o baixador fica intacto
+   quando o destino do fato passar de `pedido.json` para `videos/<id>/video.json`.
 2. **A declaração acompanha o arquivo.** Se o vídeo passa a ser compartilhado entre pedidos,
    a origem é propriedade do **arquivo**, não do pedido: o lugar natural passa a ser um
    `videos/<video_id>/video.json` ao lado do `.mp4`, e o pedido só aponta para ele. Enquanto
