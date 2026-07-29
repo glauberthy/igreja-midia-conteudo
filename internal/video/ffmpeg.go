@@ -304,15 +304,22 @@ func (r *Renderizador) faixaLogo() int {
 // devolve os caminhos gerados. Em falha, seta Status=erro e Erro. Os candidatos vêm
 // SEMPRE de fora (spec-09: fonte única = arquivo de seleção validado); o pedido não
 // os carrega mais.
-// Renderizar renderiza os candidatos assumindo que video.mp4 começa em t=0 no INÍCIO da
-// pregação (ped.Inicio) — o contrato do cmd/baixar+render (CLI), em que o vídeo é a janela
-// [inicio, fim] inteira. A origem do corte é ped.Inicio.
+// Renderizar renderiza os candidatos usando a origem de tempo DECLARADA no pedido
+// (pipeline.Pedido.OrigemMs) — o instante absoluto do vídeo original a que o t=0 do
+// video.mp4 corresponde. Quem baixou o arquivo declarou; aqui só se lê.
+//
+// Antes esta função SUPUNHA ped.Inicio. Estava certo para o vídeo baixado por janela
+// (cmd/baixar) e errado para o vídeo inteiro do servidor, cujo pedido.json também tem um
+// Inicio real (o início da pregação): `cmd/render -id <pedido do servidor>` produzia Shorts
+// da cena errada, deslocados pelo Inicio, com a duração CORRETA — sem nenhum sinal de erro.
+// Se a origem não estiver declarada, falha com mensagem que diz o que fazer, em vez de
+// escolher um padrão (ver Pedido.Origem).
 func (r *Renderizador) Renderizar(ctx context.Context, ped *pipeline.Pedido, candidatos []validacao.Candidato) ([]string, error) {
-	origemMs, ok := transcricao.HmsToMs(ped.Inicio)
-	if !ok {
+	origemMs, err := ped.Origem()
+	if err != nil {
 		ped.Status = pipeline.EstadoErro
-		ped.Erro = fmt.Sprintf("início do pedido inválido: %q", ped.Inicio)
-		return nil, fmt.Errorf("início do pedido inválido: %q", ped.Inicio)
+		ped.Erro = err.Error()
+		return nil, err
 	}
 	return r.RenderizarComOrigem(ctx, ped, candidatos, origemMs)
 }

@@ -93,6 +93,63 @@ done
 # esperado: 4 vídeos, todos 30–58 s.
 ```
 
+## Segunda ocorrência da mesma classe: a ORIGEM DE TEMPO do vídeo (2026-07-29)
+
+Esta spec nasceu de um dado com **duas fontes** (candidatos no `pedido.json` e no arquivo
+validado). Meses depois a mesma classe reapareceu num dado com **nenhuma fonte** — a origem
+de tempo do `video.mp4` — e o efeito foi pior, porque não havia arquivo errado para culpar:
+havia uma **suposição**.
+
+O `cmd/render` usava `ped.Inicio` como o instante do vídeo original a que o t=0 do arquivo
+corresponde. Verdade para quem baixa por janela (`cmd/baixar`, `--download-sections`); falso
+para o servidor, que baixa o **vídeo inteiro** e grava um `Inicio` real (o início da
+pregação). Os dois contratos se cruzavam no mesmo `pedido.json`, e o render não tinha como
+saber qual valia. `cmd/render -id <pedido do servidor>` gerava Shorts **deslocados pelo
+Inicio** (49 min, no caso real) com a **duração correta**.
+
+**Correção — mesma receita desta spec, aplicada ao contrário.** Ali o problema era duas
+fontes e a solução foi eleger uma; aqui era nenhuma fonte e a solução foi **criar o fato e
+declará-lo**: `pipeline.Pedido.OrigemMs` (`origem_ms` no JSON). Quem **escreve** o vídeo
+declara onde ele começa — `cmd/baixar` declara `inicio`, `BaixarVideoCompleto` declara `0` —
+e o render **lê**, nunca deduz.
+
+Três decisões que valem para qualquer repetição:
+
+- **Ponteiro, não `int`.** Zero é valor legítimo (vídeo inteiro) e tem de ser distinguível de
+  "ninguém declarou". Confundir os dois é a origem do bug.
+- **Sem padrão.** Origem ausente (pedidos anteriores) **falha** com mensagem que diz o que
+  fazer. Assumir silenciosamente foi como o bug nasceu; assumir de novo no remendo o
+  reintroduziria.
+- **Não deduzir pela duração.** Uma janela de 35 min e um vídeo inteiro de 35 min são
+  indistinguíveis. Onde há como declarar, declarar.
+
+**E o teste tem de olhar o CONTEÚDO.** A duração saía certa nos dois casos — foi ela que
+deixou o bug passar (quatro Shorts com 37/48/46/30 s, os números esperados, cena errada em
+todos). O teste de regressão
+(`internal/video/origem_do_video_test.go`) gera uma fonte sintética em que o canal R codifica
+o instante (`R = 2·T`), renderiza pelo caminho da CLI um pedido no formato do servidor e
+compara o **pixel** do frame. Verificado por mutação: reintroduzindo `ped.Inicio`, o teste
+falha e nomeia a causa.
+
+### Ligação com o cache de vídeo por ID (pendente) — para quem for implementar
+
+Existe a intenção de guardar o vídeo baixado **por vídeo do YouTube**, algo como
+`videos/<video_id>/video.mp4`, em vez de por pedido, para dois pedidos do mesmo culto não
+baixarem 800 MB duas vezes.
+
+Quando isso for feito, **os arquivos serão sempre o vídeo INTEIRO, com origem 0** — e a
+ambiguidade desaparece estruturalmente, porque deixa de existir a variante "janela" no cache.
+Duas consequências a respeitar:
+
+1. **Não recrie a suposição.** É tentador dizer "no cache é sempre 0, então nem preciso do
+   campo". O campo continua sendo a única forma de o render saber a origem de um arquivo que
+   ele não baixou — e o `cmd/baixar` por janela continua existindo, gravando na pasta do
+   pedido. Enquanto os dois caminhos coexistirem, a origem tem de ser declarada.
+2. **A declaração acompanha o arquivo.** Se o vídeo passa a ser compartilhado entre pedidos,
+   a origem é propriedade do **arquivo**, não do pedido: o lugar natural passa a ser um
+   `videos/<video_id>/video.json` ao lado do `.mp4`, e o pedido só aponta para ele. Enquanto
+   o vídeo vive dentro de `trabalho/<id>/`, `pedido.json` é o lugar certo.
+
 ## Nota
 
 Este bug era um fóssil da arquitetura pré-spec-07: a seleção de chamada única gravava

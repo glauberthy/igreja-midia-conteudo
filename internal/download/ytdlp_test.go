@@ -116,6 +116,68 @@ func TestBaixarSucesso(t *testing.T) {
 	if strings.Contains(txt, "louvor antes da pregacao") {
 		t.Errorf("transcrição não foi recortada à janela da pregação: %q", txt)
 	}
+
+	// QUEM ESCREVE O VÍDEO DECLARA ONDE ELE COMEÇA. Aqui o download é por JANELA
+	// (--download-sections), então o video.mp4 começa em t=0 no início da janela: 00:05:30 =
+	// 330000 ms. O render lê este fato; antes ele SUPUNHA ped.Inicio, e a suposição estava
+	// errada no caminho do servidor (vídeo inteiro) — ver spec-09.
+	origem, err := ped.Origem()
+	if err != nil {
+		t.Fatalf("o download por janela não declarou a origem de tempo: %v", err)
+	}
+	if origem != 330000 {
+		t.Errorf("origem declarada = %d ms, quero 330000 (00:05:30, o início da janela baixada)", origem)
+	}
+}
+
+// TestBaixarVideoCompletoDeclaraOrigemZero: o outro caminho, o do servidor. O arquivo é o
+// vídeo INTEIRO, então a origem é 0 — e NÃO ped.Inicio, que aqui é o início da pregação
+// (00:05:30). Os dois caminhos escrevem no mesmo campo o que cada um de fato produziu.
+func TestBaixarVideoCompletoDeclaraOrigemZero(t *testing.T) {
+	base := t.TempDir()
+	fx := &fakeExec{handler: func(dir string, args []string) ([]byte, error) {
+		return nil, os.WriteFile(filepath.Join(dir, "video.mp4"), []byte("mp4"), 0644)
+	}}
+	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
+
+	ped := pedidoTeste("inteiro")
+	if err := b.BaixarVideoCompleto(context.Background(), ped); err != nil {
+		t.Fatalf("BaixarVideoCompleto: %v", err)
+	}
+	origem, err := ped.Origem()
+	if err != nil {
+		t.Fatalf("o download do vídeo inteiro não declarou a origem: %v", err)
+	}
+	if origem != 0 {
+		t.Errorf("origem declarada = %d ms, quero 0 (o arquivo é o vídeo inteiro)", origem)
+	}
+	// A armadilha, explícita: Inicio continua sendo o início da PREGAÇÃO, não a origem.
+	if ped.Inicio != "00:05:30" {
+		t.Errorf("Inicio não devia ter sido alterado para servir de origem: %q", ped.Inicio)
+	}
+}
+
+// TestBaixarFalhoNaoDeclaraOrigem: declaração só depois do sucesso. Um pedido cujo download
+// falhou não tem vídeo, e declarar origem de um arquivo que não existe faria o render
+// prosseguir sobre lixo em vez de recusar.
+func TestBaixarFalhoNaoDeclaraOrigem(t *testing.T) {
+	base := t.TempDir()
+	fx := &fakeExec{handler: func(dir string, args []string) ([]byte, error) {
+		if ehLegenda(args) {
+			os.WriteFile(filepath.Join(dir, "legenda.info.json"), []byte(`{"title":"t"}`), 0644)
+			return nil, os.WriteFile(filepath.Join(dir, "legenda.pt.srt"), []byte(srtExemplo), 0644)
+		}
+		return []byte("ERROR: Video unavailable"), errors.New("exit status 1")
+	}}
+	b := &Baixador{Exec: fx, Bin: "yt-dlp", BaseDir: base}
+
+	ped := pedidoTeste("falhou")
+	if err := b.Baixar(context.Background(), ped); err == nil {
+		t.Fatal("esperava erro no download do vídeo")
+	}
+	if ped.OrigemMs != nil {
+		t.Errorf("origem declarada (%d) num download que falhou: não há vídeo para descrever", *ped.OrigemMs)
+	}
 }
 
 func TestBaixarSemLegenda(t *testing.T) {

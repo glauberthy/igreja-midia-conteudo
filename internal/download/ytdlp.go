@@ -307,6 +307,10 @@ func (b *Baixador) BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido
 		ped.Erro = err.Error()
 		return err
 	}
+	// Quem escreve o vídeo declara onde ele começa: aqui o arquivo é o vídeo INTEIRO, então
+	// t=0 do arquivo é t=0 do vídeo original. O render lê este fato; não supõe ped.Inicio
+	// (que neste caminho é o início da PREGAÇÃO, coisa diferente).
+	ped.DeclararOrigem(0)
 	return nil
 }
 
@@ -331,7 +335,14 @@ func (b *Baixador) BaixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, 
 
 func (b *Baixador) baixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, inicio, fim string) error {
 	dir := filepath.Join(b.baseDir(), ped.ID)
-	return comRetry(ctx, "baixando vídeo", func() error {
+	// Quem escreve o vídeo declara onde ele começa: baixado por janela, o arquivo começa em
+	// t=0 no `inicio` da janela. Declarado ANTES do download e mantido só em caso de sucesso
+	// (abaixo) — o render lê este fato em vez de supor ped.Inicio.
+	origemMs, ok := transcricao.HmsToMs(inicio)
+	if !ok {
+		return fmt.Errorf("%w: início %q não é HH:MM:SS", ErrTempoInvalido, inicio)
+	}
+	err := comRetry(ctx, "baixando vídeo", func() error {
 		_, stderr, err := b.Exec.Rodar(ctx, b.bin(), argsVideo(ped.YouTubeURL, inicio, fim, dir, b.formato())...)
 		if err != nil {
 			if antiBot(stderr) {
@@ -344,6 +355,11 @@ func (b *Baixador) baixarVideoJanela(ctx context.Context, ped *pipeline.Pedido, 
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	ped.DeclararOrigem(origemMs)
+	return nil
 }
 
 // argsLegenda monta o yt-dlp para baixar SÓ a legenda automática (idioma subLangs), em .srt.

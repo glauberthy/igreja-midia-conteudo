@@ -131,9 +131,18 @@ done
 
 ### Verificação de alinhamento (recomendada — ver spec-04)
 
-O `video.mp4` começa em t=0 (rebaseado pelo `--download-sections`), mas os tempos da
-transcrição são absolutos. O corte é feito em `start - inicio`. Para conferir que o
-Short mostra a fala certa:
+O `video.mp4` começa em t=0, mas os tempos da transcrição são absolutos. O corte é feito em
+`start - origem`, e a **origem é lida do `pedido.json`** (campo `origem_ms`), declarada por
+quem baixou o arquivo: `cmd/baixar` baixa a janela e declara `inicio`; o servidor baixa o
+vídeo inteiro e declara `0`.
+
+> **Pedido baixado antes de 2026-07-29** não tem `origem_ms`, e o render **recusa** com
+> mensagem explícita — não adivinha. Acrescente à mão o valor que o arquivo de fato tem
+> (`0` se o vídeo é o inteiro, o início da janela em ms se veio do `cmd/baixar`), ou rebaixe.
+> Isso existe porque a suposição antiga (`ped.Inicio`) gerava Shorts da cena errada, com a
+> duração correta, em qualquer pedido criado pelo servidor. Ver spec-09.
+
+Para conferir que o Short mostra a fala certa:
 
 ```bash
 # duração do video.mp4 deve ser ~ (fim - inicio); start_time ~ 0

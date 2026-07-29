@@ -1,6 +1,8 @@
 package servidor
 
 import (
+	"fmt"
+
 	"srtclean/internal/validacao"
 )
 
@@ -34,3 +36,24 @@ func candidatosAprovados(reg *registro) []validacao.Candidato {
 // ser propagada corretamente do download até o render; qualquer descasamento aí produzia
 // Short do trecho errado. Com origem 0, esse cálculo — e a classe de bug — deixam de existir.
 const origemVideoCompleto = 0
+
+// declararOrigemVideoInteiro registra no pedido — e em disco — que o video.mp4 baixado é o
+// vídeo INTEIRO, ou seja, que o t=0 do arquivo é o t=0 do vídeo do YouTube.
+//
+// Por que gravar em disco: o pedido.json é o que o cmd/render, o cmd/auditar e a retomada
+// leem depois. Sem a declaração persistida, o `cmd/render -id <pedido do servidor>` volta a
+// ser um comando que não tem como saber a origem do arquivo que ele mesmo vai cortar.
+//
+// Falha de I/O aqui é AVISO, não erro do pedido: o render desta execução recebe a origem em
+// memória e continua. O que fica prejudicado é só o uso posterior pela CLI.
+func (s *Servidor) declararOrigemVideoInteiro(reg *registro) {
+	s.mu.Lock()
+	reg.ped.DeclararOrigem(origemVideoCompleto)
+	copia := *reg.ped
+	s.mu.Unlock()
+	if err := copia.Salvar(s.baseDir); err != nil {
+		s.logTempos(fmt.Sprintf("aviso: não gravei origem_ms=%d no pedido.json de %s: %v "+
+			"(o render desta execução não é afetado; o cmd/render depois vai reclamar)",
+			origemVideoCompleto, copia.ID, err))
+	}
+}

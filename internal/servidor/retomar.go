@@ -125,13 +125,16 @@ func reconstruirPedido(dir, id string) (*pipeline.Pedido, error) {
 	if info.URL == "" {
 		return nil, fmt.Errorf("legenda.info.json sem webpage_url")
 	}
-	// Inicio = 00:00:00 de propósito. O video.mp4 que o servidor baixa é o vídeo INTEIRO, e o
-	// cmd/render usa ped.Inicio como a origem de tempo do arquivo (contrato do CLI, que nasceu
-	// do download por janela). Deixar vazio faz o cmd/render recusar o pedido com "início
-	// inválido"; 00:00:00 declara a origem que o arquivo de fato tem.
+	// Inicio = 00:00:00 é o LIMITE INFERIOR do clamp do ajuste manual, não a origem do
+	// arquivo. A janela da pregação não é recuperável daqui, e 00:00:00 é o clamp mais
+	// permissivo possível — degradação anunciada no aviso de quem chama.
 	//
-	// Efeito colateral aceito e anunciado no aviso: a janela da PREGAÇÃO não é a mesma coisa
-	// que a origem do arquivo, e ela não é recuperável — então o clamp do ajuste manual fica
-	// sem limite inferior útil.
+	// Antes este 00:00:00 fazia dois trabalhos, e o segundo era uma mentira útil: o cmd/render
+	// usava ped.Inicio como origem de tempo do arquivo, então escrever 00:00:00 era o jeito de
+	// dizer "o vídeo é o inteiro". Agora a origem é um fato declarado à parte (origem_ms), e
+	// este pedido reconstruído NÃO a declara de propósito: quem escreveu o video.mp4 desta
+	// pasta pode ter sido o servidor (inteiro, origem 0) ou o cmd/baixar (janela, origem =
+	// início), e daqui não há como saber. O render falha dizendo o que falta, em vez de cortar
+	// a cena errada com a duração certa.
 	return &pipeline.Pedido{ID: id, YouTubeURL: info.URL, Titulo: info.Titulo, Inicio: "00:00:00"}, nil
 }

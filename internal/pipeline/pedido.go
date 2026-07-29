@@ -52,6 +52,50 @@ type Pedido struct {
 	Status     Estado    `json:"status"`
 	CriadoEm   time.Time `json:"criado_em"`
 	Erro       string    `json:"erro,omitempty"`
+
+	// OrigemMs é o instante ABSOLUTO do vídeo do YouTube que corresponde ao t=0 do
+	// arquivo video.mp4 deste pedido. Quem ESCREVE o vídeo declara — ver DeclararOrigem.
+	//
+	// Ponteiro, não int: zero é um valor LEGÍTIMO (vídeo inteiro) e precisa ser
+	// distinguível de "ninguém declarou". Foi a confusão entre os dois que produziu o bug
+	// de origem trocada — ver Origem().
+	OrigemMs *int `json:"origem_ms,omitempty"`
+}
+
+// DeclararOrigem registra em que instante do vídeo original o video.mp4 deste pedido
+// começa. Só quem escreve o arquivo sabe disso, então só quem escreve declara:
+//
+//	cmd/baixar (janela [inicio, fim])          -> origem = inicio
+//	servidor / BaixarVideoCompleto (inteiro)   -> origem = 0
+//
+// O render LÊ este fato em vez de deduzi-lo. Ver Origem() para o porquê de não haver
+// padrão.
+func (p *Pedido) DeclararOrigem(origemMs int) {
+	p.OrigemMs = &origemMs
+}
+
+// Origem devolve a origem de tempo declarada do video.mp4. Erro se ninguém declarou.
+//
+// NÃO existe padrão aqui, de propósito. O render antes assumia ped.Inicio, o que está
+// certo para o vídeo baixado por janela (cmd/baixar) e ERRADO para o vídeo inteiro que o
+// servidor baixa — e o pedido.json do servidor grava um Inicio real (o início da pregação),
+// então a suposição não tinha como ser percebida. Resultado: `cmd/render -id <pedido do
+// servidor>` gerava Shorts da cena errada, deslocados pelo Inicio, com a DURAÇÃO CORRETA —
+// silencioso.
+//
+// Deduzir pela duração do arquivo também não serve: uma janela de 35 min e um vídeo inteiro
+// de 35 min são indistinguíveis. Quando não há fato, o certo é falhar dizendo o que falta.
+func (p *Pedido) Origem() (int, error) {
+	if p.OrigemMs == nil {
+		return 0, fmt.Errorf("pedido %q não declara a origem de tempo do video.mp4 (campo origem_ms "+
+			"ausente em pedido.json). Sem isso não há como saber a que instante do vídeo original o "+
+			"arquivo corresponde, e um corte deslocado sai com a duração certa e a cena errada. "+
+			"Pedidos baixados antes desta versão não têm o campo: acrescente à mão o valor que o "+
+			"arquivo de fato tem — 0 se o video.mp4 é o vídeo inteiro (o que o servidor baixa), ou o "+
+			"início da janela em milissegundos se foi baixado por --download-sections (cmd/baixar). "+
+			"Ou rebaixe o pedido, que a declaração passa a ser automática", p.ID)
+	}
+	return *p.OrigemMs, nil
 }
 
 // NovoPedido cria um pedido no estado inicial. O horário é injetado para manter

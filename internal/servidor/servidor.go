@@ -430,6 +430,11 @@ func (s *Servidor) faseHeavy(reg *registro) {
 	if videoUsavel(videoPath) {
 		s.logTempos(fmt.Sprintf("vídeo já em disco (%s): reaproveitando, sem baixar de novo",
 			retencao.FormatarBytes(tamanhoArquivo(videoPath))))
+		// Reuso NÃO declara origem: quem escreveu o arquivo é que sabe onde ele começa, e aqui
+		// não fomos nós. Um vídeo em disco pode ser o inteiro (baixado pelo servidor) ou uma
+		// janela (cmd/baixar, alcançável via -retomar) — assumir "inteiro" aqui recriaria a
+		// classe de bug que o origem_ms fecha. Se o pedido não declarar, a leitura abaixo falha
+		// com mensagem que diz o que fazer.
 		s.metrica(reg, func(m *Metricas) {
 			m.BaixarVideoMs = m.marcar(s.agora())
 			m.BytesVideo = tamanhoArquivo(videoPath)
@@ -451,6 +456,13 @@ func (s *Servidor) faseHeavy(reg *registro) {
 			s.setErro(reg, mensagemErroDownload(err))
 			return
 		}
+		// Baixamos o vídeo INTEIRO: declaramos a origem no pedido e gravamos em disco. O
+		// Baixador recebe uma CÓPIA do pedido (a corrida com o handleStatus), então a
+		// declaração que ele faz lá morre com a cópia — quem persiste é aqui.
+		//
+		// Sem isto, o `cmd/render -id <este pedido>` não teria como saber que o arquivo é o
+		// vídeo inteiro e recusaria (ou, na versão antiga, cortaria a cena errada).
+		s.declararOrigemVideoInteiro(reg)
 		s.metrica(reg, func(m *Metricas) {
 			m.BaixarVideoMs = m.marcar(s.agora())
 			m.BytesVideo = tamanhoArquivo(videoPath)
@@ -458,11 +470,20 @@ func (s *Servidor) faseHeavy(reg *registro) {
 	}
 
 	s.setStatus(reg, pipeline.EstadoRenderizando)
-	// Origem 0: o video.mp4 é o vídeo inteiro, então t=0 do arquivo == t=0 do vídeo.
+	// A origem vem do pedido — declarada por quem escreveu o video.mp4 —, não de uma
+	// suposição desta função. Um vídeo reaproveitado de outro caminho (janela do cmd/baixar)
+	// tem origem diferente, e é isso que o campo carrega.
+	s.mu.Lock()
+	origemMs, origemErr := reg.ped.Origem()
+	s.mu.Unlock()
+	if origemErr != nil {
+		s.setErro(reg, comPrefixo("não sei a que instante do vídeo o video.mp4 corresponde: ", origemErr))
+		return
+	}
 	var paths []string
 	err := etapaComPrazo(ctx, "a renderização", s.prazos.Renderize, func(ctx context.Context) error {
 		var e error
-		paths, e = s.renderizador.RenderizarComOrigem(ctx, s.copiaPedido(reg), aprovados, origemVideoCompleto)
+		paths, e = s.renderizador.RenderizarComOrigem(ctx, s.copiaPedido(reg), aprovados, origemMs)
 		return e
 	})
 	if err != nil {

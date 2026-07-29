@@ -152,6 +152,31 @@ func TestFaseHeavyFluxoCompleto(t *testing.T) {
 		t.Errorf("render recebeu %d candidatos, quero 2 (os aprovados)", n)
 	}
 
+	// E a origem fica GRAVADA no pedido.json, não só passada em memória: é o que permite ao
+	// cmd/render (e ao cmd/auditar, e à retomada) saber depois que este video.mp4 é o vídeo
+	// inteiro. Sem persistir, `cmd/render -id teste-1` voltaria a não ter o fato — que é
+	// exatamente o bug relatado: Shorts da cena errada, deslocados por ped.Inicio, com a
+	// duração correta. Ver spec-09.
+	emDisco, err := pipeline.Carregar(s.baseDir, "teste-1")
+	if err != nil {
+		t.Fatalf("recarregando o pedido do disco: %v", err)
+	}
+	origemDisco, err := emDisco.Origem()
+	if err != nil {
+		t.Fatalf("o pedido em disco não declara a origem: %v", err)
+	}
+	if origemDisco != 0 {
+		t.Errorf("origem_ms em disco = %d, quero 0 (vídeo inteiro)", origemDisco)
+	}
+	// E o Inicio continua o que o OPERADOR informou — a origem é um fato à parte, não um
+	// apelido dele. (Este fixture manda 00:00:00 no formulário; o que importa é que o
+	// servidor não reescreveu o campo para carregar a origem. O caso com Inicio != 0 está em
+	// internal/download e em internal/video/origem_do_video_test.go.)
+	if emDisco.Inicio != "00:00:00" || emDisco.Fim != "00:10:00" {
+		t.Errorf("a janela informada pelo operador foi alterada: [%q–%q], esperado [00:00:00–00:10:00]",
+			emDisco.Inicio, emDisco.Fim)
+	}
+
 	// Os Shorts aparecem na visão e são baixáveis.
 	vis := statusJSONDoPedido(t, s, "teste-1")
 	if vis.Status != string(pipeline.EstadoConcluido) {

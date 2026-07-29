@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"srtclean/internal/pipeline"
+	"srtclean/internal/transcricao"
 	"srtclean/internal/validacao"
 )
 
@@ -247,6 +248,15 @@ func prepararPedido(t *testing.T, base string) (*pipeline.Pedido, []validacao.Ca
 		t.Fatal(err)
 	}
 	ped := pipeline.NovoPedido(id, "url", "01:29:38", "02:05:11", time.Unix(0, 0).UTC())
+	// Contrato do cmd/baixar: o video.mp4 é a JANELA [inicio, fim], então o arquivo começa em
+	// t=0 no inicio — e é quem baixou que declara isso (pipeline.Pedido.DeclararOrigem). Sem a
+	// declaração o render recusa, de propósito: era a suposição implícita de ped.Inicio que
+	// fazia o Short do pedido do SERVIDOR sair na cena errada.
+	origemJanela, ok := transcricao.HmsToMs(ped.Inicio)
+	if !ok {
+		t.Fatalf("fixture com início inválido: %q", ped.Inicio)
+	}
+	ped.DeclararOrigem(origemJanela)
 	// Dois candidatos com scores diferentes, para checar a ordenação. Vêm de fora do
 	// pedido (spec-09): o render os recebe do arquivo validado, não do pedido.json.
 	cands := []validacao.Candidato{
