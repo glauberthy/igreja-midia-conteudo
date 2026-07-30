@@ -888,6 +888,36 @@ rolaria a pagina inteira e desfaria o ganho de caber numa tela.
 Um selo `tocando a emenda…` avisa quando o som veio do sistema — a emenda toca sozinha, e sem
 aviso o operador nao sabe se foi ele que clicou em algo por acidente.
 
+### 2026-07-30: por que o ajuste fino "não pegava igual eu escuto" — TRÊS camadas
+
+O operador relatou que, com ajuste fino, o corte não caía onde ele ouvia. Havia **três**
+suspeitos, errando em direções diferentes; a investigação mediu cada um em separado, com
+`docs/medicoes/medir_bordas.py` (fronteiras de fala por `silencedetect` na FONTE, que é a única
+referência que não depende do carimbo da legenda).
+
+| camada | o que fazia | medido | veredito |
+|---|---|---|---|
+| 1. perda no caminho | `hms()` = `MsParaHms(ms) + ".000"` — truncava o ms e afirmava zero | pediu 01:07:08**.250**, arquivo com 31,000 s; pediu 01:30:15**.250**, arquivo com 54,000 s | **culpado** (até 999 ms) |
+| 2. escuta vs produto | audição parava no primeiro tique de 200 ms >= o fim, ouvindo além do corte | ponto escolhido pelo dono 107 ms antes do fim real da fala, e soou completo | **culpado** (até ~200 ms) |
+| 3. corte do ffmpeg | `-ss`/`-t` com o tempo do candidato | áudio do arquivo comparado com a fonte em blocos de 20 ms: diferença média **0,1 dB** | **inocente** (exato ao ms) |
+
+O que fecha a camada 3 merece registro porque poupa a próxima investigação: o corte do ffmpeg é
+**sample-accurate**. O primeiro bloco de 20 ms do arquivo casa com o bloco correspondente da
+fonte, inclusive os 28 ms de silêncio antes da fala entrar (−69,2 dB contra −69,8 dB).
+
+**Consertos.** Camada 1: `hms()` passa a emitir o milissegundo real; dois testes, um por camada
+(servidor → candidato, candidato → argumentos do ffmpeg), verificados por mutação. Camada 2: o
+tique da audição cai para 40 ms e a parada acontece 40 ms **antes** do limite — assimetria de
+propósito, mesma lógica do `encaixarFim`: a escuta nunca promete áudio que o arquivo não terá.
+
+**Depois:** o mesmo ajuste do dono, medido de ponta a ponta, pediu 54,250 s e entregou 54,267 s
+(+17 ms de quantização de quadro a 30 fps, para MAIS — o lado seguro). Com um empurrão de 0,25 s
+além do ponto dele, o corte termina **143 ms depois** do fim da fala: palavra inteira.
+
+**Por que nenhum teste pegava isso:** o `TestFluxoCompletoDoAjuste` comparava a tela com o
+render, e os dois liam o mesmo formatador quebrado. Lição registrada no CLAUDE.md — consistência
+interna não é correção.
+
 ### Retomada (`-retomar <id>`): iterar sem refazer o ciclo
 
 Iterar em render ou em tela custava o ciclo inteiro por tentativa: ~40 s de selecao mais ~86 s

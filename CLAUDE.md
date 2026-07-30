@@ -280,6 +280,11 @@ medir o sintoma conveniente em vez da propriedade real. Por isso:
   nasceu errado. Não é comentário que envelheceu — era **falso na origem**, e por isso mais
   perigoso: descrição de commit não tem teste. Ao descrever formato (ordem de coluna, nome de
   campo, layout de arquivo), leia o diff antes de escrever a frase.
+- **Comparar dois valores que saem do MESMO formatador não é verificação.** O
+  `TestFluxoCompletoDoAjuste` conferia que o render recebeu o mesmo tempo que a tela mostrou —
+  e passava com o bug, porque os dois liam o `hms()`, que truncava o milissegundo. A referência
+  certa é o que o OPERADOR ENVIOU (ou a realidade física: o áudio), nunca outro valor derivado
+  do mesmo código. Consistência interna não é correção.
 - **Um teste de EFEITO não prova qual caminho agiu.** A expiração do cache é chamada em dois
   lugares (antes do download e depois de concluir). Tirar uma das duas chamadas não fazia teste
   nenhum falhar: o teste de ponta a ponta continuava verde porque o outro caminho limpava o mesmo
