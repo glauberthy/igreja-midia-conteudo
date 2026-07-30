@@ -162,6 +162,14 @@ Não se negociam. Se uma tarefa parecer exigir quebrá-las, **pare e pergunte**.
    Teste que envolva canal externo é **do dono**: o agente prepara o arquivo, diz exatamente o
    que conferir, e **aguarda**. E nunca afirma como verificado o que só o dono pode verificar.
 
+   **A mesma regra vale para a máquina do dono: verificação visual que exija navegador é dele.**
+   O agente não abre janela de navegador nesta máquina. Prepara o comando, diz o que a tela deve
+   mostrar, e aguarda. Motivo concreto: para confirmar o primeiro quadro do player eu abri o
+   Chrome no display do dono e capturei a **tela inteira** — a imagem pegou abas pessoais
+   (WhatsApp, Gmail). Não vazou, e é exatamente o tipo de acesso que não pode virar rotina.
+   Se um dia a renderização automatizada for necessária: **display isolado** (Xvfb próprio),
+   captura **só da janela** (nunca `x11grab` da tela toda), e **declarado antes, não depois**.
+
 ## Decisões fechadas — não reabrir sem motivo novo
 
 Todas foram tomadas com medição. O registro completo, com os números, está em
