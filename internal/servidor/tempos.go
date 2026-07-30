@@ -1,6 +1,7 @@
 package servidor
 
 import (
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -82,9 +83,9 @@ type Metricas struct {
 	// Existe pela mesma razão da coluna VideoReusado e do registro dos não-ajustados no
 	// cortes.csv: sem ela, qualquer média de selecionar_s misturaria ciclos que nunca
 	// selecionaram, e quem for ler o CSV não teria como saber quais filtrar.
-	Retomado bool
-	Completou    bool   // true = ciclo completo; false = terminou em erro
-	Erro         string // motivo, quando não completou
+	Retomado  bool
+	Completou bool   // true = ciclo completo; false = terminou em erro
+	Erro      string // motivo, quando não completou
 
 	// Etapas (ms).
 	BaixarLegendaMs int64
@@ -144,7 +145,7 @@ func (m *Metricas) RenderPorShortMs() int64 {
 
 const cabecalhoTempos = "quando,pedido,titulo,sermao_s,transcricao_tokens,candidatos,aprovados," +
 	"video_mb,retries,baixar_legenda_s,selecionar_s,validar_s,baixar_video_s,renderizar_s," +
-	"render_por_short_s,total_maquina_s,aguardando_humano_s,video_reusado,retomado,completou,erro\n"
+	"render_por_short_s,total_maquina_s,aguardando_humano_s,video_reusado,completou,erro,retomado\n"
 
 // LinhaCSV formata o pedido como uma linha do arquivo de auditoria. Tempos em segundos com
 // 1 casa (mais legível que ms para comparar a olho, e suficiente para média).
@@ -169,9 +170,14 @@ func (m *Metricas) LinhaCSV() string {
 		seg(m.TotalMaquinaMs()),
 		seg(m.AguardandoMs),
 		simNao(m.VideoReusado),
-		simNao(m.Retomado),
 		completouTexto(m.Completou),
 		csvCampo(m.Erro),
+		// COLUNA NOVA VAI SEMPRE NO FIM. Não é estética: o cabeçalho é escrito uma única vez, na
+		// criação do arquivo, então um CSV que já existe precisa ser MIGRADO quando uma coluna
+		// entra. Com a coluna no fim, migrar é acrescentar campo vazio no fim de cada linha
+		// antiga — operação trivial e segura. Inserir no meio exigiria adivinhar posição, que é
+		// como se estraga histórico. Ver alinharCabecalho.
+		simNao(m.Retomado),
 	}, ",") + "\n"
 }
 
@@ -206,6 +212,93 @@ func (m *Metricas) Resumo() string {
 
 // gravarTempos anexa a linha do pedido ao CSV de auditoria (criando o cabeçalho na primeira
 // vez). É auxiliar: falha de I/O só emite aviso, nunca interrompe o pedido.
+// alinharCabecalho conserta um CSV cujo cabeçalho é de uma versão anterior à coluna atual.
+//
+// Por que precisa existir: o cabeçalho é escrito UMA vez, na criação do arquivo. Quando a
+// coluna `retomado` foi acrescentada, os arquivos que já existiam ficaram com 20 nomes e
+// passaram a receber linhas de 21 campos — desalinhados em silêncio. Aconteceu de verdade, e
+// foi visto olhando o CSV depois de uma medição.
+//
+// É o mesmo argumento que justificou consertar as linhas de retomada: este arquivo é o
+// INSTRUMENTO com que se mede o ganho do cache. Dado desalinhado é pior que dado ausente,
+// porque parece dado.
+//
+// A migração é conservadora de propósito: só age quando o cabeçalho antigo é PREFIXO do atual
+// (colunas foram acrescentadas no fim, que é a única mudança que fazemos). Qualquer outra
+// diferença — coluna renomeada, removida, reordenada — só avisa e não toca no arquivo, porque
+// aí adivinhar o alinhamento é que estragaria o histórico.
+func (s *Servidor) alinharCabecalho() {
+	b, err := os.ReadFile(s.temposPath)
+	if err != nil || len(b) == 0 {
+		return
+	}
+	linhas := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	atual := strings.TrimRight(cabecalhoTempos, "\n")
+	if linhas[0] == atual {
+		return // já alinhado: o caso normal, e sai sem reescrever nada
+	}
+	antigas := strings.Split(linhas[0], ",")
+	novas := strings.Split(atual, ",")
+	if len(antigas) >= len(novas) || !strings.HasPrefix(atual, linhas[0]+",") {
+		fmt.Fprintf(os.Stderr, "aviso: o cabeçalho de %s não é uma versão anterior do atual "+
+			"(colunas renomeadas ou removidas?). Não vou reescrever o arquivo — mova-o à mão "+
+			"para o histórico não sair desalinhado.\n", s.temposPath)
+		return
+	}
+	// A partir daqui usa encoding/csv, não split(","). Dois motivos concretos, e o primeiro é
+	// correção, não robustez teórica:
+	//
+	//  1. a coluna `erro` é texto livre e vai ENTRE ASPAS quando tem vírgula (há linhas assim no
+	//     arquivo real). Contar vírgulas nessas linhas dá campo a mais, e a linha não seria
+	//     completada — desalinhamento onde a migração devia consertar;
+	//  2. linhas já no formato NOVO podem conviver com cabeçalho antigo (foi o que aconteceu).
+	//     Completar cegamente todas daria uma vírgula sobrando justamente nelas.
+	//
+	// Então: cada linha é completada até o número de campos do cabeçalho novo, e quem já está
+	// completa não é tocada.
+	leitor := csv.NewReader(strings.NewReader(string(b)))
+	// FieldsPerRecord = -1: o padrão do csv.Reader EXIGE que toda linha tenha o mesmo número de
+	// campos da primeira — e um arquivo com linhas de tamanhos diferentes é exatamente o que
+	// esta função existe para consertar. Com o padrão, ela recusava o arquivo que devia migrar.
+	leitor.FieldsPerRecord = -1
+	reg, err := leitor.ReadAll()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "aviso: %s não é um CSV legível (%v); não vou mexer nele\n",
+			s.temposPath, err)
+		return
+	}
+	var buf strings.Builder
+	w := csv.NewWriter(&buf)
+	completadas := 0
+	for i, linha := range reg {
+		if i == 0 {
+			linha = novas // troca o cabeçalho pelo atual
+		} else if len(linha) < len(novas) {
+			// Campos vazios no fim: o valor é DESCONHECIDO para as linhas antigas, e vazio é
+			// honesto. Escrever "nao" afirmaria algo que ninguém mediu.
+			for len(linha) < len(novas) {
+				linha = append(linha, "")
+			}
+			completadas++
+		}
+		if err := w.Write(linha); err != nil {
+			fmt.Fprintf(os.Stderr, "aviso: não alinhei %s: %v\n", s.temposPath, err)
+			return
+		}
+	}
+	w.Flush()
+	if err := w.Error(); err != nil {
+		fmt.Fprintf(os.Stderr, "aviso: não alinhei %s: %v\n", s.temposPath, err)
+		return
+	}
+	if err := os.WriteFile(s.temposPath, []byte(buf.String()), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "aviso: não alinhei o cabeçalho de %s: %v\n", s.temposPath, err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "tempos.csv: cabeçalho atualizado (+%d coluna(s)); %d linha(s) antiga(s) "+
+		"completada(s) com campo vazio no fim\n", len(novas)-len(antigas), completadas)
+}
+
 func (s *Servidor) gravarTempos(m *Metricas) {
 	if s.temposPath == "" {
 		return
@@ -222,6 +315,9 @@ func (s *Servidor) gravarTempos(m *Metricas) {
 	novo := false
 	if fi, err := os.Stat(s.temposPath); err != nil || fi.Size() == 0 {
 		novo = true
+	}
+	if !novo {
+		s.alinharCabecalho()
 	}
 	f, err := os.OpenFile(s.temposPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {

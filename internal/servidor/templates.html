@@ -69,8 +69,13 @@
     .etapa-btn.erro { background: var(--nao-bg); border-color: var(--nao-linha); color: var(--nao-tinta); }
     .etapa-btn.erro .n { background: var(--nao-linha); color: #fff; }
 
-    /* As quatro telas ficam TODAS no DOM; trocar é `hidden`. Nenhuma requisição. */
-    .tela[hidden] { display: none; }
+    /* As quatro telas ficam TODAS no DOM; trocar é `hidden`. Nenhuma requisição.
+       O !important não é preguiça: `[hidden] { display: none }` vem da folha do NAVEGADOR e
+       perde de qualquer regra de classe que declare `display`. Foi exatamente o que aconteceu
+       com `.linha-etapa { display: flex }` — a linha "baixar o vídeo" aparecia na tela 2 mesmo
+       com o atributo hidden posto pelo JS, e só se viu olhando a tela. Como toda esta página
+       esconde por `hidden`, a regra vale para tudo, uma vez. */
+    [hidden] { display: none !important; }
 
     /* ===== TELA 2: processando ===== */
     .linhas-etapa { display: grid; gap: var(--esp-2); margin: 0 0 var(--esp-3); }

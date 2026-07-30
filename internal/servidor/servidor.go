@@ -207,6 +207,12 @@ func Novo(o Opcoes) *Servidor {
 	if videosDir == "" {
 		videosDir = filepath.Join(filepath.Dir(s.baseDir), videocache.DirPadrao)
 	}
+	// Alinha o CSV de tempos JÁ NA SUBIDA, não só na próxima escrita: um arquivo desalinhado
+	// (cabeçalho de uma versão anterior) é dado que parece dado, e esperar o próximo pedido
+	// concluir para consertar deixa a janela aberta justamente quando alguém vai ler.
+	if s.temposPath != "" {
+		s.alinharCabecalho()
+	}
 	s.cache = videocache.Novo(videosDir)
 	if o.Agora != nil {
 		// O cache data baixado_em/usado_em pelo MESMO relógio do servidor: senão os testes de
@@ -342,16 +348,22 @@ func (s *Servidor) responderErroCriacao(w http.ResponseWriter, r *http.Request, 
 // 204 em vez de 404 de propósito: "não há pedido" é resposta normal (primeira visita), não
 // erro. Com 204 o HTMX não troca nada e a página fica na tela de dados, que é o certo.
 //
-// O servidor atende um pedido por vez (fila simples, spec-05), então "o pedido atual" é bem
-// definido. Se um dia houver fila, isto vira uma lista e a tela escolhe.
+// "O pedido atual" é o MAIS RECENTE, não um qualquer do mapa. A primeira versão iterava e
+// pegava o primeiro — e o mapa do Go tem ordem aleatória, então com dois pedidos em memória
+// (acontece: o operador cria um segundo antes de o primeiro sair da tela) o F5 caía num pedido
+// sorteado. Ordenar pela data de criação é uma linha e torna a resposta determinística.
 func (s *Servidor) handlePedidoAtual(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	var vis visaoStatus
-	achou := false
+	var maisRecente *registro
 	for _, reg := range s.pedidos {
-		vis = montarVisao(reg)
-		achou = true
-		break
+		if maisRecente == nil || reg.ped.CriadoEm.After(maisRecente.ped.CriadoEm) {
+			maisRecente = reg
+		}
+	}
+	achou := maisRecente != nil
+	if achou {
+		vis = montarVisao(maisRecente)
 	}
 	s.mu.Unlock()
 

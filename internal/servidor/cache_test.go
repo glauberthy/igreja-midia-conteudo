@@ -1,6 +1,7 @@
 package servidor
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -378,6 +379,137 @@ func TestLinhaDoCSVDeRetomadaNaoTemLixo(t *testing.T) {
 	}
 	if campo("completou") != "sim" {
 		t.Errorf("completou = %q, quero sim", campo("completou"))
+	}
+}
+
+// TestCSVAntigoGanhaOCabecalhoNovoAlinhado: o cabeçalho é escrito uma vez, na criação. Quando
+// a coluna `retomado` entrou, os arquivos existentes ficaram com 20 nomes recebendo linhas de
+// 21 campos — desalinhados EM SILÊNCIO. Aconteceu de verdade e só apareceu ao olhar o CSV
+// depois de uma medição.
+func TestCSVAntigoGanhaOCabecalhoNovoAlinhado(t *testing.T) {
+	csv := filepath.Join(t.TempDir(), "tempos.csv")
+	// Um CSV da versão anterior: cabeçalho sem a ÚLTIMA coluna (`retomado`) e uma linha com o
+	// número de campos daquele cabeçalho. Derivado do cabeçalho atual em vez de escrito à mão,
+	// para o teste continuar valendo quando a próxima coluna entrar.
+	antigo := strings.TrimRight(cabecalhoTempos, "\n")
+	antigo = antigo[:strings.LastIndex(antigo, ",")] + "\n"
+	nCampos := strings.Count(antigo, ",") + 1
+	linhaVelha := strings.TrimRight(strings.Repeat("x,", nCampos), ",")
+	if err := os.WriteFile(csv, []byte(antigo+linhaVelha+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Servidor{temposPath: csv}
+	s.gravarTempos(&Metricas{ID: "novo", Completou: true, Retomado: true})
+
+	b, err := os.ReadFile(csv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linhas := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(linhas) != 3 {
+		t.Fatalf("esperava cabeçalho + linha antiga + linha nova, veio %d:\n%s", len(linhas), b)
+	}
+	if linhas[0] != strings.TrimRight(cabecalhoTempos, "\n") {
+		t.Errorf("o cabeçalho não foi atualizado:\n%s", linhas[0])
+	}
+	// TODAS as linhas com o mesmo número de campos do cabeçalho: é isso que "alinhado"
+	// significa, e é o que uma planilha ou um pandas exige para não errar de coluna.
+	nCab := strings.Count(linhas[0], ",")
+	for i, l := range linhas[1:] {
+		if n := strings.Count(l, ","); n != nCab {
+			t.Errorf("linha %d com %d vírgulas, cabeçalho tem %d — desalinhada:\n%s", i+1, n, nCab, l)
+		}
+	}
+	// A linha antiga não ganhou um valor inventado: o campo novo fica VAZIO, porque para ela é
+	// desconhecido. Escrever "nao" seria afirmar algo que ninguém mediu.
+	if !strings.HasSuffix(linhas[1], ",") {
+		t.Errorf("a linha antiga devia terminar com campo vazio, veio:\n%s", linhas[1])
+	}
+}
+
+// TestAlinhamentoRespeitaAspasELinhaJaNova cobre os dois casos que fizeram a primeira versão
+// desta migração ERRAR — e errar consertando, que é o pior lugar para errar:
+//
+//  1. a coluna `erro` é texto livre e vai entre aspas quando tem vírgula. Contando vírgulas,
+//     essas linhas parecem ter campos a mais e não seriam completadas;
+//  2. uma linha já no formato NOVO pode conviver com cabeçalho antigo (foi o que aconteceu no
+//     arquivo real). Completando cegamente, ela ganhava uma vírgula sobrando.
+func TestAlinhamentoRespeitaAspasELinhaJaNova(t *testing.T) {
+	csvPath := filepath.Join(t.TempDir(), "tempos.csv")
+	atual := strings.TrimRight(cabecalhoTempos, "\n")
+	antigo := atual[:strings.LastIndex(atual, ",")]
+	nAntigo := strings.Count(antigo, ",") + 1
+	nAtual := strings.Count(atual, ",") + 1
+
+	// (a) linha antiga com erro ENTRE ASPAS contendo vírgulas.
+	comAspas := make([]string, nAntigo)
+	for i := range comAspas {
+		comAspas[i] = "x"
+	}
+	comAspas[nAntigo-1] = `"falhou: a, b, c"`
+	// (b) linha já no formato novo (um campo a mais que o cabeçalho antigo).
+	jaNova := make([]string, nAtual)
+	for i := range jaNova {
+		jaNova[i] = "y"
+	}
+	conteudo := antigo + "\n" + strings.Join(comAspas, ",") + "\n" + strings.Join(jaNova, ",") + "\n"
+	if err := os.WriteFile(csvPath, []byte(conteudo), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Servidor{temposPath: csvPath}
+	s.gravarTempos(&Metricas{ID: "terceiro", Completou: true})
+
+	reg, err := lerCSV(t, csvPath)
+	if err != nil {
+		t.Fatalf("o arquivo migrado não é CSV válido: %v", err)
+	}
+	if len(reg) != 4 {
+		t.Fatalf("esperava cabeçalho + 3 linhas, veio %d", len(reg))
+	}
+	for i, linha := range reg {
+		if len(linha) != nAtual {
+			t.Errorf("linha %d com %d campos, cabeçalho tem %d: %v", i, len(linha), nAtual, linha)
+		}
+	}
+	// O erro com vírgulas sobreviveu inteiro (não foi partido em vários campos).
+	if got := reg[1][nAntigo-1]; got != "falhou: a, b, c" {
+		t.Errorf("o campo de erro entre aspas foi corrompido: %q", got)
+	}
+	// A linha que já estava no formato novo não ganhou campo a mais.
+	if reg[2][nAtual-1] != "y" {
+		t.Errorf("a linha já no formato novo foi alterada: %v", reg[2])
+	}
+}
+
+func lerCSV(t *testing.T, path string) ([][]string, error) {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	r := csv.NewReader(f)
+	r.FieldsPerRecord = -1 // lê como está; o teste é que verifica se ficou alinhado
+	return r.ReadAll()
+}
+
+// TestCabecalhoIncompativelNaoEReescrito: se o cabeçalho não for uma versão anterior (coluna
+// renomeada, removida, reordenada), adivinhar o alinhamento estragaria o histórico. Avisar e
+// não tocar é a resposta.
+func TestCabecalhoIncompativelNaoEReescrito(t *testing.T) {
+	csv := filepath.Join(t.TempDir(), "tempos.csv")
+	estranho := "outra,coisa,completamente,diferente\n1,2,3,4\n"
+	if err := os.WriteFile(csv, []byte(estranho), 0644); err != nil {
+		t.Fatal(err)
+	}
+	s := &Servidor{temposPath: csv}
+	s.gravarTempos(&Metricas{ID: "novo", Completou: true})
+
+	b, _ := os.ReadFile(csv)
+	if !strings.HasPrefix(string(b), estranho) {
+		t.Errorf("o arquivo incompatível foi reescrito; devia ficar intacto:\n%s", b)
 	}
 }
 
