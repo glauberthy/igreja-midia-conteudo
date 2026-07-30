@@ -907,10 +907,14 @@ Servindo o mesmo arquivo, a discrepância **desaparece por construção**, não 
 01:30:00 sem baixar o culto.
 
 **A parada da escuta** passou de poll de 40 ms para `requestAnimationFrame` (~16 ms) sobre um
-`currentTime` exato, sem folga de compensação: não há mais buffer nem API remota no meio. O
-overshoot desse mecanismo **não pôde ser medido em headless** (o rAF é conduzido pelo compositor e
-não tica sem display — verificado); a página de medição está em
-`docs/medicoes/overshoot-parada/`, para rodar no navegador do dono.
+`currentTime` exato, sem folga de compensação: não há mais buffer nem API remota no meio.
+
+**A medição do overshoot foi DESCARTADA, e não é buraco.** Ela existia para diagnosticar a parada
+por polling contra um relógio REMOTO — o mecanismo que produzia +89 ms e que deixou de existir.
+Sobrou um limite que é o piso do navegador (um quadro, ~16 ms, mais a latência de um `pause()`
+local), abaixo de qualquer sílaba e sem decisão pendurada nele. Medir isso pediria abrir uma página
+no navegador do dono para confirmar o inevitável. Registrado aqui para ninguém procurar a
+pendência: ela não existe.
 
 **O download do vídeo passou para a fase leve, em PARALELO com a seleção.** É a consequência
 inevitável: player local exige arquivo local. Rede e GPU não competem — download de 63 s de média

@@ -304,6 +304,17 @@ medir o sintoma conveniente em vez da propriedade real. Por isso:
   `usado_em`), então o cache real ficou marcado como velho e a próxima limpeza apagaria 821 MB de
   verdade. **Defesa com cobertura assimétrica é pior que nenhuma**, porque dá confiança onde não
   há. Cache de teste com `truncate -s 25M` custa um segundo e não tem esse risco.
+- **Antes de usar um número como referência, verifique a UNIDADE DE AMOSTRAGEM.** É a terceira
+  vez que viés de amostra quase enganou uma métrica aqui, e o padrão é sempre "a lista mede uma
+  coisa e a pergunta é sobre outra":
+  1. o `cortes.csv` ia registrar só os trechos AJUSTADOS — a média do desvio sairia dos casos
+     ruins, e aplicar 2 s de correção estragaria os 7 cortes que estavam bons;
+  2. o `tempos.csv` só tinha quem TERMINOU — abandono era invisível e a média mentia otimista;
+  3. a linha de base do encaixe em pausa dava **27% ou 82%** de cortes ajustados, dependendo de
+     contar cada aprovação ou **uma por trecho** — reaprovar o mesmo trecho é iteração, não
+     amostra nova, e a segunda é a resposta certa.
+  Consequência prática: escreva a regra de amostragem ao lado do número, e compare sempre com a
+  MESMA regra nos dois lados (`docs/medicoes/efeito_pausas.py` deduplica antes de dividir por data).
 - **Duas listas para o mesmo dado divergem.** O `tempos.csv` quebrou duas vezes com cabeçalho
   numa lista e valores em outra. A correção não foi mais uma migração: foi **uma fonte só**
   (`colunasTempos`, nome e valor na mesma entrada). Migração conserta o sintoma; fonte única
