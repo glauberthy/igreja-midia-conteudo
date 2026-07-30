@@ -458,10 +458,12 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 	reg.ajustes = ajustes
 	// Fecha o tempo de ESPERA HUMANA (revisão do operador). Fica em coluna própria e fora
 	// do total de máquina — é tempo de pessoa, não de sistema.
-	if reg.metricas.AguardandoMs == 0 {
-		reg.metricas.AguardandoMs = reg.metricas.marcar(s.agora())
+	if reg.metricas != nil {
+		if reg.metricas.AguardandoMs == 0 {
+			reg.metricas.AguardandoMs = reg.metricas.marcar(s.agora())
+		}
+		reg.metricas.NumAprovados = len(limpos)
 	}
-	reg.metricas.NumAprovados = len(limpos)
 	reg.ped.Status = pipeline.EstadoAguardandoProcessamento
 	vis := montarVisao(reg)
 	s.mu.Unlock()
@@ -622,7 +624,9 @@ func (s *Servidor) faseHeavy(reg *registro) {
 	}
 	s.mu.Lock()
 	reg.shorts = nomes
-	reg.metricas.RenderizarMs = reg.metricas.marcar(s.agora())
+	if reg.metricas != nil {
+		reg.metricas.RenderizarMs = reg.metricas.marcar(s.agora())
+	}
 	reg.ped.Status = pipeline.EstadoConcluido
 	s.mu.Unlock()
 
@@ -966,7 +970,9 @@ func (s *Servidor) faseLeve(reg *registro) {
 	s.mu.Lock()
 	reg.cands = cands
 	reg.textos = textos
-	reg.metricas.ValidarMs = reg.metricas.marcar(s.agora())
+	if reg.metricas != nil {
+		reg.metricas.ValidarMs = reg.metricas.marcar(s.agora())
+	}
 	reg.ped.Status = pipeline.EstadoAguardandoAprovacao
 	s.mu.Unlock()
 }
