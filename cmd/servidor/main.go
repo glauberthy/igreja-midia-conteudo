@@ -18,6 +18,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"srtclean/internal/download"
 	"srtclean/internal/harness"
@@ -114,8 +117,31 @@ func main() {
 	}
 
 	addr := fmt.Sprintf(":%d", *porta)
+	srv := &http.Server{Addr: addr, Handler: s}
+
+	// ENCERRAMENTO: registra no tempos.csv os pedidos que estavam em curso.
+	//
+	// Sem isto, abandono é invisível: só quem termina escreve no CSV, então falha aparece e
+	// interrupção não — e a medição fica com viés otimista (só os ciclos que chegaram ao fim).
+	// É o mesmo viés que o cortes.csv tinha. E abandono é o dado mais informativo que faltava:
+	// ciclo interrompido é sintoma de algo ruim demais para terminar.
+	//
+	// Ctrl-C e SIGTERM (o que o systemd/docker mandam). SIGKILL não dá para tratar — e essa
+	// lacuna é honesta: `kill -9` continua sumindo do CSV.
+	sinais := make(chan os.Signal, 1)
+	signal.Notify(sinais, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-sinais
+		if n := s.RegistrarAbandonados(""); n > 0 {
+			log.Printf("encerrando (%s): %d pedido(s) em curso registrado(s) no CSV como não concluídos", sig, n)
+		}
+		ctx, cancelar := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancelar()
+		srv.Shutdown(ctx)
+	}()
+
 	log.Printf("servidor de Shorts no ar em http://localhost%s (Ctrl-C para sair)", addr)
-	if err := http.ListenAndServe(addr, s); err != nil {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintf(os.Stderr, "erro ao subir o servidor: %v\n", err)
 		os.Exit(1)
 	}
