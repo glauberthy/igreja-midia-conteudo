@@ -111,6 +111,40 @@ func TestAbandonoAguardandoAprovacaoContaComoNaoConcluido(t *testing.T) {
 	}
 }
 
+// TestFaseEmCursoSobreviveAoAbandono é o teste do panic que o abandono destapou, e é o que
+// prova que a causa foi REMOVIDA e não apenas cercada.
+//
+// Cenário: o servidor finaliza um pedido cuja fase leve ainda está rodando. Quando a fase
+// termina, ela escreve as métricas dela. Enquanto o sinal de "já finalizado" era `metricas =
+// nil`, essa escrita derrubava o processo — e derrubar o servidor no encerramento é perder
+// justamente o registro que o abandono existe para gravar.
+//
+// Agora a fase escreve num struct que ninguém mais lê: nada quebra, e o CSV continua com uma
+// linha só.
+func TestFaseEmCursoSobreviveAoAbandono(t *testing.T) {
+	liberar := make(chan struct{})
+	b := &baixadorFake{transc: transcricaoLongaDoCulto(), liberar: liberar}
+	s := servidorTeste(t, b, candsJanela())
+
+	id := criarPedido(t, s, "https://youtu.be/cultoTeste1", "00:00:00", "00:10:00")
+	esperarStatus(t, s, id, pipeline.EstadoBaixandoLegenda)
+	if n := s.RegistrarAbandonados(""); n != 1 {
+		t.Fatalf("registrou %d abandono(s), quero 1", n)
+	}
+	esperarArquivo(t, s.temposPath)
+
+	// Solta a fase leve: ela vai até o fim e escreve ValidarMs num pedido JÁ finalizado.
+	close(liberar)
+	// Chegar a aguardando-aprovação é a última escrita da fase leve. Se o processo sobreviveu
+	// até aqui, a escrita pós-finalização é inócua. (Também garante que a fase parou de escrever
+	// antes de o t.TempDir ser removido.)
+	esperarStatus(t, s, id, pipeline.EstadoAguardandoAprovacao)
+
+	if n := linhasDoCSV(t, s.temposPath); n != 1 {
+		t.Errorf("CSV com %d linha(s) de dados: a fase que continuou gravou de novo", n)
+	}
+}
+
 func linhasDoCSV(t *testing.T, path string) int {
 	t.Helper()
 	b, err := os.ReadFile(path)

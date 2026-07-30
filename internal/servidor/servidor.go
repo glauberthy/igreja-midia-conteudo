@@ -88,7 +88,16 @@ type registro struct {
 	// (spec-05 v2). São ESTES tempos que vão ao render — ver candidatosAprovados.
 	ajustes  map[int]TrechoAjustado
 	shorts   []string  // nomes dos arquivos finais gerados (fase pesada), para download
-	metricas *Metricas // tempos por etapa (auditoria de desempenho)
+	metricas *Metricas // tempos por etapa (auditoria de desempenho); NUNCA nil
+	// finalizado diz que a linha deste pedido já foi para o tempos.csv. É a idempotência do
+	// finalizarPedido, DITA em vez de codificada num ponteiro: antes o sinal era `metricas =
+	// nil`, e um ponteiro que muda de significado obrigava toda escrita de métrica a testar
+	// nil. Três não testavam, e a primeira vez que um pedido foi finalizado de FORA da fase
+	// que o processava (o registro de abandono) o servidor caiu com nil pointer.
+	//
+	// Com o campo, `metricas` nunca é nil: uma fase que ainda escreve escreve num struct que
+	// ninguém mais lê. Escrita inútil é barata; nil é panic.
+	finalizado bool
 }
 
 // Servidor guarda as dependências e o registro em memória dos pedidos.
@@ -467,12 +476,10 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 	reg.ajustes = ajustes
 	// Fecha o tempo de ESPERA HUMANA (revisão do operador). Fica em coluna própria e fora
 	// do total de máquina — é tempo de pessoa, não de sistema.
-	if reg.metricas != nil {
-		if reg.metricas.AguardandoMs == 0 {
-			reg.metricas.AguardandoMs = reg.metricas.marcar(s.agora())
-		}
-		reg.metricas.NumAprovados = len(limpos)
+	if reg.metricas.AguardandoMs == 0 {
+		reg.metricas.AguardandoMs = reg.metricas.marcar(s.agora())
 	}
+	reg.metricas.NumAprovados = len(limpos)
 	reg.ped.Status = pipeline.EstadoAguardandoProcessamento
 	vis := montarVisao(reg)
 	s.mu.Unlock()
@@ -633,9 +640,7 @@ func (s *Servidor) faseHeavy(reg *registro) {
 	}
 	s.mu.Lock()
 	reg.shorts = nomes
-	if reg.metricas != nil {
-		reg.metricas.RenderizarMs = reg.metricas.marcar(s.agora())
-	}
+	reg.metricas.RenderizarMs = reg.metricas.marcar(s.agora())
 	reg.ped.Status = pipeline.EstadoConcluido
 	s.mu.Unlock()
 
@@ -1025,22 +1030,21 @@ func (s *Servidor) faseLeve(reg *registro) {
 	s.mu.Lock()
 	reg.cands = cands
 	reg.textos = textos
-	if reg.metricas != nil {
-		reg.metricas.ValidarMs = reg.metricas.marcar(s.agora())
-	}
+	reg.metricas.ValidarMs = reg.metricas.marcar(s.agora())
 	reg.ped.Status = pipeline.EstadoAguardandoAprovacao
 	s.mu.Unlock()
 }
 
 // metrica aplica uma escrita nas métricas do pedido SOB LOCK. As fases rodam em goroutine
 // e o mesmo registro é tocado pelos handlers HTTP; sem o lock, o -race acusa (com razão).
-// Nil-safe: depois de finalizarPedido as métricas são zeradas e a escrita vira no-op.
+//
+// Não há guarda de nil porque não há nil: reg.metricas é preenchido na criação do registro e
+// nunca mais trocado. Depois de o pedido ser finalizado a escrita ainda acontece, e é inócua —
+// o CSV foi gravado a partir de uma cópia.
 func (s *Servidor) metrica(reg *registro, fn func(m *Metricas)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if reg.metricas != nil {
-		fn(reg.metricas)
-	}
+	fn(reg.metricas)
 }
 
 // copiaPedido devolve uma cópia do Pedido para entregar a dependências que escrevem nele
@@ -1126,21 +1130,33 @@ func (s *Servidor) setErro(reg *registro, msg string) {
 }
 
 // finalizarPedido fecha a auditoria de UM pedido: registra os retries, loga o resumo e
-// grava a linha no CSV. Idempotente — chamada mais de uma vez (erro após erro), grava só
-// na primeira: `metricas` é zerado depois de gravar.
+// grava a linha no CSV. Idempotente — chamada mais de uma vez (erro após erro, ou abandono
+// depois de concluir), grava só na primeira.
+//
+// A marca é reg.finalizado, um campo. Não é `metricas = nil`: aquilo transformava um ponteiro
+// em sinal de estado e obrigava todo escritor de métrica a se defender de nil — defesa que
+// três lugares não tinham, e que virou panic no dia em que um pedido passou a ser finalizado
+// de fora da fase que o processava.
+//
+// Leva uma CÓPIA das métricas sob o lock. Todas as escritas de métrica acontecem com s.mu
+// segurado (ver metrica()); formatar a linha do CSV fora do lock sobre o struct COMPARTILHADO
+// seria corrida de verdade com uma fase que ainda está rodando. Com a cópia, a fase continua
+// escrevendo no original — que ninguém mais lê.
 func (s *Servidor) finalizarPedido(reg *registro, erro string) {
 	s.mu.Lock()
-	met := reg.metricas
-	reg.metricas = nil // marca como já finalizado
-	s.mu.Unlock()
-	if met == nil {
+	if reg.finalizado {
+		s.mu.Unlock()
 		return
 	}
+	reg.finalizado = true
+	met := *reg.metricas
+	s.mu.Unlock()
+
 	met.Erro = erro
 	met.Completou = erro == ""
 	met.FecharRetries()
 	s.logTempos(met.Resumo())
-	s.gravarTempos(met)
+	s.gravarTempos(&met)
 }
 
 // lerEntrada aceita tanto JSON (Content-Type: application/json) quanto formulário.

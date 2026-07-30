@@ -31,8 +31,8 @@ const MotivoEncerrado = "servidor encerrado com o pedido em curso"
 // chama exatamente esse caminho. Escrever a linha aqui à mão criaria um segundo formatador de
 // linha — a duplicação que acabou de custar duas quebras no cabeçalho do mesmo arquivo.
 //
-// Idempotente: o finalizarPedido zera reg.metricas ao finalizar, então um pedido já registrado
-// (concluído, com erro, ou por uma chamada anterior desta função) não entra de novo.
+// Idempotente pela marca do finalizarPedido (reg.finalizado): um pedido já registrado —
+// concluído, com erro, ou por uma chamada anterior desta função — não entra de novo.
 func (s *Servidor) RegistrarAbandonados(motivo string) int {
 	if motivo == "" {
 		motivo = MotivoEncerrado
@@ -41,7 +41,7 @@ func (s *Servidor) RegistrarAbandonados(motivo string) int {
 	s.mu.Lock()
 	var emCurso []*registro
 	for _, reg := range s.pedidos {
-		if !estadoTerminal(reg.ped.Status) && reg.metricas != nil {
+		if !estadoTerminal(reg.ped.Status) && !reg.finalizado {
 			reg.ped.Status = pipeline.EstadoErro
 			reg.ped.Erro = motivo
 			emCurso = append(emCurso, reg)
