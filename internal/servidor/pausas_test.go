@@ -271,3 +271,27 @@ func TestParsearSaidaDoSilencedetect(t *testing.T) {
 		t.Errorf("duração da pausa 2 = %d ms, quero 1514", pausas[1].DuracaoMs())
 	}
 }
+
+// TestEncaixeQueEstouraAFaixaExplicaDeOndeVeio: o encaixe pode levar a duração além dos 58 s
+// (a fala continua). O comportamento é encaixar, NÃO aprovar e DIZER que foi o encaixe — recuar
+// para a pausa anterior em silêncio esconderia informação sobre o material.
+func TestEncaixeQueEstouraAFaixaExplicaDeOndeVeio(t *testing.T) {
+	frases := frasesAjuste(t)
+	// Pausa longe o bastante para a duração passar do máximo (58 s).
+	pausas := []videocache.Pausa{{InicioMs: 95000, FimMs: 96000}}
+	got := recalcularTrecho(frases, 0, 20000, fimDoBlocoDeLegenda,
+		ContextoAjuste{Pausas: pausas, Gesto: "frase-fim"})
+
+	if got.EndMs != 95000 {
+		t.Fatalf("o encaixe recuou em vez de ir à pausa: fim = %d", got.EndMs)
+	}
+	if got.Aprovavel {
+		t.Error("trecho de 75 s ficou aprovável: a guarda da faixa desapareceu")
+	}
+	for _, quer := range []string{"o máximo é", "encaixe na pausa", "+51.00s"} {
+		if !strings.Contains(got.Motivo, quer) {
+			t.Errorf("o motivo não diz %q — o operador não sabe de onde vieram os segundos: %q",
+				quer, got.Motivo)
+		}
+	}
+}

@@ -97,22 +97,43 @@ duas regras são diferentes de propósito.
 ## LINHA DE BASE — a previsão observável
 
 O `cortes.csv` já coleta original × final por trecho aprovado. **Antes** do encaixe em pausa
-(37 linhas, até 2026-07-29):
+(até 2026-07-29), e o número depende da REGRA DE AMOSTRAGEM — as duas leituras ficam registradas
+porque comparar com regras diferentes daria um efeito que não existe:
 
-| medida | valor |
-|---|---|
-| trechos que precisaram de ajuste | **27%** (10 de 37) |
-| delta do FIM, mediana de todos | +0 ms |
-| delta do FIM, mediana dos que mexeram no fim | **+2250 ms** |
-| delta do INÍCIO, mediana | +0 ms |
+| regra de amostragem | trechos | precisaram de ajuste | delta do FIM (quem mexeu), mediana |
+|---|---|---|---|
+| **todas as linhas** | 37 | **27%** | **+2250 ms** |
+| **uma por trecho** (última aprovação de cada `pedido+indice`) | 11 | **82%** | **+3000 ms** |
 
-Aquele **+2250 ms** é a assinatura do problema: o operador empurrava o fim ~2,25 s para frente
-porque a fronteira da legenda caía cedo.
+A segunda é a que o script usa por padrão, e é a mais honesta para esta pergunta: reaprovar o
+mesmo trecho é ITERAÇÃO, não amostra nova — numa sessão de depuração o mesmo corte entra dez
+vezes e afoga a estatística. A primeira conta cada aprovação, então um trecho aceito sem ajuste
+cinco vezes pesa cinco.
+
+O que as duas dizem igual: **quem mexe no fim, empurra para FRENTE em torno de 2–3 s**. É a
+assinatura do problema — a fronteira da legenda cai cedo.
+
+**A comparação futura tem de usar a MESMA regra nos dois lados.** O `efeito_pausas.py` garante
+isso: aplica a dedução antes de dividir por data.
+
+> **A coluna "depois" ainda não vale nada** (2026-07-30): os 8 trechos que há são as iterações de
+> depuração de hoje, sobre os mesmos 4 candidatos de um culto só. Efeito real exige cultos novos.
 
 **Previsão falsificável:** com o encaixe em pausa, o corte já nasce onde a fala termina, então
 (a) a proporção de ajustados deve **cair** de 27%, e (b) a mediana do delta do fim dos que ainda
 ajustarem deve **encolher** — o que sobrar é preferência do operador, não conserto de fronteira.
 
 Se **não** encolher, a hipótese está errada e o dado dirá isso: será sinal de que o desvio é da
-legenda em outro eixo (e a Rota D volta ao centro). Medir com `resultados/cortes.csv` filtrando
-`quando >= 2026-07-30`.
+legenda em outro eixo (e a Rota D volta ao centro).
+
+**O comando, pronto para rodar depois de alguns cultos:**
+
+```bash
+python3 docs/medicoes/efeito_pausas.py            # amostra deduplicada, antes x depois de 30/07
+python3 docs/medicoes/efeito_pausas.py -todas     # sem deduplicar, para comparar as duas leituras
+python3 docs/medicoes/efeito_pausas.py -corte 2026-08-15   # outra data de corte
+```
+
+Ele imprime as duas medidas nos dois períodos e diz `ENCOLHEU` / `CRESCEU` para cada uma, com o
+aviso sobre amostra pequena — os deltas são quantizados por fronteira de fala, então a mediana
+salta entre valores discretos e a forma importa mais que o centro.

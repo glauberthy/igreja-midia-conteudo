@@ -168,6 +168,15 @@ func recalcularTrecho(frases []harness.Frase, indice, startMs, endMs int, ctx Co
 	t.Vizinhanca = vizinhanca(frases, iniFrase, fimMs)
 
 	t.Aprovavel, t.Motivo = duracaoAceitavel(t.DuracaoMs)
+	// Se foi o ENCAIXE que estourou a faixa, o motivo tem de dizer isso. Sem essa frase o
+	// operador lê "ficaria 64s, o máximo é 58s" e não sabe de onde vieram os segundos — ele pediu
+	// 44s. O corte NÃO é recusado nem recuado para a pausa anterior: encaixa, mostra, e a decisão
+	// é dele. Recuar em silêncio esconderia justamente o caso em que a fala continua além do
+	// limite, que é informação sobre o material.
+	if !t.Aprovavel && t.RegraFim == "pausa" && t.DeslocamentoFimMs != 0 {
+		t.Motivo += fmt.Sprintf(" (o encaixe na pausa da fala levou o fim %+.2fs; a fala segue "+
+			"até lá)", float64(t.DeslocamentoFimMs)/1000)
+	}
 	return t
 }
 
