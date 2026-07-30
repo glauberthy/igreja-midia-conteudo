@@ -101,9 +101,10 @@ go run ./cmd/auditar -todos
 go run ./cmd/validar -json trabalho/<id>/candidatos.corrigido.json \
     -transc trabalho/<id>/transcricao.txt          # confere um par (ver a nota sobre validar)
 
-# limpeza de disco
+# limpeza de disco (DUAS políticas: pedidos por contagem, cache por prazo+teto)
 go run ./cmd/limpar -dry-run
-go run ./cmd/limpar -reter 1        # também aceita -exceto <id> e -v
+go run ./cmd/limpar -reter 1                     # também aceita -exceto <id> e -v
+go run ./cmd/limpar -video-dias 30 -video-teto 50 # expiração do cache: 30 dias sem uso, 50 GB
 
 # verificação
 go build ./... && go vet ./... && go test -race ./...
@@ -257,6 +258,11 @@ medir o sintoma conveniente em vez da propriedade real. Por isso:
   nasceu errado. Não é comentário que envelheceu — era **falso na origem**, e por isso mais
   perigoso: descrição de commit não tem teste. Ao descrever formato (ordem de coluna, nome de
   campo, layout de arquivo), leia o diff antes de escrever a frase.
+- **Um teste de EFEITO não prova qual caminho agiu.** A expiração do cache é chamada em dois
+  lugares (antes do download e depois de concluir). Tirar uma das duas chamadas não fazia teste
+  nenhum falhar: o teste de ponta a ponta continuava verde porque o outro caminho limpava o mesmo
+  arquivo. Quem achou o furo foi a **mutação**, não a leitura do teste. Política com mais de um
+  ponto de entrada precisa de um teste que isole cada um.
 - **Duas listas para o mesmo dado divergem.** O `tempos.csv` quebrou duas vezes com cabeçalho
   numa lista e valores em outra. A correção não foi mais uma migração: foi **uma fonte só**
   (`colunasTempos`, nome e valor na mesma entrada). Migração conserta o sintoma; fonte única
