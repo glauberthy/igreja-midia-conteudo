@@ -25,9 +25,23 @@ type visaoStatus struct {
 	Candidatos   []candidatoVis
 	// Índices aprovados (contrato JSON de GET /pedidos/{id}).
 	Aprovados []candidatoVis
-	// Fase pesada concluída (spec-05 parte 3): os Shorts gerados, para download.
+	// Fase pesada concluída (spec-05 parte 3): os Shorts gerados, para a tela de resultado.
 	Concluido bool
-	Shorts    []string
+	Shorts    []shortVis
+}
+
+// shortVis é um Short entregue, como a tela 4 precisa dele: nome e TAMANHO.
+//
+// O tamanho não é enfeite: o WhatsApp recusa vídeo acima de ~16 MB, e é por lá que o Short vai
+// ser enviado à mão (não há integração — ver a nota da tela). Saber o peso antes de tentar
+// enviar é a diferença entre um envio e uma descoberta no meio do envio.
+//
+// A DURAÇÃO não vem daqui de propósito: quem sabe dizê-la é o próprio arquivo, e o player da
+// tela a mostra sozinho (preload="metadata"). Calcular a partir do candidato aprovado seria
+// repetir uma conta que o vídeo já responde — e mentir se o render tivesse ajustado algo.
+type shortVis struct {
+	Nome  string
+	Bytes int64
 }
 
 // candidatoVis é a forma exibida de um candidato (apenas o que a revisão precisa).
@@ -68,7 +82,10 @@ func emProgresso(e pipeline.Estado) bool {
 
 // montarVisao converte o registro em uma visão para HTML/JSON. Deve ser chamada com
 // o lock do servidor seguro (lê campos do registro).
-func montarVisao(reg *registro) visaoStatus {
+//
+// outDir é a raiz dos finalizados, para medir o tamanho de cada Short. Vem por parâmetro (e não
+// de um global) para os testes montarem visão com a pasta deles.
+func montarVisao(reg *registro, outDir string) visaoStatus {
 	v := visaoStatus{
 		ID:          reg.ped.ID,
 		Status:      reg.ped.Status,
@@ -77,7 +94,12 @@ func montarVisao(reg *registro) visaoStatus {
 		Erro:        reg.ped.Erro,
 		VideoID:     download.VideoID(reg.ped.YouTubeURL),
 		Concluido:   reg.ped.Status == pipeline.EstadoConcluido,
-		Shorts:      append([]string(nil), reg.shorts...),
+	}
+	for _, nome := range reg.shorts {
+		v.Shorts = append(v.Shorts, shortVis{
+			Nome:  nome,
+			Bytes: tamanhoArquivo(filepath.Join(outDir, reg.ped.ID, nome)),
+		})
 	}
 	if v.StatusLabel == "" {
 		v.StatusLabel = string(reg.ped.Status)
@@ -123,9 +145,17 @@ type statusJSON struct {
 	Erro       string          `json:"erro,omitempty"`
 	Candidatos []candidatoJSON `json:"candidatos,omitempty"`
 	Aprovados  []int           `json:"aprovados,omitempty"`
-	// Shorts: o cliente monta a tela de resultado com estes nomes. Antes o servidor mandava a
-	// lista já em HTML; com as quatro telas no DOM, ele manda o DADO (spec-05 v3).
-	Shorts []string `json:"shorts,omitempty"`
+	// Shorts: o cliente monta a tela de resultado com isto. Antes o servidor mandava a lista já
+	// em HTML; com as quatro telas no DOM, ele manda o DADO (spec-05 v3).
+	//
+	// É UMA lista de objetos, não uma de nomes mais outra de tamanhos: duas listas para o mesmo
+	// dado divergem — foi o que quebrou o cabeçalho do tempos.csv duas vezes.
+	Shorts []shortJSON `json:"shorts,omitempty"`
+}
+
+type shortJSON struct {
+	Nome  string `json:"nome"`
+	Bytes int64  `json:"bytes"`
 }
 
 type candidatoJSON struct {
@@ -154,7 +184,10 @@ func (v visaoStatus) EstadoJSON() template.JS {
 }
 
 func (v visaoStatus) json() statusJSON {
-	out := statusJSON{ID: v.ID, Status: string(v.Status), Erro: v.Erro, Shorts: v.Shorts}
+	out := statusJSON{ID: v.ID, Status: string(v.Status), Erro: v.Erro}
+	for _, sh := range v.Shorts {
+		out.Shorts = append(out.Shorts, shortJSON{Nome: sh.Nome, Bytes: sh.Bytes})
+	}
 	for _, c := range v.Aprovados {
 		out.Aprovados = append(out.Aprovados, c.Indice)
 	}

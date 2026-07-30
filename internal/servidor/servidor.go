@@ -253,6 +253,7 @@ func Novo(o Opcoes) *Servidor {
 	s.mux.HandleFunc("POST /pedidos/{id}/aprovar", s.handleAprovar)
 	s.mux.HandleFunc("POST /pedidos/{id}/ajustar", s.handleAjustar)
 	s.mux.HandleFunc("GET /finalizados/{id}/{arquivo}", s.handleBaixarFinal)
+	s.mux.HandleFunc("DELETE /finalizados/{id}/{arquivo}", s.handleApagarFinal)
 	// Assets estáticos (fonte da identidade, logo) — servidos do disco.
 	s.mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(s.assetsDir))))
 	return s
@@ -338,7 +339,7 @@ func (s *Servidor) handleCriar(w http.ResponseWriter, r *http.Request) {
 	// "processando" e passa a fazer o polling. Um formato só para as três rotas (ver o
 	// template "estado").
 	s.mu.Lock()
-	vis := montarVisao(reg)
+	vis := montarVisao(reg, s.outDir)
 	s.mu.Unlock()
 	tmpl.ExecuteTemplate(w, "estado", vis)
 }
@@ -381,7 +382,7 @@ func (s *Servidor) handlePedidoAtual(w http.ResponseWriter, r *http.Request) {
 	}
 	achou := maisRecente != nil
 	if achou {
-		vis = montarVisao(maisRecente)
+		vis = montarVisao(maisRecente, s.outDir)
 	}
 	s.mu.Unlock()
 
@@ -404,7 +405,7 @@ func (s *Servidor) handleStatus(w http.ResponseWriter, r *http.Request) {
 	reg, ok := s.pedidos[id]
 	var vis visaoStatus
 	if ok {
-		vis = montarVisao(reg)
+		vis = montarVisao(reg, s.outDir)
 	}
 	s.mu.Unlock()
 	if !ok {
@@ -481,7 +482,7 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 	}
 	reg.metricas.NumAprovados = len(limpos)
 	reg.ped.Status = pipeline.EstadoAguardandoProcessamento
-	vis := montarVisao(reg)
+	vis := montarVisao(reg, s.outDir)
 	s.mu.Unlock()
 
 	// Dispara a fase pesada (baixar vídeo dos aprovados + render) em background, se houver
@@ -808,30 +809,92 @@ func tamanhoArquivo(path string) int64 {
 	return fi.Size()
 }
 
-// handleBaixarFinal serve um Short gerado (finalizados/<id>/<arquivo>) para download. Só
-// serve arquivos que o pedido realmente gerou (whitelist reg.shorts) — evita travessia de
-// caminho e vazamento de arquivos de outros pedidos.
-func (s *Servidor) handleBaixarFinal(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	arquivo := r.PathValue("arquivo")
+// caminhoDoShort resolve finalizados/<id>/<arquivo> APENAS se o pedido realmente gerou aquele
+// arquivo (whitelist reg.shorts). Devolve o caminho e se é permitido.
+//
+// É UMA função porque servir e APAGAR fazem a mesma pergunta, e a resposta não pode divergir: um
+// endpoint que apaga com travessia de caminho é muito pior que um que baixa. Duas cópias da
+// checagem seriam duas chances de uma delas ficar para trás.
+//
+// A whitelist é o que impede travessia: o nome tem de bater exatamente com um nome que o render
+// produziu, então "../../etc/passwd" nunca casa. O filepath.Base é defesa extra, não a defesa.
+func (s *Servidor) caminhoDoShort(id, arquivo string) (string, bool) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	reg, ok := s.pedidos[id]
-	permitido := false
-	if ok {
-		for _, n := range reg.shorts {
-			if n == arquivo {
-				permitido = true
-				break
-			}
+	if !ok {
+		return "", false
+	}
+	for _, n := range reg.shorts {
+		if n == arquivo {
+			return filepath.Join(s.outDir, id, filepath.Base(arquivo)), true
 		}
 	}
-	s.mu.Unlock()
-	if !ok || !permitido {
+	return "", false
+}
+
+// handleBaixarFinal serve um Short gerado (finalizados/<id>/<arquivo>) para download.
+func (s *Servidor) handleBaixarFinal(w http.ResponseWriter, r *http.Request) {
+	caminho, ok := s.caminhoDoShort(r.PathValue("id"), r.PathValue("arquivo"))
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	// arquivo é um nome da whitelist (sem separadores); Base é defesa extra.
-	http.ServeFile(w, r, filepath.Join(s.outDir, id, filepath.Base(arquivo)))
+	http.ServeFile(w, r, caminho)
+}
+
+// handleApagarFinal apaga UM Short entregue (spec-05 v3, Parte 4). Mesma whitelist do download.
+//
+// Apaga o ARQUIVO e tira o nome do inventário em memória (reg.shorts) — que é o que a tela lista
+// e o que a whitelist autoriza. Não toca no `cortes.csv`: aquilo é MEDIÇÃO do desvio da legenda,
+// não inventário de entrega. Apagar um Short não desfaz o fato de o corte ter sido aprovado
+// naqueles tempos, e limpar a medição junto estragaria a série histórica.
+//
+// Sem confirmação aqui, de propósito: a confirmação é da TELA, que nomeia o arquivo. Um endpoint
+// não tem como confirmar nada — quem clica é quem vê o nome.
+func (s *Servidor) handleApagarFinal(w http.ResponseWriter, r *http.Request) {
+	id, arquivo := r.PathValue("id"), r.PathValue("arquivo")
+	caminho, ok := s.caminhoDoShort(id, arquivo)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if err := os.Remove(caminho); err != nil && !os.IsNotExist(err) {
+		http.Error(w, fmt.Sprintf("não consegui apagar %s: %v", arquivo, err), http.StatusInternalServerError)
+		return
+	}
+	s.mu.Lock()
+	reg, existe := s.pedidos[id]
+	if existe {
+		restantes := make([]string, 0, len(reg.shorts))
+		for _, n := range reg.shorts {
+			if n != arquivo {
+				restantes = append(restantes, n)
+			}
+		}
+		reg.shorts = restantes
+	}
+	var vis visaoStatus
+	if existe {
+		vis = montarVisao(reg, s.outDir)
+	}
+	s.mu.Unlock()
+	s.logTempos(fmt.Sprintf("short apagado a pedido do operador: %s/%s", id, arquivo))
+
+	if !existe {
+		http.NotFound(w, r)
+		return
+	}
+	// Responde o MESMO fragmento de estado das outras rotas: a tela se repinta com a lista já
+	// sem o arquivo, em vez de o cliente remover o cartão por conta própria e passar a discordar
+	// do servidor sobre o que existe em disco.
+	if querJSON(r) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(vis.json())
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	tmpl.ExecuteTemplate(w, "estado", vis)
 }
 
 func (s *Servidor) responderErroAprovar(w http.ResponseWriter, r *http.Request, code int, msg string) {

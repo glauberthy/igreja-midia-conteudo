@@ -90,7 +90,27 @@
     .linha-etapa.esperando { color: var(--tinta-tenue); }
 
     /* ===== TELA 4: resultado ===== */
-    .lista-shorts { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--esp-3); }
+    /* Cartões lado a lado, cada um com o vídeo VERTICAL (9:16) do tamanho em que se enxerga o
+       rodapé e o logo — é o produto final, e é para ele que o operador olha aqui. */
+    .lista-shorts { list-style: none; padding: 0; margin: 0; display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--esp-4); }
+    .carta-short { display: grid; gap: var(--esp-2); padding: var(--esp-3);
+      background: var(--carta); border: 1px solid var(--linha); border-radius: 12px; }
+    /* O vídeo é 9:16 e alto: a altura manda (a largura sai da proporção), senão um cartão de
+       340px de largura viraria 600px de altura e caberia UM na tela. min(...) para não estourar
+       em notebook de tela curta. */
+    .carta-short video { height: min(56vh, 520px); width: auto; max-width: 100%;
+      aspect-ratio: 9 / 16; background: #000; border-radius: var(--raio);
+      display: block; margin: 0 auto; }
+    .carta-short .nome { font-weight: 600; font-size: 14px; word-break: break-all; }
+    .carta-short .peso { font-size: 13px; color: var(--tinta-fraca);
+      font-variant-numeric: tabular-nums; }
+    .carta-short .acoes { display: flex; gap: var(--esp-2); }
+    .carta-short .acoes a, .carta-short .acoes button { font-size: 13px; padding: 6px 10px; }
+    .carta-short .acoes a { text-decoration: none; border: 1px solid var(--linha-forte);
+      border-radius: var(--raio); color: var(--tinta); background: var(--carta); }
+    .carta-short .apagar { color: #8a1c1c; border-color: #e3b7b7; }
+    .aviso-peso { color: #8a1c1c; }
 
     /* formulário de entrada */
     form.entrada { display: grid; gap: var(--esp-2); margin: 0 0 var(--esp-1); padding: var(--esp-5);
@@ -361,13 +381,20 @@
       </div></div>
     </section>
 
-    <!-- ===== TELA 4: resultado ===== -->
+    <!-- ===== TELA 4: resultado =====
+         O player é do ARQUIVO LOCAL (/finalizados/<pedido>/<short>.mp4), não o embed do
+         YouTube: aqui o operador tem de ver o PRODUTO — 9:16, logo e gradiente de rodapé
+         queimados. O embed do YouTube mostraria a fonte, que é justamente o que ele já viu na
+         revisão. -->
     <section class="tela" id="tela-resultado" hidden>
       <p class="subtitulo" id="resultado-resumo">—</p>
       <ul class="lista-shorts" id="lista-shorts"></ul>
       <p class="progresso">Para enviar: baixe o arquivo e mande pelo WhatsApp Web. Não há
         integração automática — um botão que abrisse o WhatsApp sem anexar o vídeo seria pior
-        que não ter.</p>
+        que não ter. O WhatsApp recusa vídeo acima de ~16&nbsp;MB; o peso de cada arquivo está
+        no cartão.</p>
+      <p class="progresso" id="resultado-nota-apagar">Apagar remove o arquivo do disco. O registro
+        do corte no <code>cortes.csv</code> permanece: é medição, não inventário.</p>
     </section>
 
     <!-- ESTADO DO SERVIDOR: o único ponto que o HTMX troca. Carrega uma vez no `load`
@@ -1100,24 +1127,95 @@
       }
     }
 
+    // LIMITE_WHATSAPP: acima disto o WhatsApp recusa o vídeo. Não é regra do sistema, é do
+    // canal por onde o Short vai ser enviado à mão — então é aviso, nunca bloqueio.
+    var LIMITE_WHATSAPP = 16 * 1024 * 1024;
+
+    function formatarBytes(b) {
+      if (!b) return '';
+      if (b >= 1024 * 1024) return (b / (1024 * 1024)).toFixed(1) + ' MB';
+      return Math.round(b / 1024) + ' KB';
+    }
+
+    function urlDoShort(nome) {
+      return '/finalizados/' + encodeURIComponent(APP.pedidoId) + '/' + encodeURIComponent(nome);
+    }
+
+    // apagarShort é a AÇÃO (servidor); a confirmação é da tela e NOMEIA o arquivo — "tem
+    // certeza?" genérico não informa o que se perde.
+    function apagarShort(nome) {
+      if (!confirm('Apagar ' + nome + '? O arquivo sai do disco. O corte continua registrado no cortes.csv (medição), e dá para gerar de novo a partir dos aprovados.')) return;
+      fetch(urlDoShort(nome), { method: 'DELETE', headers: { 'Accept': 'application/json' } })
+        .then(function (r) {
+          if (!r.ok) throw new Error('resposta ' + r.status);
+          return r.json();
+        })
+        .then(function (st) {
+          // Quem manda na lista é o servidor: ele responde o estado já sem o arquivo. Remover o
+          // cartão por conta própria faria a tela discordar do que existe em disco.
+          APP.shorts = st.shorts || [];
+          desenharResultado();
+        })
+        .catch(function (e) {
+          alert('não consegui apagar ' + nome + ': ' + e.message);
+        });
+    }
+
     function desenharResultado() {
       var resumo = document.getElementById('resultado-resumo');
       var lista = document.getElementById('lista-shorts');
       if (!lista || !resumo) return;
       resumo.textContent = APP.shorts.length
-        ? ('Pronto: ' + APP.shorts.length + ' Short(s) gerado(s).')
-        : 'Nenhum Short foi gerado.';
+        ? ('Pronto: ' + APP.shorts.length + ' Short(s) gerado(s). Assista abaixo — é o arquivo final, com logo e rodapé.')
+        : 'Nenhum Short em disco para este pedido.';
       lista.textContent = '';
-      APP.shorts.forEach(function (nome) {
-        var li = document.createElement('li');
-        li.className = 'carta';
-        var a = document.createElement('a');
-        a.href = '/finalizados/' + APP.pedidoId + '/' + nome;
-        a.setAttribute('download', '');
-        a.textContent = '⬇ ' + nome;
-        li.appendChild(a);
-        lista.appendChild(li);
+      APP.shorts.forEach(function (sh) {
+        lista.appendChild(cartaDoShort(sh));
       });
+    }
+
+    function cartaDoShort(sh) {
+      var li = document.createElement('li');
+      li.className = 'carta-short';
+
+      var video = document.createElement('video');
+      video.setAttribute('controls', '');
+      // metadata: carrega duração e primeiro frame sem baixar o vídeo inteiro — e é o próprio
+      // player que informa a duração, em vez de o servidor recalculá-la.
+      video.setAttribute('preload', 'metadata');
+      video.src = urlDoShort(sh.nome);
+      li.appendChild(video);
+
+      var nome = document.createElement('div');
+      nome.className = 'nome';
+      nome.textContent = sh.nome;
+      li.appendChild(nome);
+
+      var peso = document.createElement('div');
+      peso.className = 'peso';
+      peso.textContent = formatarBytes(sh.bytes);
+      if (sh.bytes > LIMITE_WHATSAPP) {
+        peso.classList.add('aviso-peso');
+        peso.textContent += ' — acima do limite do WhatsApp (~16 MB)';
+      }
+      li.appendChild(peso);
+
+      var acoes = document.createElement('div');
+      acoes.className = 'acoes';
+      var baixar = document.createElement('a');
+      baixar.href = urlDoShort(sh.nome);
+      baixar.setAttribute('download', '');
+      baixar.textContent = '⬇ baixar';
+      acoes.appendChild(baixar);
+      var apagar = document.createElement('button');
+      apagar.type = 'button';
+      apagar.className = 'apagar';
+      apagar.textContent = '🗑 apagar';
+      apagar.addEventListener('click', function () { apagarShort(sh.nome); });
+      acoes.appendChild(apagar);
+      li.appendChild(acoes);
+
+      return li;
     }
 
     document.addEventListener('DOMContentLoaded', function () {

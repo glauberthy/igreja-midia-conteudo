@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -381,11 +382,22 @@ func TestBaixarFinalRecusaArquivoForaDaWhitelist(t *testing.T) {
 	aprovarJSON(t, s, "teste-1", []int{0})
 	esperarStatus(t, s, "teste-1", pipeline.EstadoConcluido)
 
-	// Um arquivo que o pedido não gerou → 404 (não vaza nem permite travessia).
+	// O arquivo tem de EXISTIR em disco, e é aqui que este teste foi consertado: a versão
+	// anterior pedia "segredo.txt", que não existia — então o 404 vinha do http.ServeFile não
+	// achando o arquivo, e não da whitelist. Prova: removendo a whitelist do caminhoDoShort, este
+	// teste continuava VERDE (achado por mutação). Com um arquivo real fora da whitelist, o 404
+	// só pode vir da whitelist.
+	segredo := filepath.Join(s.outDir, "teste-1", "segredo.txt")
+	if err := os.WriteFile(segredo, []byte("conteúdo que não é Short"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest("GET", "/finalizados/teste-1/segredo.txt", nil)
 	rec := httptest.NewRecorder()
 	s.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("arquivo fora da whitelist deveria dar 404, veio %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "não é Short") {
+		t.Error("o conteúdo do arquivo fora da whitelist foi servido")
 	}
 }

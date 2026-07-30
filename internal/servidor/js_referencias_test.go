@@ -43,6 +43,9 @@ var globaisPermitidos = map[string]bool{
 	"fetch": true, "parseInt": true, "parseFloat": true, "isNaN": true, "encodeURIComponent": true,
 	"JSON": true, "Math": true, "String": true, "Number": true, "Array": true, "Object": true,
 	"alert": true, "confirm": true, "console": true,
+	// Error: `throw new Error(...)` no fetch que apaga um Short (tela 4) — a mensagem do erro
+	// vai para o alert com o nome do arquivo.
+	"Error": true,
 	// terceiros / plataforma
 	"YT": true, "htmx": true,
 	// palavras-chave que a regex de chamada pode capturar por engano

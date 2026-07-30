@@ -1093,12 +1093,13 @@ preenchimento do mesmo fluxo, e a decisao continua sendo do operador.
 - [ ] `.folha` e o rodapé fixo em 1180px; escala de espaçamento em variáveis; faixa de frases
       com 560px de altura máxima; uma coluna abaixo de 760px.
 
-**Resultado**
-- [ ] Cada Short tem `<video>` embutido que toca o arquivo local, tamanho, duração, baixar e
-      apagar.
-- [ ] Apagar confirma nomeando o arquivo e remove só o arquivo (o `cortes.csv` não muda).
-- [ ] O endpoint de apagar recusa nome fora da whitelist (mesma guarda do download), com teste.
-- [ ] A tela diz, em uma linha, que o envio é baixar + WhatsApp Web. **Não** existe botão de
+**Resultado** (Parte 4 — implementada; ver a seção adiante)
+- [x] Cada Short tem `<video>` embutido que toca o arquivo LOCAL (não o embed do YouTube),
+      tamanho vindo do servidor, duração vinda do próprio player, baixar e apagar.
+- [x] Apagar confirma nomeando o arquivo e remove só o arquivo (o `cortes.csv` não muda).
+- [x] O endpoint de apagar recusa nome fora da whitelist (mesma função do download), com teste —
+      e o teste do download foi corrigido, porque passava com a whitelist removida.
+- [x] A tela diz, em uma linha, que o envio é baixar + WhatsApp Web. **Não** existe botão de
       compartilhar.
 
 **Cache por vídeo**
@@ -1124,6 +1125,64 @@ preenchimento do mesmo fluxo, e a decisao continua sendo do operador.
 
 **Geral**
 - [ ] `go build ./...`, `go vet ./...` e `go test -race ./...` verdes.
+
+## Parte 4 implementada (2026-07-29) — tela de resultado
+
+### Player do ARQUIVO LOCAL, não o embed do YouTube
+
+Requisito explícito do dono, e a razão é o que o operador precisa ver aqui: o **produto** —
+1080x1920, logo e gradiente de rodapé queimados. O embed do YouTube mostraria a FONTE, que é
+justamente o que ele acabou de ver na revisão. Então `<video controls preload="metadata"
+src="/finalizados/<pedido>/<short>.mp4">`.
+
+`preload="metadata"` carrega duração e primeiro frame sem baixar os 40 MB.
+
+### A duração vem do player; o tamanho, do servidor
+
+- **Duração:** quem sabe dizê-la é o arquivo, e o player a mostra sozinho (`0:00 / 0:37`).
+  Calculá-la a partir do candidato aprovado seria repetir uma conta que o vídeo já responde — e
+  mentiria se o render tivesse ajustado qualquer coisa.
+- **Tamanho:** o cliente não tem como saber sem baixar, então vem no estado (`shorts[].bytes`).
+  Não é enfeite: **o WhatsApp recusa vídeo acima de ~16 MB**, e é por lá que o Short vai ser
+  enviado à mão. O cartão avisa em vermelho quando passa.
+
+`shorts` virou **uma** lista de objetos (`{nome, bytes}`), não uma lista de nomes mais uma de
+tamanhos — duas listas para o mesmo dado divergem (foi o que quebrou o cabeçalho do `tempos.csv`
+duas vezes).
+
+> **Achado da medição real:** os Shorts do culto medido têm **39,8 MB (37 s)** e **29,6 MB
+> (30 s)** — os DOIS acima do limite do WhatsApp. Em 1080x1920 com `crf18 medium` dá ~1,1 MB/s
+> de vídeo. Ou seja: hoje o envio pelo WhatsApp **não funciona** para o Short típico. Decisão do
+> dono, não implementada: subir o CRF (ou fazer uma segunda saída "leve" só para envio), ou
+> mandar por link. Fica registrado, com número, em vez de o operador descobrir na hora do envio.
+
+### Apagar: uma whitelist, dois verbos
+
+`DELETE /finalizados/{id}/{arquivo}` e o `GET` de download chamam a MESMA função
+(`caminhoDoShort`): endpoint que apaga com travessia de caminho é muito pior que um que baixa, e
+duas cópias da checagem seriam duas chances de uma ficar para trás.
+
+- Apaga o **arquivo** e tira o nome do inventário em memória (que é o que a tela lista e o que a
+  whitelist autoriza). Segundo clique dá 404, e o download do mesmo nome também.
+- **Não toca no `cortes.csv`** (decisão do dono): aquilo é medição do desvio da legenda, não
+  inventário de entrega. Apagar um Short não desfaz o corte ter sido aprovado naqueles tempos.
+- A **confirmação é da tela** e nomeia o arquivo. Endpoint não confirma nada — quem clica é quem
+  vê o nome.
+- A resposta é o mesmo fragmento de estado das outras rotas: a tela se repinta com a lista já sem
+  o arquivo, em vez de o cliente remover o cartão por conta própria e passar a discordar do
+  servidor sobre o que existe em disco.
+
+**Lição de teste (mutação):** o `TestBaixarFinalRecusaArquivoForaDaWhitelist` **passava com a
+whitelist removida**. Ele pedia `segredo.txt`, que não existia — o 404 vinha do `http.ServeFile`
+não achar o arquivo, não da guarda. Corrigido para criar o arquivo de verdade e conferir que o
+conteúdo não é servido. É o sexto teste deste projeto que passava com o bug presente, e o padrão é
+sempre o mesmo: medir o sintoma conveniente.
+
+### Compartilhar: sem botão falso
+
+A tela diz em uma linha: **baixe o arquivo e mande pelo WhatsApp Web.** Sem integração, porque não
+há caminho bom (Web Share API com arquivo é instável fora do celular, e um botão que abrisse o
+WhatsApp sem anexar o vídeo prometeria o fluxo e entregaria meia ação).
 
 ## Como validar a v3
 
