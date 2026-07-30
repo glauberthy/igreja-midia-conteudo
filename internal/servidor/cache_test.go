@@ -51,6 +51,7 @@ func servidorComCache(t *testing.T, sel *selecionadorFake, bv *baixadorVideoFake
 		LogRodadasPath: filepath.Join(base, "rodadas.md"),
 		TemposPath:     filepath.Join(base, "tempos.csv"),
 		CortesPath:     filepath.Join(base, "cortes.csv"),
+		AcoesPath:      filepath.Join(base, "acoes.csv"),
 		Agora:          func() time.Time { return time.Date(2026, 7, 29, 10, 0, 0, 0, time.UTC) },
 		GerarID:        func() string { n++; return fmt.Sprintf("pedido-%d", n) },
 	})
@@ -80,10 +81,10 @@ func criarPedido(t *testing.T, s *Servidor, url, inicio, fim string) string {
 // Dois pedidos do MESMO vídeo com JANELAS DIFERENTES — o caso real: uma transmissão com duas
 // pregações, ou o operador refazendo com outra janela. O que se exige:
 //
-//	1. o vídeo é baixado UMA vez (é o ganho: ~35 s e ~570 MB);
-//	2. cada pedido tem o SEU candidatos.corrigido.json — nenhum sobrescreve o outro (é por isso
-//	   que o id do vídeo NÃO nomeia a pasta do pedido);
-//	3. cada pedido tem a SUA transcrição recortada, com a proveniência declarada.
+//  1. o vídeo é baixado UMA vez (é o ganho: ~35 s e ~570 MB);
+//  2. cada pedido tem o SEU candidatos.corrigido.json — nenhum sobrescreve o outro (é por isso
+//     que o id do vídeo NÃO nomeia a pasta do pedido);
+//  3. cada pedido tem a SUA transcrição recortada, com a proveniência declarada.
 func TestDoisPedidosDoMesmoCultoUmDownloadECandidatosSeparados(t *testing.T) {
 	bv := &baixadorVideoFake{}
 	rf := &renderFake{}
@@ -329,6 +330,7 @@ func TestLinhaDoCSVDeRetomadaNaoTemLixo(t *testing.T) {
 		LogRodadasPath: filepath.Join(s.baseDir, "rodadas2.md"),
 		TemposPath:     csv,
 		CortesPath:     filepath.Join(s.baseDir, "cortes2.csv"),
+		AcoesPath:      filepath.Join(s.baseDir, "acoes2.csv"),
 		Agora:          func() time.Time { return time.Date(2026, 7, 29, 15, 30, 0, 0, time.UTC) },
 		GerarID:        func() string { return "nao-usado" },
 	})
@@ -550,6 +552,7 @@ func TestRetomarEncontraOVideoNoCacheEPulaODownload(t *testing.T) {
 		LogRodadasPath: filepath.Join(s.baseDir, "rodadas.md"),
 		TemposPath:     filepath.Join(s.baseDir, "tempos.csv"),
 		CortesPath:     filepath.Join(s.baseDir, "cortes.csv"),
+		AcoesPath:      filepath.Join(s.baseDir, "acoes.csv"),
 		Agora:          func() time.Time { return time.Date(2026, 7, 29, 11, 0, 0, 0, time.UTC) },
 		GerarID:        func() string { return "outro" },
 	})

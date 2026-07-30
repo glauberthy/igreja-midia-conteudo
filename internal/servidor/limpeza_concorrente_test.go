@@ -160,6 +160,7 @@ func TestReinicioLiberaPedidoOrfao(t *testing.T) {
 		BaseDir: base, OutDir: t.TempDir(), ReterPedidos: 1,
 		LogRodadasPath: filepath.Join(base, "r.md"), TemposPath: filepath.Join(base, "t.csv"),
 		CortesPath: filepath.Join(base, "cortes.csv"),
+		AcoesPath:  filepath.Join(base, "acoes.csv"),
 	})
 	if n := len(s2.pedidos); n != 0 {
 		t.Fatalf("servidor novo carregou %d pedido(s) do disco — a autocura depende de NÃO carregar", n)

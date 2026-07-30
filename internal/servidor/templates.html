@@ -111,6 +111,21 @@
       border-radius: var(--raio); color: var(--tinta); background: var(--carta); }
     .carta-short .apagar { color: #8a1c1c; border-color: #e3b7b7; }
 
+    /* HISTÓRICO DE AÇÕES (tela 3) — compacto e monoespaçado: são números para comparar
+       coluna a coluna, e fonte proporcional embaralha a leitura. */
+    .historico { margin-top: var(--esp-3); font-size: 12px; }
+    .historico > summary { cursor: pointer; color: var(--tinta-fraca); }
+    .hist-linhas { margin: var(--esp-2) 0 0; max-height: 220px; overflow-y: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .hist-linha { padding: 2px 0; border-bottom: 1px solid var(--linha);
+      white-space: nowrap; overflow-x: auto; }
+    /* divergiu = o sistema aplicou algo diferente do pedido. É o caso que interessa. */
+    .hist-linha.divergiu { color: #8a1c1c; font-weight: 600; }
+    .hist-rodape { display: flex; gap: var(--esp-2); margin-top: var(--esp-2); }
+    .hist-rodape input { flex: 1 1 auto; font-size: 12px; padding: 6px; }
+    .hist-rodape button { font-size: 12px; padding: 6px 10px; }
+    .hist-copiavel { width: 100%; font-family: ui-monospace, monospace; font-size: 11px; }
+
     /* formulário de entrada */
     form.entrada { display: grid; gap: var(--esp-2); margin: 0 0 var(--esp-1); padding: var(--esp-5);
       background: var(--carta); border: 1px solid var(--linha); border-radius: 12px; }
@@ -358,6 +373,21 @@
               <span class="resumo-ajuste" id="aj-resumo">—</span>
               <button type="button" id="aj-restaurar">↻ restaurar</button>
             </div>
+
+            <!-- HISTÓRICO DE AÇÕES: instrumento de diagnóstico do corte, não enfeite. Cada linha
+                 traz o PAR pedido/aplicado — é o que separa "a legenda está adiantada" (Rota D)
+                 de "o nosso encaixe mexeu" (bug nosso). Colapsado por padrão: quem trabalha não
+                 precisa dele na frente; quem investiga abre. -->
+            <details class="historico" id="historico">
+              <summary>histórico de ações (<span id="hist-n">0</span>)</summary>
+              <div class="hist-linhas" id="hist-linhas"></div>
+              <div class="hist-rodape">
+                <input type="text" id="hist-ouvido" maxlength="120"
+                       placeholder="o que você ouviu: faltou ~1s no fim, bateu, passou ~2s…">
+                <button type="button" id="hist-anotar">anotar</button>
+                <button type="button" id="hist-copiar">copiar</button>
+              </div>
+            </details>
           </div>
 
           <div class="coluna-frases">
@@ -511,7 +541,10 @@
               // Fluxo de DOIS CLIQUES (substitui a heurística do meio do trecho): o primeiro
               // clique define o início, o segundo o fim, o terceiro recomeça. Por trecho,
               // para trocar de trecho não herdar o estado do anterior.
-              proximoClique: dados.trechos.map(function(){ return 'ini'; }) };
+              proximoClique: dados.trechos.map(function(){ return 'ini'; }),
+              // hist[i] = sequência de ações daquele trecho (ver registrarAcao). Array chapado:
+              // é log de diagnóstico, não modelo.
+              hist: dados.trechos.map(function(){ return []; }) };
       ligarControles();
       desenhar();
       criarPlayer();
@@ -661,13 +694,175 @@
     // O seekTo segue a recomendação da documentação do YouTube: allowSeekAhead=false durante
     // os empurrões (não dispara requisição de vídeo a cada clique) e true quando o debounce
     // assenta, aí sim buscando de fato o trecho.
-    function moverPara(iniMs, fimMs, ponta) {
+    // ===== HISTÓRICO DE AÇÕES (diagnóstico do corte) =====
+    //
+    // Por que existe: o dono relata que o áudio do Short não corresponde ao trecho selecionado —
+    // às vezes passa, às vezes falta. Há duas causas possíveis, com soluções OPOSTAS: o carimbo
+    // da legenda adiantado (só a Rota D resolve) ou o nosso encaixe/clamp mexendo no que ele
+    // escolheu (bug nosso). Sem registrar o PAR pedido/aplicado, as duas são indistinguíveis.
+    //
+    // É um array chapado por trecho. Nada de classe, nada de índice invertido: é log.
+    function registrarAcao(i, acao, ponta, iniMs, fimMs, semResposta) {
+      if (!REV.hist[i]) REV.hist[i] = [];
+      var h = REV.hist[i];
+      h.push({
+        seq: h.length + 1,
+        tipo: acao.tipo,
+        frase: acao.frase || '',
+        rotulo: acao.rotulo || '',
+        passo: acao.passo || '',
+        ponta: ponta || '',
+        // pedido = o tempo da ponta que o operador mexeu, como ELE pediu.
+        pedido_ms: ponta === 'inicio' ? iniMs : (ponta === 'fim' ? fimMs : 0),
+        aplicado_ms: 0,
+        aplicado_ok: false,
+        inicio_ms: iniMs,
+        fim_ms: fimMs,
+        duracao_ms: fimMs - iniMs,
+        ouvido: '',
+        // pendente = ainda não voltou o recálculo. O debounce junta rajadas: quando a resposta
+        // chega, só a ÚLTIMA pendente corresponde ao estado respondido; as anteriores ficam sem
+        // aplicado, e é a verdade — foram substituídas antes de o servidor opinar.
+        pendente: !semResposta
+      });
+      desenharHistorico();
+    }
+
+    function completarAcao(i, resp) {
+      var h = REV.hist[i];
+      if (!h) return;
+      for (var k = h.length - 1; k >= 0; k--) {
+        if (!h[k].pendente) break;
+        h[k].pendente = false;
+        // Só a última pendente recebe o aplicado; as anteriores foram substituídas pelo debounce.
+        if (k === h.length - 1) {
+          h[k].aplicado_ms = h[k].ponta === 'inicio' ? resp.start_ms : resp.end_ms;
+          h[k].aplicado_ok = true;
+          h[k].inicio_ms = resp.start_ms;
+          h[k].fim_ms = resp.end_ms;
+          h[k].duracao_ms = resp.duracao_ms;
+        }
+      }
+      desenharHistorico();
+    }
+
+    // anotarOuvido é o TERCEIRO dado, e o único que o sistema não tem: o desvio percebido.
+    // pedido/aplicado provam que o sistema foi fiel; só o ouvido do operador diz de QUANTO é o
+    // erro real — e é esse número que decide entre um deslocamento fixo e a Rota D.
+    function anotarOuvido() {
+      var campo = document.getElementById('hist-ouvido');
+      if (!campo) return;
+      var txt = campo.value.trim();
+      if (!txt) return;
+      var i = REV.atual, e = efetivoAtual();
+      if (!REV.hist[i]) REV.hist[i] = [];
+      REV.hist[i].push({
+        seq: REV.hist[i].length + 1, tipo: 'ouvido', frase: '', rotulo: '', passo: '', ponta: '',
+        pedido_ms: 0, aplicado_ms: 0, aplicado_ok: false,
+        inicio_ms: e.iniMs, fim_ms: e.fimMs, duracao_ms: e.fimMs - e.iniMs,
+        ouvido: txt, pendente: false
+      });
+      campo.value = '';
+      desenharHistorico();
+    }
+
+    // linhaHistorico: UMA linha por ação, na ordem em que aconteceu. O que o dono precisa ler de
+    // relance é o par — pediu X, aplicou Y — e o delta quando eles diferem.
+    function linhaHistorico(a) {
+      if (a.tipo === 'ouvido') return '#' + a.seq + ' ouvido: ' + a.ouvido;
+      var txt = '#' + a.seq + ' ' + a.tipo;
+      if (a.passo) txt += ' ' + a.passo;
+      if (a.rotulo) txt += ' [' + a.rotulo + ']';
+      if (a.pedido_ms) {
+        txt += ' pediu ' + hhmmss(a.pedido_ms);
+        if (a.aplicado_ok) {
+          var d = a.aplicado_ms - a.pedido_ms;
+          txt += ' · aplicou ' + hhmmss(a.aplicado_ms) + (d === 0 ? ' (=)' : ' (' + (d > 0 ? '+' : '') + d + 'ms)');
+        } else if (a.pendente) {
+          txt += ' · aplicando…';
+        } else {
+          txt += ' · substituída';
+        }
+      }
+      txt += ' · ' + (a.duracao_ms / MS).toFixed(2) + 's';
+      if (a.frase) txt += ' · "' + a.frase.slice(0, 60) + (a.frase.length > 60 ? '…' : '') + '"';
+      return txt;
+    }
+
+    function hhmmss(ms) {
+      var t = Math.floor(ms / MS), mil = ms % MS;
+      var h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sg = t % 60;
+      function dd(n) { return (n < 10 ? '0' : '') + n; }
+      return dd(h) + ':' + dd(m) + ':' + dd(sg) + '.' + ('00' + mil).slice(-3);
+    }
+
+    function desenharHistorico() {
+      var caixa = document.getElementById('hist-linhas');
+      var conta = document.getElementById('hist-n');
+      if (!caixa || !conta) return;
+      var h = REV.hist[REV.atual] || [];
+      conta.textContent = h.length;
+      caixa.textContent = '';
+      h.forEach(function (a) {
+        var div = document.createElement('div');
+        div.className = 'hist-linha' + (a.aplicado_ok && a.aplicado_ms !== a.pedido_ms ? ' divergiu' : '');
+        div.textContent = linhaHistorico(a);
+        caixa.appendChild(div);
+      });
+    }
+
+    // textoHistorico é o que vai para a área de transferência: TSV, para colar em planilha ou
+    // numa mensagem. O dono precisa TRAZER a evidência; se copiar der trabalho, o log não serve.
+    function textoHistorico() {
+      var h = REV.hist[REV.atual] || [];
+      var t = REV.dados.trechos[REV.atual];
+      var linhas = ['# pedido ' + REV.dados.pedidoId + ' · trecho ' + (REV.atual + 1) +
+                    ' · original ' + hhmmss(t.iniMs) + ' -> ' + hhmmss(t.fimMs),
+                    'seq\ttipo\tpediu_ms\taplicou_ms\tdelta_ms\tinicio_ms\tfim_ms\tdur_s\tfrase\touvido'];
+      h.forEach(function (a) {
+        linhas.push([a.seq, a.tipo, a.pedido_ms || '', a.aplicado_ok ? a.aplicado_ms : '',
+                     a.aplicado_ok && a.pedido_ms ? (a.aplicado_ms - a.pedido_ms) : '',
+                     a.inicio_ms, a.fim_ms, (a.duracao_ms / MS).toFixed(2),
+                     (a.frase || '').replace(/\t/g, ' '), (a.ouvido || '').replace(/\t/g, ' ')].join('\t'));
+      });
+      return linhas.join('\n');
+    }
+
+    function copiarHistorico() {
+      var txt = textoHistorico();
+      var btn = document.getElementById('hist-copiar');
+      function avisar(ok) { if (btn) { btn.textContent = ok ? '✓ copiado' : 'copie à mão ↓'; setTimeout(function () { btn.textContent = 'copiar'; }, 2000); } }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(function () { avisar(true); }, function () { mostrarParaCopiar(txt); avisar(false); });
+        return;
+      }
+      // Sem clipboard (http em host não-local, navegador antigo): mostra o texto selecionável.
+      mostrarParaCopiar(txt);
+      avisar(false);
+    }
+
+    function mostrarParaCopiar(txt) {
+      var cx = document.getElementById('hist-linhas');
+      if (!cx) return;
+      var ta = document.createElement('textarea');
+      ta.className = 'hist-copiavel';
+      ta.value = txt;
+      ta.rows = 6;
+      cx.appendChild(ta);
+      ta.select();
+    }
+
+    function moverPara(iniMs, fimMs, ponta, acao) {
       var i = REV.atual;
       iniMs = Math.max(0, Math.round(iniMs));
       fimMs = Math.max(0, Math.round(fimMs));
       var anterior = REV.ajustes[i];
       REV.ajustes[i] = { iniMs: iniMs, fimMs: fimMs, resposta: null,
                          vizinhanca: anterior ? anterior.vizinhanca : null };
+      // O log nasce AQUI porque este é o funil único: clique em frase, empurrão fino, empurrão
+      // de 1 s e restaurar todos passam por moverPara. Registrar em cada botão seria quatro
+      // lugares para esquecer um.
+      if (acao) registrarAcao(i, acao, ponta, iniMs, fimMs);
       if (REV.prontoPlayer) REV.player.seekTo(iniMs / MS, false); // barato: só reposiciona
       desenhar();
       // A ponta mexida define o que se ouve quando o debounce assentar (ver pedirRecalculo).
@@ -678,8 +873,12 @@
 
     function empurrar(qual, deltaMs) {
       var e = efetivoAtual();
-      if (qual === 'inicio') moverPara(e.iniMs + deltaMs, e.fimMs, 'inicio');
-      else moverPara(e.iniMs, e.fimMs + deltaMs, 'fim');
+      // tipo carrega o gesto E o tamanho do passo: "fino-fim +250" é o que o dono precisa ver
+      // no histórico para saber que empurrão produziu qual corte.
+      var tipo = (Math.abs(deltaMs) <= 250 ? 'fino-' : 'passo-') + qual;
+      var acao = { tipo: tipo, passo: (deltaMs > 0 ? '+' : '') + (deltaMs / MS) + 's' };
+      if (qual === 'inicio') moverPara(e.iniMs + deltaMs, e.fimMs, 'inicio', acao);
+      else moverPara(e.iniMs, e.fimMs + deltaMs, 'fim', acao);
     }
 
     // clicarFrase é a operação nativa do ajuste: o servidor já encaixa o corte em fronteira de
@@ -699,7 +898,7 @@
         // ficaria invertido e o operador levaria um erro por um clique legítimo.
         if (fim <= f.inicio_ms) fim = fimDaFraseSeguinte(fs, f);
         REV.proximoClique[i] = 'fim';
-        moverPara(f.inicio_ms, fim, 'inicio');
+        moverPara(f.inicio_ms, fim, 'inicio', { tipo: 'frase-inicio', frase: f.texto, rotulo: f.rotulo });
         return;
       }
       // O fim do trecho é onde a PRÓXIMA fala começa — é isso que o operador quer dizer ao
@@ -708,7 +907,7 @@
       var ini = e.iniMs;
       if (novoFim <= ini) ini = f.inicio_ms;
       REV.proximoClique[i] = 'ini';
-      moverPara(ini, novoFim, 'fim');
+      moverPara(ini, novoFim, 'fim', { tipo: 'frase-fim', frase: f.texto, rotulo: f.rotulo });
     }
 
     // fimDaFraseSeguinte: o começo da próxima fala da faixa; sem próxima, o fim da própria.
@@ -722,9 +921,13 @@
     }
 
     function restaurar() {
+      var o = REV.dados.trechos[REV.atual];
       REV.ajustes[REV.atual] = null;
       REV.proximoClique[REV.atual] = 'ini'; // recomeça o fluxo de dois cliques
       clearTimeout(REV.debounce);
+      // Restaurar não passa por moverPara (não há recálculo a pedir), então registra direto —
+      // e é uma ação que IMPORTA no histórico: explica por que a sequência volta ao original.
+      registrarAcao(REV.atual, { tipo: 'restaurar' }, null, o.iniMs, o.fimMs, true);
       desenhar();
     }
 
@@ -741,6 +944,10 @@
       }).then(function (r) { return r.ok ? r.json() : null; }).then(function (resp) {
         if (!resp || !REV || !REV.ajustes[i]) return;
         REV.ajustes[i].resposta = resp;
+        // O PAR se fecha aqui: a ação pendente ganha o que o servidor APLICOU depois de encaixe
+        // e clamp. É a comparação que separa "a legenda está adiantada" de "o nosso encaixe
+        // mexeu" — ver internal/servidor/acoes.go.
+        completarAcao(i, resp);
         // Adota os tempos que o servidor DE FATO usará (pode ter encaixado ou clampado),
         // senão o próximo empurrão partiria de um número que não existe mais.
         REV.ajustes[i].iniMs = resp.start_ms;
@@ -963,6 +1170,7 @@
 
       desenharAjuste();
       desenharTrilha();
+      desenharHistorico();
       garantirVizinhanca();
       // Player cueado no início do trecho atual (spec: seekTo(start) ao trocar).
       if (REV.prontoPlayer) { clearInterval(REV.timer); REV.player.seekTo(e.iniMs / 1000, true); REV.player.pauseVideo(); }
@@ -975,6 +1183,18 @@
     }
     function decidir(valor) {
       if (valor === 'aprovado' && !efetivoAtual().ok) return; // guarda: ajuste inválido
+      // A decisão entra no histórico como uma ação: fecha a sequência daquele trecho e marca
+      // ONDE, na ordem dos ajustes, o operador se deu por satisfeito. A persistência acontece no
+      // "Confirmar e gerar" (um POST só, o que já existe); até lá, o botão "copiar" leva a
+      // evidência a qualquer momento.
+      var e = efetivoAtual();
+      REV.hist[REV.atual].push({
+        seq: REV.hist[REV.atual].length + 1, tipo: 'decisao-' + valor,
+        frase: '', rotulo: '', passo: '', ponta: '',
+        pedido_ms: 0, aplicado_ms: 0, aplicado_ok: false,
+        inicio_ms: e.iniMs, fim_ms: e.fimMs, duracao_ms: e.fimMs - e.iniMs,
+        ouvido: '', pendente: false
+      });
       REV.estado[REV.atual] = valor;
       var prox = REV.estado.findIndex(function (e, i) { return e === 'pendente' && i > REV.atual; });
       var qq = REV.estado.indexOf('pendente');
@@ -992,6 +1212,18 @@
         var a = REV.ajustes[i];
         if (a) partes.push('ajuste_' + i + '=' + encodeURIComponent(a.iniMs + ',' + a.fimMs));
       });
+      // Histórico de TODOS os trechos que tiveram ação — inclusive reprovados: um trecho que ele
+      // mexeu e desistiu é evidência igual, e o servidor marca a decisão em cada linha.
+      var acoes = [];
+      REV.hist.forEach(function (h, i) {
+        h.forEach(function (a) {
+          acoes.push({ indice: i, seq: a.seq, tipo: a.tipo, pedido_ms: a.pedido_ms,
+                       aplicado_ms: a.aplicado_ms, aplicado_ok: a.aplicado_ok,
+                       inicio_ms: a.inicio_ms, fim_ms: a.fim_ms, duracao_ms: a.duracao_ms,
+                       frase: a.frase, ouvido: a.ouvido });
+        });
+      });
+      if (acoes.length) partes.push('acoes=' + encodeURIComponent(JSON.stringify(acoes)));
       var body = partes.join('&');
       fetch('/pedidos/' + REV.dados.pedidoId + '/aprovar', {
         method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'text/html' }, body: body
@@ -1039,6 +1271,8 @@
       ligar('aj-fim-p', function () { empurrar('fim', 250); });
       ligar('aj-fim-pp', function () { empurrar('fim', 1000); });
       ligar('aj-restaurar', restaurar);
+      ligar('hist-anotar', anotarOuvido);
+      ligar('hist-copiar', copiarHistorico);
       ligar('aprovar', function () { decidir('aprovado'); });
       ligar('reprovar', function () { decidir('reprovado'); });
       ligar('anterior', function () { irPara(REV.atual - 1); });

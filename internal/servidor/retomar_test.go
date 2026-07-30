@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"srtclean/internal/pipeline"
-	"srtclean/internal/videocache"
 	"srtclean/internal/validacao"
+	"srtclean/internal/videocache"
 )
 
 // prepararPedidoEmDisco monta um pedido completo em disco, como o servidor deixa.
@@ -140,6 +140,7 @@ func TestRetomarNaoQuebraAAutocura(t *testing.T) {
 		LogRodadasPath: filepath.Join(s.baseDir, "r.md"),
 		TemposPath:     filepath.Join(s.baseDir, "t.csv"),
 		CortesPath:     filepath.Join(s.baseDir, "c.csv"),
+		AcoesPath:      filepath.Join(s.baseDir, "a.csv"),
 	})
 	if n := len(s2.pedidos); n != 0 {
 		t.Fatalf("servidor novo carregou %d pedido(s) sem -retomar — a autocura depende de não carregar", n)
@@ -214,6 +215,7 @@ func TestNovoNaoLeDiscoNoBoot(t *testing.T) {
 		LogRodadasPath: filepath.Join(base, "r.md"),
 		TemposPath:     filepath.Join(base, "t.csv"),
 		CortesPath:     filepath.Join(base, "c.csv"),
+		AcoesPath:      filepath.Join(base, "a.csv"),
 	})
 	s.mu.Lock()
 	n := len(s.pedidos)

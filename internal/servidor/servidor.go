@@ -112,6 +112,7 @@ type Servidor struct {
 	logRodadasPath   string
 	temposPath       string
 	cortesPath       string
+	acoesPath        string
 	assetsDir        string
 	reterPedidos     int
 	videoDias        int
@@ -153,6 +154,9 @@ type Opcoes struct {
 	// append). Vazio usa o padrão "resultados/cortes.csv". É dado de PESQUISA sobre o desvio
 	// da legenda — ver cortes_csv.go, inclusive por que registra os não ajustados.
 	CortesPath string
+	// AcoesPath é o CSV do HISTÓRICO DE AÇÕES do ajuste (uma linha por ação; ver acoes.go).
+	// Vazio usa o padrão "resultados/acoes.csv".
+	AcoesPath string
 	// ReterPedidos é quantos pedidos mantêm o material bruto após a limpeza automática
 	// (spec-06). 0 usa o padrão 1 (o último, para regerar sem baixar de novo).
 	// LimpezaDesligada desativa a limpeza automática (o cmd/limpar continua disponível).
@@ -186,6 +190,7 @@ func Novo(o Opcoes) *Servidor {
 		logRodadasPath:   o.LogRodadasPath,
 		temposPath:       o.TemposPath,
 		cortesPath:       o.CortesPath,
+		acoesPath:        o.AcoesPath,
 		assetsDir:        o.AssetsDir,
 		reterPedidos:     o.ReterPedidos,
 		videoDias:        o.VideoDias,
@@ -212,6 +217,9 @@ func Novo(o Opcoes) *Servidor {
 	}
 	if s.cortesPath == "" {
 		s.cortesPath = filepath.Join("resultados", "cortes.csv")
+	}
+	if s.acoesPath == "" {
+		s.acoesPath = filepath.Join("resultados", "acoes.csv")
 	}
 	// Cache de vídeo: IRMÃO da pasta de trabalho quando não é informado. Em produção
 	// (BaseDir="trabalho") isso dá "videos", como a spec-05 v3 desenhou; em teste
@@ -446,7 +454,7 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	indices, ajustesRecebidos, err := lerAprovados(r)
+	indices, ajustesRecebidos, acoes, err := lerAprovados(r)
 	if err != nil {
 		s.responderErroAprovar(w, r, http.StatusBadRequest, "não entendi a lista de aprovados")
 		return
@@ -471,6 +479,10 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 	// desvio da legenda, e o pedido não depende dela. Registrar só os ajustados montaria uma
 	// amostra apenas dos casos ruins — ver cortes_csv.go.
 	s.registrarCortes(reg, limpos, ajustes)
+	// Histórico de ações do ajuste (acoes.go): o par pedido/aplicado de cada passo, que é o que
+	// separa "a legenda está adiantada" de "o nosso encaixe mexeu". Vem depois dos cortes por ser
+	// do mesmo momento e da mesma natureza — dado, não fluxo.
+	s.registrarAcoes(reg, acoes, limpos)
 
 	s.mu.Lock()
 	reg.aprovados = limpos
@@ -920,35 +932,55 @@ type ajusteRecebido struct {
 	EndMs   int `json:"end_ms"`
 }
 
-func lerAprovados(r *http.Request) ([]int, []ajusteRecebido, error) {
+func lerAprovados(r *http.Request) ([]int, []ajusteRecebido, []Acao, error) {
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		defer r.Body.Close()
 		var corpo struct {
 			Aprovados []int            `json:"aprovados"`
 			Ajustes   []ajusteRecebido `json:"ajustes"`
+			Acoes     []Acao           `json:"acoes"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&corpo); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		return corpo.Aprovados, corpo.Ajustes, nil
+		return corpo.Aprovados, corpo.Ajustes, corpo.Acoes, nil
 	}
 	if err := r.ParseForm(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var out []int
 	for _, s := range r.Form["aprovados"] {
 		n, err := strconv.Atoi(strings.TrimSpace(s))
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		out = append(out, n)
 	}
 	// Formulário sem JS: "ajuste_<i>=startMs,endMs" (mesma semântica do caminho JSON).
 	ajs, err := lerAjustesDoForm(r)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return out, ajs, nil
+	// O histórico vai no MESMO POST, como JSON num campo do formulário: é a única forma de o
+	// cliente atual (que envia formulário) mandar uma lista aninhada sem duplicar a rota. Campo
+	// ausente ou ilegível não impede a aprovação — evidência não pode travar o trabalho.
+	return out, ajs, lerAcoesDoForm(r), nil
+}
+
+// lerAcoesDoForm decodifica o campo "acoes" (JSON) do POST de formulário. Erro aqui é IGNORADO
+// de propósito: o histórico é diagnóstico, e recusar a aprovação do operador porque um log veio
+// torto seria trocar o produto pela medição.
+func lerAcoesDoForm(r *http.Request) []Acao {
+	bruto := strings.TrimSpace(r.FormValue("acoes"))
+	if bruto == "" {
+		return nil
+	}
+	var acoes []Acao
+	if err := json.Unmarshal([]byte(bruto), &acoes); err != nil {
+		fmt.Fprintf(os.Stderr, "aviso: histórico de ações ilegível, seguindo sem ele: %v\n", err)
+		return nil
+	}
+	return acoes
 }
 
 // lerAjustesDoForm aceita os ajustes no POST de formulário, para a tela seguir funcionando

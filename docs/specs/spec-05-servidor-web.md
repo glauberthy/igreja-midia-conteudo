@@ -888,6 +888,62 @@ rolaria a pagina inteira e desfaria o ganho de caber numa tela.
 Um selo `tocando a emenda…` avisa quando o som veio do sistema — a emenda toca sozinha, e sem
 aviso o operador nao sabe se foi ele que clicou em algo por acidente.
 
+### Histórico de ações do ajuste (2026-07-30) — instrumento, não enfeite
+
+Depois de fechadas as camadas 1 e 2 (adiante), sobrou o relato mais difícil: **o áudio do Short
+não corresponde ao trecho selecionado — às vezes passa, às vezes falta.** Duas causas possíveis,
+com soluções OPOSTAS:
+
+| se… | então o culpado é | e a saída é |
+|---|---|---|
+| o sistema aplicou **fielmente** o que o operador escolheu, e o áudio ainda não bate | o carimbo da legenda | alinhamento forçado (Rota D) — não tem outra |
+| o **aplicado divergiu** do escolhido | nosso encaixe ou clamp | bug corrigível hoje |
+
+Sem registrar o **par pedido/aplicado**, as duas são indistinguíveis e a discussão vira opinião.
+Daí o histórico: uma linha por ação, com o que o operador pediu, o que o sistema aplicou depois
+de encaixe e clamp, o delta, e a duração resultante.
+
+**Onde nasce:** no `moverPara` do cliente — o funil por onde passam clique em frase, empurrão
+fino, empurrão de 1 s e restaurar. Registrar em cada botão seriam quatro lugares para esquecer
+um. O par se fecha quando a resposta do `/ajustar` chega (`completarAcao`).
+
+**O terceiro dado — o que o operador OUVIU.** `pedido` e `aplicado` provam fidelidade do sistema;
+nenhum dos dois mede o desvio REAL entre carimbo e áudio. Esse número só existe no ouvido do
+operador, e é ele que decide entre um deslocamento fixo na Fase 3 e a Rota D. Por isso a ação
+`ouvido` guarda uma frase livre ("faltou ~1s no fim"), opcional e de uma linha — se der atrito,
+ninguém preenche, e campo vazio não mede nada.
+
+**Ação substituída fica em branco, de propósito.** O debounce de 350 ms junta rajadas de
+empurrões: quando a resposta chega, só a última ação corresponde ao estado respondido. As
+anteriores ficam sem `aplicado` — inventar um valor ali faria o log afirmar o que não sabe.
+
+**Persistência:** `resultados/acoes.csv`, ao lado do `cortes.csv`. Arquivo NOVO porque a unidade
+é outra — o cortes.csv tem uma linha por trecho aprovado, o histórico tem N linhas por trecho.
+Misturar mudaria o significado de cada linha e quebraria todo leitor atual (inclusive o cabeçalho,
+que já quebrou duas vezes neste projeto). Colunas com **fonte única** (nome e valor na mesma
+entrada), como no `tempos.csv`.
+
+A decisão do trecho (`Aprovar`/`Reprovar`) entra como uma ação — fecha a sequência e mostra ONDE,
+na ordem dos ajustes, o operador se deu por satisfeito. A gravação acontece no `/aprovar` (um POST
+só, o que já existia); até lá o botão **copiar** leva a evidência em TSV a qualquer momento.
+Trecho reprovado também é registrado, com `decisao=reprovado`: um trecho que ele mexeu e desistiu
+é evidência igual.
+
+Exemplo real (culto fZGyLBofmmo, trecho 3):
+
+```
+seq  tipo              pedido_ms  aplicado_ms  delta_ms  duracao_s  ouvido
+1    frase-inicio      5361000    5361000      0         48.00
+2    fino-fim          5409250    (vazio)      (vazio)   48.25      <- substituída pelo debounce
+3    passo-fim         5415250    5415250      0         54.25
+4    ouvido                                              54.25      faltou um pedacinho no fim
+5    fino-fim          5415500    5415500      0         54.50
+6    decisao-aprovado                                    54.50
+```
+
+Lido de uma vez: **delta 0 em toda ação** — o sistema aplicou exatamente o que foi pedido. Se o
+áudio ainda não bater neste trecho, a causa não é nossa, e a Rota D deixa de ser hipótese.
+
 ### 2026-07-30: por que o ajuste fino "não pegava igual eu escuto" — TRÊS camadas
 
 O operador relatou que, com ajuste fino, o corte não caía onde ele ouvia. Havia **três**

@@ -25,14 +25,14 @@ import (
 // baixadorFake simula a fase de download da legenda. Escreve a transcrição (se sucesso)
 // e pode devolver um erro nomeado ou travar até liberar, para exercitar os estados.
 type baixadorFake struct {
-	erro     error
-	base     string
-	transc     string // texto no formato "[HH:MM:SS] fala" que o fake converte em SRT
-	legendaSRT string // SRT explícito (vence transc), para quem quer controlar os blocos
-	titulo   string        // se != "", escreve em ped.Titulo (como o baixador real faz com o .info.json)
-	liberar  chan struct{} // se != nil, BaixarLegenda espera fechar antes de retornar
-	chamadas int
-	mu       sync.Mutex
+	erro       error
+	base       string
+	transc     string        // texto no formato "[HH:MM:SS] fala" que o fake converte em SRT
+	legendaSRT string        // SRT explícito (vence transc), para quem quer controlar os blocos
+	titulo     string        // se != "", escreve em ped.Titulo (como o baixador real faz com o .info.json)
+	liberar    chan struct{} // se != nil, BaixarLegenda espera fechar antes de retornar
+	chamadas   int
+	mu         sync.Mutex
 }
 
 func (b *baixadorFake) BaixarLegenda(ctx context.Context, ped *pipeline.Pedido, dirDestino string) error {
@@ -133,6 +133,7 @@ func servidorTeste(t *testing.T, b BaixadorLegenda, sel Selecionador) *Servidor 
 		LogRodadasPath: filepath.Join(base, "rodadas.md"), // isola o log no TempDir
 		TemposPath:     filepath.Join(base, "tempos.csv"),
 		CortesPath:     filepath.Join(base, "cortes.csv"), // idem para a auditoria de tempos
+		AcoesPath:      filepath.Join(base, "acoes.csv"),
 		Agora:          func() time.Time { return time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC) },
 		GerarID:        func() string { n++; return "teste-1" },
 	})

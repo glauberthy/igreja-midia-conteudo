@@ -75,7 +75,7 @@ docs/medicoes/     # medições, scripts para repeti-las e a ferramenta de nitid
 videos/<idVídeo>/  # CACHE do culto: vídeo, legenda, transcrição íntegra (NÃO versionar)
 trabalho/<idPedido>/ # artefatos do pedido: candidatos, transcrição recortada (NÃO versionar)
 finalizados/<id>/  # Shorts entregues (NÃO versionar)
-resultados/        # tempos.csv, cortes.csv, rodadas.md (NÃO versionar)
+resultados/        # tempos.csv, cortes.csv, acoes.csv, rodadas.md (NÃO versionar)
 ```
 
 ## Comandos

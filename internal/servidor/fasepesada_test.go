@@ -105,6 +105,7 @@ func servidorPesada(t *testing.T, sel *selecionadorFake, bv *baixadorVideoFake, 
 		LogRodadasPath: filepath.Join(base, "rodadas.md"), // isola: não escrever em resultados/
 		TemposPath:     filepath.Join(base, "tempos.csv"),
 		CortesPath:     filepath.Join(base, "cortes.csv"),
+		AcoesPath:      filepath.Join(base, "acoes.csv"),
 		Agora:          func() time.Time { return time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC) },
 		GerarID:        func() string { return "teste-1" },
 	})
@@ -322,6 +323,7 @@ func TestLimpezaDesligadaNaoApaga(t *testing.T) {
 		BaixadorVideo: bv, Renderizador: rf, BaseDir: base, OutDir: out,
 		LogRodadasPath: filepath.Join(base, "r.md"), TemposPath: filepath.Join(base, "t.csv"),
 		CortesPath:       filepath.Join(base, "cortes.csv"),
+		AcoesPath:        filepath.Join(base, "acoes.csv"),
 		LimpezaDesligada: true,
 		Agora:            func() time.Time { return time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC) },
 		GerarID:          func() string { return "teste-1" },
