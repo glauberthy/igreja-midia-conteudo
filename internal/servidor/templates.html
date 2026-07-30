@@ -529,6 +529,23 @@
       });
     }
 
+    // A ESCUTA NUNCA PODE PROMETER ÁUDIO QUE O ARQUIVO NÃO TERÁ.
+    //
+    // O tique era de 200 ms e a parada acontecia no primeiro tique >= o fim: o operador ouvia
+    // até 200 ms A MAIS do que o Short conteria (mais a latência do pauseVideo). Ele então
+    // escolhia um fim que "soava certo" e o arquivo chegava curto.
+    //
+    // Medido em trecho real do dono (2026-07-30, culto fZGyLBofmmo): ele marcou o fim em
+    // 01:30:15.250 e a fala só termina em 01:30:15.357 — 107 ms depois. Ou seja: o ponto dele
+    // estava adiantado, e ainda assim soou completo, porque a escuta passava do ponto.
+    //
+    // Agora o tique é de 40 ms e a parada acontece 40 ms ANTES do limite. A assimetria é de
+    // propósito, no mesmo espírito do encaixarFim: errar para DENTRO faz a escuta ser
+    // conservadora — se a palavra soa inteira aqui, ela está inteira no arquivo. Errar para
+    // fora fazia o operador confiar em áudio que o corte descartava.
+    var PARADA_MS = 40;      // tique: 5x mais fino que os 200 ms de antes
+    var FOLGA_PARADA = 0.04; // segundos, para dentro; também absorve a latência do pauseVideo
+
     // tocarIntervalo reproduz [from, to] em segundos. O limite é reavaliado a cada tick por
     // uma função, e não capturado no clique: se o operador ajustar durante a reprodução, o
     // ponto de parada acompanha em vez de ficar no valor antigo.
@@ -540,9 +557,13 @@
       REV.player.playVideo();
       REV.timer = setInterval(function () {
         if (!REV || !REV.prontoPlayer) { clearInterval(REV.timer); return; }
-        if (REV.player.getCurrentTime() >= ate()) { REV.player.pauseVideo(); clearInterval(REV.timer); }
-      }, 200);
+        // FOLGA_PARADA para DENTRO, e o tique curto: ver o comentário acima.
+        if (REV.player.getCurrentTime() >= ate() - FOLGA_PARADA) {
+          REV.player.pauseVideo(); clearInterval(REV.timer);
+        }
+      }, PARADA_MS);
     }
+
     function trechoAtual() { return REV.dados.trechos[REV.atual]; }
 
     // TODA reprodução para NO FIM DO CORTE, nunca depois. Isto era o bug que fazia o operador
