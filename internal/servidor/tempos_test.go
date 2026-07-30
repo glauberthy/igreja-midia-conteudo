@@ -1,6 +1,7 @@
 package servidor
 
 import (
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,12 +40,22 @@ func TestMetricasLinhaCSVeCabecalho(t *testing.T) {
 	}
 	linha := m.LinhaCSV()
 
-	// Mesmo número de colunas do cabeçalho (senão o CSV fica torto e a análise quebra).
-	nCab := strings.Count(cabecalhoTempos, ",")
-	nLin := strings.Count(linha, ",")
-	// O título tem vírgula: vem entre aspas, então conta uma vírgula extra dentro do campo.
-	if nLin != nCab+1 {
-		t.Errorf("colunas: cabeçalho tem %d vírgulas, linha tem %d (título entre aspas soma 1)", nCab, nLin)
+	// Mesmo número de CAMPOS do cabeçalho. Desde que nome e valor saem da mesma lista
+	// (colunasTempos), divergir de contagem virou impossível por construção — o que este teste
+	// ainda pega é o risco que sobrou: um valor que escapa vírgula errado e parte a linha em
+	// dois campos. Por isso a fixture tem título COM vírgula.
+	//
+	// Contado com encoding/csv, não com strings.Count: contar vírgula em linha com campo entre
+	// aspas mede a coisa errada — foi exatamente o erro que a primeira versão da migração do
+	// cabeçalho cometeu.
+	nCab := len(strings.Split(strings.TrimRight(cabecalhoTempos, "\n"), ","))
+	reg, err := csv.NewReader(strings.NewReader(linha)).ReadAll()
+	if err != nil || len(reg) != 1 {
+		t.Fatalf("a linha não é um CSV de um registro: %v (%q)", err, linha)
+	}
+	if len(reg[0]) != nCab {
+		t.Errorf("a linha tem %d campos e o cabeçalho %d: CSV torto quebra a análise",
+			len(reg[0]), nCab)
 	}
 	// Título com vírgula e | precisa vir protegido por aspas.
 	if !strings.Contains(linha, `"Pr. Fulano, 19/07 | Culto"`) {

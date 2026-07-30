@@ -143,42 +143,66 @@ func (m *Metricas) RenderPorShortMs() int64 {
 	return m.RenderizarMs / int64(m.NumAprovados)
 }
 
-const cabecalhoTempos = "quando,pedido,titulo,sermao_s,transcricao_tokens,candidatos,aprovados," +
-	"video_mb,retries,baixar_legenda_s,selecionar_s,validar_s,baixar_video_s,renderizar_s," +
-	"render_por_short_s,total_maquina_s,aguardando_humano_s,video_reusado,completou,erro,retomado\n"
+// colunasTempos é a FONTE ÚNICA das colunas do CSV: nome e valor no mesmo lugar, uma entrada
+// por coluna. O cabeçalho e a linha saem daqui — não existe mais uma lista de nomes e outra de
+// valores para sair de sincronia.
+//
+// Por que isso e não outra migração: este arquivo quebrou DUAS vezes pela mesma causa (esquema
+// mudando, cabeçalho e linha mantidos à mão em lugares diferentes). O alinharCabecalho conserta
+// arquivos antigos, mas conserta o SINTOMA. Com uma fonte só, a terceira quebra deixa de ser
+// possível — é a regra "tornar o erro impossível em vez de vigiá-lo" (CLAUDE.md) aplicada aqui.
+//
+// Acrescentar coluna = acrescentar UMA entrada, NO FIM. O "no fim" continua importando porque
+// o cabeçalho é escrito uma vez, na criação do arquivo: migrar um CSV existente é completar as
+// linhas antigas no fim, operação trivial. Inserir no meio exigiria adivinhar posição.
+var colunasTempos = []struct {
+	nome  string
+	valor func(*Metricas) string
+}{
+	{"quando", func(m *Metricas) string { return m.Quando.UTC().Format(time.RFC3339) }},
+	{"pedido", func(m *Metricas) string { return m.ID }},
+	{"titulo", func(m *Metricas) string { return csvCampo(m.Titulo) }},
+	{"sermao_s", func(m *Metricas) string { return fmt.Sprintf("%d", m.DuracaoSermaoS) }},
+	{"transcricao_tokens", func(m *Metricas) string { return fmt.Sprintf("%d", m.TokensTranscricao) }},
+	{"candidatos", func(m *Metricas) string { return fmt.Sprintf("%d", m.NumCandidatos) }},
+	{"aprovados", func(m *Metricas) string { return fmt.Sprintf("%d", m.NumAprovados) }},
+	{"video_mb", func(m *Metricas) string { return fmt.Sprintf("%.1f", float64(m.BytesVideo)/(1024*1024)) }},
+	{"retries", func(m *Metricas) string { return fmt.Sprintf("%d", m.Retries) }},
+	{"baixar_legenda_s", func(m *Metricas) string { return seg(m.BaixarLegendaMs) }},
+	{"selecionar_s", func(m *Metricas) string { return seg(m.SelecionarMs) }},
+	{"validar_s", func(m *Metricas) string { return seg(m.ValidarMs) }},
+	{"baixar_video_s", func(m *Metricas) string { return seg(m.BaixarVideoMs) }},
+	{"renderizar_s", func(m *Metricas) string { return seg(m.RenderizarMs) }},
+	{"render_por_short_s", func(m *Metricas) string { return seg(m.RenderPorShortMs()) }},
+	{"total_maquina_s", func(m *Metricas) string { return seg(m.TotalMaquinaMs()) }},
+	{"aguardando_humano_s", func(m *Metricas) string { return seg(m.AguardandoMs) }},
+	{"video_reusado", func(m *Metricas) string { return simNao(m.VideoReusado) }},
+	{"completou", func(m *Metricas) string { return completouTexto(m.Completou) }},
+	{"erro", func(m *Metricas) string { return csvCampo(m.Erro) }},
+	{"retomado", func(m *Metricas) string { return simNao(m.Retomado) }},
+}
 
-// LinhaCSV formata o pedido como uma linha do arquivo de auditoria. Tempos em segundos com
-// 1 casa (mais legível que ms para comparar a olho, e suficiente para média).
+// seg formata ms como segundos com 1 casa (mais legível que ms para comparar a olho, e
+// suficiente para média).
+func seg(ms int64) string { return fmt.Sprintf("%.1f", float64(ms)/1000) }
+
+// cabecalhoTempos é DERIVADO de colunasTempos.
+var cabecalhoTempos = func() string {
+	nomes := make([]string, len(colunasTempos))
+	for i, c := range colunasTempos {
+		nomes[i] = c.nome
+	}
+	return strings.Join(nomes, ",") + "\n"
+}()
+
+// LinhaCSV formata o pedido como uma linha do arquivo de auditoria, na mesma ordem do
+// cabeçalho — porque é a mesma lista.
 func (m *Metricas) LinhaCSV() string {
-	seg := func(ms int64) string { return fmt.Sprintf("%.1f", float64(ms)/1000) }
-	return strings.Join([]string{
-		m.Quando.UTC().Format(time.RFC3339),
-		m.ID,
-		csvCampo(m.Titulo),
-		fmt.Sprintf("%d", m.DuracaoSermaoS),
-		fmt.Sprintf("%d", m.TokensTranscricao),
-		fmt.Sprintf("%d", m.NumCandidatos),
-		fmt.Sprintf("%d", m.NumAprovados),
-		fmt.Sprintf("%.1f", float64(m.BytesVideo)/(1024*1024)),
-		fmt.Sprintf("%d", m.Retries),
-		seg(m.BaixarLegendaMs),
-		seg(m.SelecionarMs),
-		seg(m.ValidarMs),
-		seg(m.BaixarVideoMs),
-		seg(m.RenderizarMs),
-		seg(m.RenderPorShortMs()),
-		seg(m.TotalMaquinaMs()),
-		seg(m.AguardandoMs),
-		simNao(m.VideoReusado),
-		completouTexto(m.Completou),
-		csvCampo(m.Erro),
-		// COLUNA NOVA VAI SEMPRE NO FIM. Não é estética: o cabeçalho é escrito uma única vez, na
-		// criação do arquivo, então um CSV que já existe precisa ser MIGRADO quando uma coluna
-		// entra. Com a coluna no fim, migrar é acrescentar campo vazio no fim de cada linha
-		// antiga — operação trivial e segura. Inserir no meio exigiria adivinhar posição, que é
-		// como se estraga histórico. Ver alinharCabecalho.
-		simNao(m.Retomado),
-	}, ",") + "\n"
+	campos := make([]string, len(colunasTempos))
+	for i, c := range colunasTempos {
+		campos[i] = c.valor(m)
+	}
+	return strings.Join(campos, ",") + "\n"
 }
 
 // csvCampo protege o campo de texto (títulos têm vírgula e barra).

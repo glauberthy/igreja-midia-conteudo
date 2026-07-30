@@ -251,6 +251,16 @@ medir o sintoma conveniente em vez da propriedade real. Por isso:
   próprio pixel, render real, comparação de pixel).
 - **Verificar que uma constante existe não prova que ela é usada.** Três vezes um valor
   existiu num lugar e o caminho real usou outro. Prove no caminho que o operador usa.
+- **Descrição de mudança de formato precisa ser conferida CONTRA O CÓDIGO, não contra a
+  intenção.** Caso real: uma mensagem de commit afirmou "coluna no fim do CSV", o código a
+  inseriu no meio, e o trabalho seguinte (a migração do cabeçalho) confiou na afirmação e
+  nasceu errado. Não é comentário que envelheceu — era **falso na origem**, e por isso mais
+  perigoso: descrição de commit não tem teste. Ao descrever formato (ordem de coluna, nome de
+  campo, layout de arquivo), leia o diff antes de escrever a frase.
+- **Duas listas para o mesmo dado divergem.** O `tempos.csv` quebrou duas vezes com cabeçalho
+  numa lista e valores em outra. A correção não foi mais uma migração: foi **uma fonte só**
+  (`colunasTempos`, nome e valor na mesma entrada). Migração conserta o sintoma; fonte única
+  torna a próxima quebra impossível.
 
 ## Como reportar
 
