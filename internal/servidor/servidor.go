@@ -105,6 +105,8 @@ type Servidor struct {
 	cortesPath       string
 	assetsDir        string
 	reterPedidos     int
+	videoDias        int
+	videoTeto        int64
 	limpezaDesligada bool
 	logTemposFn      func(string)
 	prazos           Prazos
@@ -147,6 +149,11 @@ type Opcoes struct {
 	// LimpezaDesligada desativa a limpeza automática (o cmd/limpar continua disponível).
 	ReterPedidos     int
 	LimpezaDesligada bool
+	// VideoDias e VideoTeto são a expiração do CACHE por vídeo (spec-05 v3 parte 3): idade
+	// máxima desde o último uso e tamanho máximo, avaliados juntos. Zero usa
+	// videocache.DiasPadrao (30) e videocache.TetoPadrao (50 GB).
+	VideoDias int
+	VideoTeto int64
 	// AssetsDir é a pasta servida em /assets/ (fonte da identidade, logo). Vazio = "assets".
 	AssetsDir string
 	// LogTempos recebe o resumo de desempenho/limpeza de cada pedido. Nil = stderr.
@@ -172,6 +179,8 @@ func Novo(o Opcoes) *Servidor {
 		cortesPath:       o.CortesPath,
 		assetsDir:        o.AssetsDir,
 		reterPedidos:     o.ReterPedidos,
+		videoDias:        o.VideoDias,
+		videoTeto:        o.VideoTeto,
 		limpezaDesligada: o.LimpezaDesligada,
 		logTemposFn:      o.LogTempos,
 		prazos:           o.Prazos.comPadroes(),
@@ -645,18 +654,37 @@ func (s *Servidor) limparAntigos(idAtual string) {
 	s.limparSobLock(idAtual)
 }
 
-// intocaveisLocked lista os pedidos que a limpeza NÃO pode enxergar: todo pedido que o
-// servidor conhece e que ainda não chegou a estado terminal. Exige s.mu já segurado —
-// é o mesmo mutex que registra pedido novo e muda estado, então a lista não pode
-// envelhecer entre ser calculada e ser usada.
-func (s *Servidor) intocaveisLocked(extras ...string) []string {
-	ids := append([]string(nil), extras...)
-	for id, reg := range s.pedidos {
-		if !estadoTerminal(reg.ped.Status) {
-			ids = append(ids, id)
+// emCursoLocked lista o que a limpeza NÃO pode enxergar, nas DUAS unidades em que ela
+// apaga: ids de PEDIDO (trabalho/<id>/) e ids de VÍDEO (videos/<videoID>/). Um pedido em
+// curso protege as duas coisas — a pasta dele e o culto de que ele depende.
+//
+// É uma função só, com um passe só e um predicado só (estadoTerminal), porque duas funções
+// respondendo "quem está em curso?" podem discordar: bastaria um estado novo entrar em uma
+// lista e não na outra para a expiração do cache apagar o vídeo de um pedido que a limpeza
+// de pedidos considerou intocável. A projeção difere; a decisão não.
+//
+// `extras` são ids de PEDIDO que o chamador quer proteger mesmo já terminados (o pedido que
+// acabou de concluir ainda pode ser regerado sem baixar de novo) — e o vídeo deles entra
+// junto, pelo registro.
+//
+// Exige s.mu já segurado: é o mesmo mutex que registra pedido novo e muda estado, então a
+// lista não pode envelhecer entre ser calculada e ser usada.
+func (s *Servidor) emCursoLocked(extras ...string) (pedidos, videos []string) {
+	proteger := func(reg *registro, id string) {
+		pedidos = append(pedidos, id)
+		if reg != nil && reg.ped.VideoID != "" {
+			videos = append(videos, reg.ped.VideoID)
 		}
 	}
-	return ids
+	for _, id := range extras {
+		proteger(s.pedidos[id], id)
+	}
+	for id, reg := range s.pedidos {
+		if !estadoTerminal(reg.ped.Status) {
+			proteger(reg, id)
+		}
+	}
+	return pedidos, videos
 }
 
 // limparSobLock executa a limpeza com o mutex SEGURADO durante a decisão E a remoção.
@@ -669,19 +697,32 @@ func (s *Servidor) limparSobLock(extras ...string) {
 		return
 	}
 	s.mu.Lock()
+	pedidosEmCurso, videosEmCurso := s.emCursoLocked(extras...)
 	res, err := retencao.Limpar(retencao.Opcoes{
 		RaizTrabalho: s.baseDir,
 		Reter:        s.reterPedidos,
-		Intocaveis:   s.intocaveisLocked(extras...),
+		Intocaveis:   pedidosEmCurso,
+	})
+	// A expiração do cache roda DENTRO do mesmo lock e do mesmo momento: as duas apagam, e a
+	// lista de intocáveis das duas sai do mesmo passe. Soltar o mutex entre elas abriria a
+	// janela em que um pedido novo nasce depois de a lista ser calculada — exatamente o que
+	// segurar o lock durante decisão E remoção fecha por construção.
+	resCache, errCache := s.cache.Expirar(videocache.OpcoesExpiracao{
+		Dias:       s.videoDias,
+		Teto:       s.videoTeto,
+		Intocaveis: videosEmCurso,
 	})
 	s.mu.Unlock()
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "aviso: limpeza de disco falhou: %v\n", err)
-		return
-	}
-	if res.BytesLiberados > 0 {
+	} else if res.BytesLiberados > 0 {
 		s.logTempos(res.Resumo())
+	}
+	if errCache != nil {
+		fmt.Fprintf(os.Stderr, "aviso: expiração do cache de vídeos falhou: %v\n", errCache)
+	} else if resCache.BytesLiberados > 0 || resCache.AcimaDoTeto {
+		s.logTempos(resCache.Resumo())
 	}
 }
 
@@ -720,12 +761,26 @@ func (s *Servidor) garantirEspaco(idAtual string) error {
 	}
 	// GarantirEspaco também APAGA quando falta margem — mesma invariante do limparSobLock.
 	s.mu.Lock()
+	pedidosEmCurso, videosEmCurso := s.emCursoLocked(idAtual)
+	// O cache expira ANTES da conferência de espaço, e não depois: é aqui que a pressão de disco
+	// é real (um download de ~570 MB está a uma linha de começar) e é o cache que tem os GB. Sem
+	// isto, GarantirEspaco varreria trabalho/, onde cada pedido agora ocupa KB, e falharia
+	// dizendo "não há espaço" com 50 GB de culto velho parado ao lado.
+	resCache, errCache := s.cache.Expirar(videocache.OpcoesExpiracao{
+		Dias: s.videoDias, Teto: s.videoTeto, Intocaveis: videosEmCurso,
+	})
 	_, err := retencao.GarantirEspaco(retencao.Opcoes{
 		RaizTrabalho: s.baseDir,
 		Reter:        s.reterPedidos,
-		Intocaveis:   s.intocaveisLocked(idAtual),
+		Intocaveis:   pedidosEmCurso,
 	}, retencao.MargemPadrao)
 	s.mu.Unlock()
+
+	if errCache != nil {
+		fmt.Fprintf(os.Stderr, "aviso: expiração do cache de vídeos falhou: %v\n", errCache)
+	} else if resCache.BytesLiberados > 0 {
+		s.logTempos(resCache.Resumo())
+	}
 	return err
 }
 

@@ -384,6 +384,69 @@ disco. Não é decisão fechada; fica registrada aqui para não passar batido.
 listar o cache separado dos pedidos, porque são políticas diferentes e misturar os números
 esconderia qual delas liberou o quê.
 
+## Implementada em 2026-07-29 (spec-05 v3, Parte 3) — o que a implementação decidiu
+
+O desenho acima estava certo no essencial; três coisas só ficaram resolvidas ao escrever o
+código, e valem registro porque mudam o comportamento observável.
+
+### 1. Expirar apaga o PESO, não a pasta do culto
+
+A expiração remove de `videos/<id>/` apenas os arquivos que **`retencao.PodeRemover` já
+classifica** como material bruto regenerável — e os nomes dos arquivos do cache são os mesmos da
+pasta do pedido, então aquela decisão vale aqui sem uma segunda lista:
+
+| arquivo | tamanho medido | veredito | por quê |
+|---|---|---|---|
+| `video.mp4` | ~570 MB | removível | é toda a pressão de disco; volta em ~35 s |
+| `legenda.info.json` | ~4 KB | removível | metadado do yt-dlp |
+| `legenda.srt` | 281 KB | preservado | custa 3 s **e uma requisição ao YouTube** |
+| `transcricao.txt` | ~130 KB | preservado | insumo de auditoria, derivado da legenda |
+| `video.json` | ~200 B | preservado | fora das duas listas (o default é não remover) |
+
+Apagar a pasta inteira recriaria, um nível acima, a contradição que a seção "A legenda deixou de
+ser apagada" acabou de corrigir. O preço de preservar é **~400 KB por culto expirado, para
+sempre** — ~21 MB/ano a um culto por semana. Dito em número para não ser descoberto depois.
+
+Efeito bom: como `TemVideo` e `TemLegenda` são perguntas independentes, um culto expirado e
+pedido de novo **baixa só o vídeo**.
+
+Isso também dá idempotência **sem carimbo novo**: culto já expirado tem zero arquivos removíveis,
+e é isso que o exclui da segunda passagem — não um campo `expirado_em` que alguém esqueceria de
+gravar.
+
+### 2. Uma régua, um passe, duas listas de intocáveis
+
+Prazo e teto são avaliados no **mesmo laço**, do último uso mais antigo para o mais novo:
+`expirou = (fora do prazo) OU (o cache ainda não cabe)`. O total cai conforme se remove, então o
+teto para de pegar assim que cabe — não é "sempre come o mais antigo".
+
+A invariante "não toca no que está em uso" **reusa o mecanismo que já existia** (a lista
+`Intocaveis` + a decisão e a remoção sob o mesmo mutex). O que mudou é que a limpeza agora apaga
+em **duas unidades** — pasta de pedido e pasta de culto — então `intocaveisLocked` virou
+`emCursoLocked`, que faz **um passe** com **um predicado** (`estadoTerminal`) e devolve as duas
+projeções. Duas funções respondendo "quem está em curso?" podiam discordar: bastaria um estado
+novo entrar em uma lista e não na outra para a expiração apagar o vídeo de um pedido que a
+limpeza de pedidos considera intocável.
+
+### 3. Dois pontos de ligação, e um deles era invisível
+
+A expiração roda em `limparSobLock` (depois de concluir um pedido) **e** em `garantirEspaco`
+(antes do download da fase pesada). O segundo é o que importa quando o disco aperta: é ali que a
+pressão é real, e é o cache que tem os GB — sem ele, `GarantirEspaco` varreria `trabalho/`, onde
+cada pedido hoje ocupa KB, e falharia dizendo "não há espaço" com 50 GB de culto velho ao lado.
+
+**Lição de teste:** remover a chamada do `garantirEspaco` não fazia teste nenhum falhar. O teste
+de ponta a ponta continuava verde porque o outro ponto de ligação limpava o mesmo culto. Só a
+**mutação** revelou o furo; a leitura do teste não. Vale para qualquer política com mais de um
+ponto de entrada: um teste de efeito não prova qual caminho agiu.
+
+### 4. `cmd/limpar` derivou o id do vídeo em vez de pedir outro
+
+`-exceto` recebe ids de PEDIDO; o comando lê o `pedido.json` de cada um para descobrir o
+`video_id` e proteger o culto também. Uma segunda flag (`-exceto-video`) seria pedir ao operador
+o id do YouTube de cor — errar justamente na proteção que evita apagar o vídeo de um render em
+andamento. O aviso "o cache não é tocado por esta limpeza" saiu: agora é mentira.
+
 ## Fora de escopo / próximos passos
 
 Pipeline completo. Melhorias futuras (legenda palavra-a-palavra, modelo externo

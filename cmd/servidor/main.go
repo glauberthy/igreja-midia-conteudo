@@ -49,6 +49,10 @@ func main() {
 	logRodadas := flag.String("log", "resultados/rodadas.md", "arquivo de log das rodadas (avaliação de variância)")
 	tempos := flag.String("tempos", "resultados/tempos.csv", "CSV de auditoria de desempenho (uma linha por pedido)")
 	reter := flag.Int("reter", 1, "quantos pedidos mantêm o material bruto após a limpeza automática (spec-06)")
+	videoDias := flag.Int("video-dias", videocache.DiasPadrao, "expiração do cache: apaga o vídeo do "+
+		"culto sem uso há mais dias que isto (idade pelo ÚLTIMO USO)")
+	videoTetoGB := flag.Int("video-teto", int(videocache.TetoPadrao>>30), "expiração do cache: teto em GB "+
+		"— acima disso, apaga do uso mais antigo para o mais novo até caber")
 	semLimpeza := flag.Bool("sem-limpeza", false, "desliga a limpeza automática de disco (use o cmd/limpar manualmente)")
 	bin := flag.String("bin", "yt-dlp", "binário do yt-dlp")
 	ffmpegBin := flag.String("ffmpeg", "ffmpeg", "binário do ffmpeg (fase pesada)")
@@ -103,6 +107,10 @@ func main() {
 		LogRodadasPath:   *logRodadas,
 		TemposPath:       *tempos,
 		ReterPedidos:     *reter,
+		// Mínimo 1 nos dois: zero, no contrato do pacote, quer dizer "use o padrão" — então um
+		// `-video-teto 0` digitado para esvaziar o cache viraria 50 GB, o oposto do pedido.
+		VideoDias:        max(*videoDias, 1),
+		VideoTeto:        int64(max(*videoTetoGB, 1)) << 30,
 		LimpezaDesligada: *semLimpeza,
 	})
 

@@ -95,7 +95,7 @@ func TestPedidoTravadoNaoFicaImortal(t *testing.T) {
 
 	// E o pedido deixou de ser intocável para a política de retenção.
 	s.mu.Lock()
-	intocaveis := s.intocaveisLocked()
+	intocaveis, _ := s.emCursoLocked()
 	s.mu.Unlock()
 	for _, id := range intocaveis {
 		if id == "teste-1" {
