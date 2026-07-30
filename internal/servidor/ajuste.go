@@ -20,6 +20,7 @@ import (
 	"srtclean/internal/harness"
 	"srtclean/internal/pipeline"
 	"srtclean/internal/validacao"
+	"srtclean/internal/videocache"
 )
 
 // FraseVizinha é uma frase em volta do trecho, para a FAIXA DE FRASES CLICÁVEL da tela.
@@ -64,6 +65,14 @@ type TrechoAjustado struct {
 	AjustadoStart bool   `json:"ajustado_start"` // o encaixe moveu o que o operador marcou?
 	AjustadoEnd   bool   `json:"ajustado_end"`
 
+	// RegraFim diz QUEM decidiu o fim: "pausa" (fronteira do áudio) ou "legenda" (fronteira de
+	// bloco, quando não há análise de pausas em disco). Vai para a tela e para o histórico —
+	// sem isso, o operador não sabe qual das duas regras produziu o corte que ele está julgando.
+	RegraFim string `json:"regra_fim,omitempty"`
+	// DeslocamentoFimMs é quanto o encaixe MOVEU o fim pedido. A tela mostra quando é grande:
+	// no caso medido seriam +3,5 s, e descobrir isso ao ouvir é pior que ler antes.
+	DeslocamentoFimMs int `json:"deslocamento_fim_ms,omitempty"`
+
 	// Vizinhanca são as frases dentro do corte mais algumas de cada lado, para a faixa
 	// clicável. O cliente não precisa (nem deve) refrasear nada: uma fonte só.
 	Vizinhanca []FraseVizinha `json:"vizinhanca"`
@@ -82,6 +91,25 @@ type LimitesPregacao struct {
 	FimMs int // 0 = sem limite superior conhecido
 }
 
+// ContextoAjuste é o que o recálculo precisa saber além dos tempos: os limites da pregação, as
+// PAUSAS do áudio (quando há análise em disco) e QUAL GESTO o operador fez.
+//
+// O gesto importa porque as regras são DIFERENTES de propósito, e unificá-las quebraria as duas:
+//
+//	clique em frase  -> vai para a próxima PAUSA, sem limite de distância (é o conserto do bug:
+//	                    a fronteira do bloco de legenda cai no meio da fala)
+//	empurrão fino/1s -> NÃO encaixa. Se encaixasse, cada empurrão de 0,25 s voltaria para a
+//	                    mesma pausa e o ajuste fino deixaria de existir
+//	arraste (futuro) -> ímã só se houver pausa dentro de ~200 ms
+//
+// Struct em vez de mais três parâmetros porque as três informações andam juntas em todas as
+// chamadas; o campo zerado é o comportamento de antes (sem pausas, sem gesto).
+type ContextoAjuste struct {
+	Lim    LimitesPregacao
+	Pausas []videocache.Pausa
+	Gesto  string
+}
+
 // recalcularTrecho é o coração do ajuste: dados tempos novos (em segundos, como vêm do
 // player), devolve o trecho recalculado — hook, duração e texto REALMENTE falado.
 //
@@ -91,9 +119,9 @@ type LimitesPregacao struct {
 // ajustado à mão, e a saída seria ensinar uma exceção ao auditor — pior remédio que a
 // doença. De quebra, dispensa precisão do operador: ele julga de ouvido, e a fronteira de
 // fala é um evento de 0,1–0,3 s.
-func recalcularTrecho(frases []harness.Frase, indice, startMs, endMs int, lim LimitesPregacao) TrechoAjustado {
+func recalcularTrecho(frases []harness.Frase, indice, startMs, endMs int, ctx ContextoAjuste) TrechoAjustado {
 	t := TrechoAjustado{Indice: indice}
-	brutoIni, brutoFim := clampar(startMs, endMs, lim)
+	brutoIni, brutoFim := clampar(startMs, endMs, ctx.Lim)
 
 	// falhar preenche o mínimo para a tela continuar coerente mesmo com ajuste inválido: o
 	// operador precisa ver a faixa de frases para saber como consertar.
@@ -111,10 +139,12 @@ func recalcularTrecho(frases []harness.Frase, indice, startMs, endMs int, lim Li
 	}
 
 	iniIdx, iniMs, okI := encaixarInicio(frases, brutoIni)
-	fimMs, okF := encaixarFim(frases, brutoFim)
+	fimMs, okF, regra := encaixarFimComPausas(frases, ctx, brutoFim)
 	if !okI || !okF {
 		return falhar(brutoIni, brutoFim, "não há fala transcrita nessa faixa para ancorar o corte")
 	}
+	t.RegraFim = regra
+	t.DeslocamentoFimMs = fimMs - brutoFim
 
 	t.AjustadoStart = iniMs != brutoIni
 	t.AjustadoEnd = fimMs != brutoFim
@@ -326,6 +356,54 @@ func encaixarInicio(frases []harness.Frase, ms int) (int, int, bool) {
 //   - fim marcado ANTES de qualquer fronteira: encaixa para FRENTE, na próxima — para trás
 //     cortaria no meio;
 //   - folga maior que harness.FolgaFimMaxMs: limitada, para não virar vazamento silencioso.
+//
+// encaixarFimComPausas escolhe a REGRA do fim conforme o gesto, e diz qual usou.
+//
+// # Por que a pausa, e não o bloco da legenda
+//
+// Medido no culto fZGyLBofmmo: o clique em frase terminava o corte em 01:30:06, e a fala corrida
+// só termina em 01:30:09.486. A fronteira do bloco de legenda cai no meio da frase falada —
+// blocos rolling quebram por largura de tela. Com a pausa do áudio o mesmo clique acerta.
+//
+// # Sem limite de distância, de propósito
+//
+// A pausa certa pode estar 3,5 s adiante (foi o caso). Limitar a distância recriaria o bug:
+// o corte pararia no meio da fala "porque estava longe". Se a distância jogar a duração fora da
+// faixa válida, isso aparece no Motivo e o trecho fica não aprovável — visível, não silencioso.
+func encaixarFimComPausas(frases []harness.Frase, ctx ContextoAjuste, ms int) (int, bool, string) {
+	if ehGestoDeFrase(ctx.Gesto) {
+		if p, ok := primeiraPausaApos(ctx.Pausas, ms); ok {
+			return p, true, "pausa"
+		}
+	}
+	// Sem pausas em disco (culto ainda não analisado), ou gesto que NÃO encaixa (empurrão fino,
+	// que precisa valer exatamente o que o operador pediu).
+	fim, ok := encaixarFim(frases, ms)
+	regra := "legenda"
+	if !ehGestoDeFrase(ctx.Gesto) {
+		regra = "pedido" // o empurrão manda; a fronteira da legenda só limita o exagero
+	}
+	return fim, ok, regra
+}
+
+// ehGestoDeFrase: só o clique na faixa de frases encaixa em pausa. Os empurrões finos existem
+// justamente para o operador discordar da fronteira, e encaixá-los anularia o ajuste fino.
+func ehGestoDeFrase(gesto string) bool {
+	return gesto == "frase-inicio" || gesto == "frase-fim"
+}
+
+// primeiraPausaApos devolve o INÍCIO da primeira pausa em ou depois de ms — o instante em que a
+// fala para. É esse o fim natural de um corte: a última palavra terminou, o silêncio começou.
+func primeiraPausaApos(pausas []videocache.Pausa, ms int) (int, bool) {
+	melhor, achou := 0, false
+	for _, p := range pausas {
+		if p.InicioMs >= ms && (!achou || p.InicioMs < melhor) {
+			melhor, achou = p.InicioMs, true
+		}
+	}
+	return melhor, achou
+}
+
 func encaixarFim(frases []harness.Frase, ms int) (int, bool) {
 	anterior, temAnterior := 0, false
 	proxima, temProxima := 0, false
@@ -421,6 +499,10 @@ func (s *Servidor) handleAjustar(w http.ResponseWriter, r *http.Request) {
 		Indice  int `json:"indice"`
 		StartMs int `json:"start_ms"`
 		EndMs   int `json:"end_ms"`
+		// Gesto diz COMO o operador pediu (clique em frase, empurrão fino, arraste). É o que
+		// escolhe a regra do fim — ver ContextoAjuste. Vazio = sem encaixe em pausa, que é o
+		// comportamento de antes (e o de um POST direto, que não é o cliente).
+		Gesto string `json:"gesto"`
 	}
 	defer r.Body.Close()
 	if err := json.NewDecoder(r.Body).Decode(&corpo); err != nil {
@@ -444,9 +526,34 @@ func (s *Servidor) handleAjustar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t := recalcularTrecho(frases, corpo.Indice, corpo.StartMs, corpo.EndMs, lim)
+	t := recalcularTrecho(frases, corpo.Indice, corpo.StartMs, corpo.EndMs,
+		ContextoAjuste{Lim: lim, Pausas: s.pausasDoPedido(reg), Gesto: corpo.Gesto})
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(t)
+}
+
+// pausasDoPedido devolve as pausas do culto, se houver análise em disco. Sem análise devolve
+// nil, e o encaixe cai na fronteira da legenda — dizendo qual regra usou, em vez de fingir.
+//
+// Não gera aqui: gerar exige o vídeo (6,5 s de ffmpeg), e a revisão acontece antes do download no
+// fluxo atual. Quem gera é a fase que tem o arquivo em mão (ver garantirPausas).
+func (s *Servidor) pausasDoPedido(reg *registro) []videocache.Pausa {
+	s.mu.Lock()
+	videoID := reg.ped.VideoID
+	s.mu.Unlock()
+	if videoID == "" {
+		return nil
+	}
+	a, err := s.cache.LerPausas(videoID)
+	if err != nil {
+		return nil
+	}
+	o := s.opcoesPausas()
+	if !a.Compativel(o.NoiseDB, o.MinMs) {
+		// Receita diferente da configurada: não usar dado de origem desconhecida.
+		return nil
+	}
+	return a.Pausas
 }
 
 // frasesDoPedido lê e fraseia a transcrição do pedido. Mesma fonte da revisão (harness.
@@ -509,7 +616,10 @@ func (s *Servidor) validarAjustes(reg *registro, aprovados []int, recebidos []aj
 		if !aprovado[a.Indice] {
 			continue
 		}
-		t := recalcularTrecho(frases, a.Indice, a.StartMs, a.EndMs, lim)
+		// SEM gesto de propósito: o que chega aqui são os tempos que o operador já viu na tela,
+		// depois do encaixe. Reencaixar agora moveria o corte DEPOIS de ele aprovar — o pior
+		// momento possível, porque ele aprovou um número e sairia outro.
+		t := recalcularTrecho(frases, a.Indice, a.StartMs, a.EndMs, ContextoAjuste{Lim: lim})
 		if !t.Aprovavel {
 			return nil, fmt.Sprintf("o trecho %d foi ajustado mas %s", a.Indice+1, t.Motivo)
 		}

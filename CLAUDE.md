@@ -72,7 +72,7 @@ assets/            # logo (PNG) e fontes (Google Sans Flex)
 docs/specs/        # specs 01-16 (uma por incremento)
 docs/mockups/      # referências visuais de UI (HTML interativo)
 docs/medicoes/     # medições, scripts para repeti-las e a ferramenta de nitidez
-videos/<idVídeo>/  # CACHE do culto: vídeo, legenda, transcrição íntegra (NÃO versionar)
+videos/<idVídeo>/  # CACHE do culto: vídeo, legenda, transcrição íntegra, pausas.json (NÃO versionar)
 trabalho/<idPedido>/ # artefatos do pedido: candidatos, transcrição recortada (NÃO versionar)
 finalizados/<id>/  # Shorts entregues (NÃO versionar)
 resultados/        # tempos.csv, cortes.csv, acoes.csv, rodadas.md (NÃO versionar)
@@ -93,6 +93,10 @@ go run ./cmd/baixar -url "<url>" -inicio HH:MM:SS -fim HH:MM:SS -id <id>
 go run ./cmd/selecionar -transc trabalho/<id>/transcricao.txt \
     -out trabalho/<id>/candidatos.corrigido.json -prompt-dir prompts/
 go run ./cmd/render -id <id>
+
+# pausas de fala (fronteiras do corte; ver docs/medicoes/pausas-de-fala.md)
+go run ./docs/medicoes/pausas -id <idVídeo>                      # gera/regenera e mostra a receita
+go run ./docs/medicoes/pausas -id <idVídeo> -ler -de 5400000 -ate 5412000
 
 # auditoria e diagnóstico
 go run ./cmd/harness -transc trabalho/<id>/transcricao.txt -ate 5   # funil fase a fase

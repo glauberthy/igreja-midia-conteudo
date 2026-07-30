@@ -741,6 +741,9 @@
           h[k].inicio_ms = resp.start_ms;
           h[k].fim_ms = resp.end_ms;
           h[k].duracao_ms = resp.duracao_ms;
+          // regra_fim separa "o encaixe do áudio decidiu" de "a legenda decidiu" no log — é a
+          // distinção que o histórico existe para registrar.
+          h[k].regra = resp.regra_fim || '';
         }
       }
       desenharHistorico();
@@ -778,6 +781,7 @@
         if (a.aplicado_ok) {
           var d = a.aplicado_ms - a.pedido_ms;
           txt += ' · aplicou ' + hhmmss(a.aplicado_ms) + (d === 0 ? ' (=)' : ' (' + (d > 0 ? '+' : '') + d + 'ms)');
+          if (a.regra) txt += ' [' + a.regra + ']';
         } else if (a.pendente) {
           txt += ' · aplicando…';
         } else {
@@ -858,7 +862,11 @@
       fimMs = Math.max(0, Math.round(fimMs));
       var anterior = REV.ajustes[i];
       REV.ajustes[i] = { iniMs: iniMs, fimMs: fimMs, resposta: null,
-                         vizinhanca: anterior ? anterior.vizinhanca : null };
+                         vizinhanca: anterior ? anterior.vizinhanca : null,
+                         // gesto: o servidor usa para escolher a REGRA do fim — clique em frase
+                         // encaixa na PAUSA do áudio, empurrão fino vale exatamente o pedido.
+                         // Sem ele o ajuste fino voltaria para a mesma pausa a cada clique.
+                         gesto: acao ? acao.tipo : '' };
       // O log nasce AQUI porque este é o funil único: clique em frase, empurrão fino, empurrão
       // de 1 s e restaurar todos passam por moverPara. Registrar em cada botão seria quatro
       // lugares para esquecer um.
@@ -940,7 +948,7 @@
       if (!a) return;
       fetch('/pedidos/' + REV.dados.pedidoId + '/ajustar', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ indice: i, start_ms: a.iniMs, end_ms: a.fimMs })
+        body: JSON.stringify({ indice: i, start_ms: a.iniMs, end_ms: a.fimMs, gesto: a.gesto || '' })
       }).then(function (r) { return r.ok ? r.json() : null; }).then(function (resp) {
         if (!resp || !REV || !REV.ajustes[i]) return;
         REV.ajustes[i].resposta = resp;
@@ -1080,8 +1088,18 @@
         inv.textContent = '⚠ ' + (e.motivo || 'ajuste inválido') + '. Não dá para aprovar assim.';
       } else { inv.hidden = true; }
 
+      // Duas mensagens possíveis, e a segunda é nova: quando o encaixe na PAUSA do áudio move o
+      // fim muito (no caso medido, +3,5 s), o operador tem de LER isso antes de ouvir. Descobrir
+      // um deslocamento de segundos pelo ouvido é o que fazia ele achar que o ajuste não pegava.
       var enc = document.getElementById('aj-encaixe');
-      if (e.moveuIni) {
+      var r = REV.ajustes[REV.atual] && REV.ajustes[REV.atual].resposta;
+      var desl = r ? (r.deslocamento_fim_ms || 0) : 0;
+      if (r && r.regra_fim === 'pausa' && Math.abs(desl) >= 1000) {
+        enc.hidden = false;
+        enc.textContent = 'O fim foi levado para a pausa da fala em ' + rotulo(e.fimMs) +
+          ' — ' + (desl > 0 ? '+' : '') + (desl / MS).toFixed(2) + 's do ponto da legenda. ' +
+          'É onde o pregador de fato para; se quiser outro ponto, use os empurrões.';
+      } else if (e.moveuIni) {
         enc.hidden = false;
         enc.textContent = 'O início foi encaixado no começo da fala (' + rotulo(e.iniMs) +
           ') — é o que mantém o hook casando com o corte.';

@@ -888,6 +888,39 @@ rolaria a pagina inteira e desfaria o ganho de caber numa tela.
 Um selo `tocando a emenda…` avisa quando o som veio do sistema — a emenda toca sozinha, e sem
 aviso o operador nao sabe se foi ele que clicou em algo por acidente.
 
+### v4, fatia 1 (2026-07-30): a fronteira do corte vem do ÁUDIO, não da legenda
+
+**O bug, com número.** O clique em frase terminava o corte no início do bloco de legenda seguinte
+(`fimDaFraseSeguinte`). Blocos da legenda *rolling* quebram por largura de tela, não por fim de
+fala — então o corte caía no meio da frase falada, e às vezes no meio da palavra. Medido no culto
+`fZGyLBofmmo`: fim em 01:30:06 contra fala corrida até 01:30:09.486, com **todos os deltas do
+histórico de ações em zero** (o sistema aplicou fielmente um ponto que a legenda inventou).
+
+**A correção.** Uma passada de `silencedetect` por culto (6,5 s medidos, guardada em
+`videos/<id>/pausas.json`) dá as fronteiras REAIS. O clique em frase passa a terminar na primeira
+pausa em ou depois do ponto pedido. No caso medido: 5405000 → **5409486**, deslocamento +4486 ms,
+e o arquivo passa a terminar onde a fala para.
+
+**Duas regras, e não se unificam** (`ContextoAjuste.Gesto`):
+
+| gesto | regra | por quê |
+|---|---|---|
+| clique em frase | vai para a próxima **pausa**, sem limite de distância | é o conserto; limitar a distância recriaria o bug ("parou no meio porque estava longe") |
+| empurrão ±0,25 s / ±1 s | **não encaixa**, vale o pedido | se encaixasse, cada clique voltaria à mesma pausa e o ajuste fino deixaria de existir |
+| arraste (fatia 3) | ímã só se houver pausa em ~200 ms | pulso do operador manda; o ímã só arredonda |
+
+**Nada em silêncio.** A resposta do `/ajustar` passa a dizer `regra_fim` (`pausa` | `legenda` |
+`pedido`) e `deslocamento_fim_ms`; a tela mostra a frase "o fim foi levado para a pausa da fala em
+X — +4,49 s do ponto da legenda" quando o deslocamento passa de 1 s. Se o encaixe jogar a duração
+fora de 30–58 s, o trecho fica **não aprovável com o motivo** (guarda que já existia), em vez de
+recusar sem explicar.
+
+**Degradação honesta:** sem análise em disco (culto ainda não baixado), o encaixe cai na fronteira
+da legenda e **declara** `regra_fim: legenda`. Quando o download passar para antes da revisão
+(fatia 5), esse ramo deixa de acontecer na prática.
+
+Parâmetros, distribuição e linha de base: `docs/medicoes/pausas-de-fala.md`.
+
 ### Histórico de ações do ajuste (2026-07-30) — instrumento, não enfeite
 
 Depois de fechadas as camadas 1 e 2 (adiante), sobrou o relato mais difícil: **o áudio do Short
@@ -1246,6 +1279,25 @@ preenchimento do mesmo fluxo, e a decisao continua sendo do operador.
 
 **Geral**
 - [ ] `go build ./...`, `go vet ./...` e `go test -race ./...` verdes.
+
+## O fluxo invertido deixa de valer para o VÍDEO (decisão de 2026-07-30)
+
+Registrado aqui para ninguém "corrigir" isso depois achando que é regressão.
+
+A razão original de baixar o vídeo **depois** da aprovação era não gastar ~570 MB e ~60 s quando a
+seleção não presta: primeiro o operador vê os candidatos, e só o que ele aprova custa download.
+
+A v4 muda a troca, porque **o vídeo passou a ser insumo da própria revisão**: é dele que saem as
+pausas de fala (a fronteira do corte) e é ele que o operador vai ouvir no player local, em vez do
+YouTube. Sem o arquivo, a revisão volta a decidir por fronteira de legenda — que é o bug medido.
+
+A conta também mudou: com o **cache por vídeo**, 31 de 46 pedidos medidos reaproveitam o vídeo, e
+o download só acontece no culto novo. E ele pode rodar **em paralelo com a seleção** (rede contra
+GPU, ~63 s escondidos atrás de ~29 s).
+
+Então: o fluxo invertido continua valendo para a LEGENDA (3 s, sempre antes) e deixa de valer para
+o vídeo. O que se perde é banda num culto cuja seleção o operador vá descartar inteira; o que se
+ganha é o corte cair onde a fala termina.
 
 ## Parte 4 implementada (2026-07-29) — tela de resultado
 

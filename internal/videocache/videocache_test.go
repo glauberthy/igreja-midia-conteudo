@@ -88,7 +88,7 @@ func TestRegenerarORecorteDaMesmosBytes(t *testing.T) {
 	destinoA := filepath.Join(t.TempDir(), "pedido-a", "transcricao.txt")
 	destinoB := filepath.Join(t.TempDir(), "pedido-b", "transcricao.txt")
 
-	const iniMs, fimMs = 5*60*1000, 21*60*1000 // 00:05:00 → 00:21:00
+	const iniMs, fimMs = 5 * 60 * 1000, 21 * 60 * 1000 // 00:05:00 → 00:21:00
 
 	recA, err := c.DerivarTranscricao("cultoTeste1", destinoA, iniMs, fimMs)
 	if err != nil {

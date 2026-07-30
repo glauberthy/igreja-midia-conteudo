@@ -54,7 +54,7 @@ func TestRecalculaHookTextoDuracao(t *testing.T) {
 	frases := frasesAjuste(t)
 
 	// Janela de 0:36 a 1:18 = 42 s (dentro de 30–58).
-	got := recalcularTrecho(frases, 0, 36000, 78000, LimitesPregacao{})
+	got := recalcularTrecho(frases, 0, 36000, 78000, ContextoAjuste{})
 	if !got.Aprovavel {
 		t.Fatalf("deveria ser aprovável: %s", got.Motivo)
 	}
@@ -84,8 +84,8 @@ func TestRecalculaHookTextoDuracao(t *testing.T) {
 func TestHookRecalculadoAoEstenderParaTras(t *testing.T) {
 	frases := frasesAjuste(t)
 
-	original := recalcularTrecho(frases, 0, 60000, 102000, LimitesPregacao{}) // 1:00 → 1:42
-	estendido := recalcularTrecho(frases, 0, 36000, 78000, LimitesPregacao{}) // recuou 24 s
+	original := recalcularTrecho(frases, 0, 60000, 102000, ContextoAjuste{}) // 1:00 → 1:42
+	estendido := recalcularTrecho(frases, 0, 36000, 78000, ContextoAjuste{}) // recuou 24 s
 
 	if original.Hook == estendido.Hook {
 		t.Fatal("o hook não mudou ao estender para trás — a regra da Fase 3 não foi aplicada")
@@ -104,7 +104,7 @@ func TestInvarianteDoAuditorSeMantem(t *testing.T) {
 
 	// Tempos "tortos" em ms, como o player entregaria.
 	for _, marcado := range []int{36000, 36400, 37900, 35200, 38700} {
-		got := recalcularTrecho(frases, 0, marcado, marcado+42000, LimitesPregacao{})
+		got := recalcularTrecho(frases, 0, marcado, marcado+42000, ContextoAjuste{})
 		if got.Hook == "" {
 			t.Fatalf("marcado %dms: sem hook", marcado)
 		}
@@ -132,7 +132,7 @@ func TestInvarianteDoAuditorSeMantem(t *testing.T) {
 func TestPontoMarcadoEhPreservadoNasDuasPontas(t *testing.T) {
 	frases := frasesAjuste(t)
 
-	got := recalcularTrecho(frases, 0, 37400, 79200, LimitesPregacao{})
+	got := recalcularTrecho(frases, 0, 37400, 79200, ContextoAjuste{})
 	if got.StartMs != 37400 {
 		t.Errorf("start movido para %dms: dentro da folga, o ponto marcado deveria valer", got.StartMs)
 	}
@@ -151,7 +151,7 @@ func TestEncaixeSoAconteceParaFrente(t *testing.T) {
 	frases := harness.Frasear(transcricaoDeslocada()) // fronteiras a partir de 30 s
 
 	// Fim em 10 s: antes de qualquer fronteira. Tem de ir para FRENTE (30 s), nunca para trás.
-	got := recalcularTrecho(frases, 0, 0, 10000, LimitesPregacao{})
+	got := recalcularTrecho(frases, 0, 0, 10000, ContextoAjuste{})
 	if got.EndMs < 10000 {
 		t.Fatalf("o end foi para trás (%dms) — cortaria fala no meio", got.EndMs)
 	}
@@ -163,7 +163,7 @@ func TestEncaixeSoAconteceParaFrente(t *testing.T) {
 	}
 
 	// O mesmo no início: ponto antes de qualquer frase encaixa para frente.
-	got2 := recalcularTrecho(frases, 0, 5000, 70000, LimitesPregacao{})
+	got2 := recalcularTrecho(frases, 0, 5000, 70000, ContextoAjuste{})
 	if got2.StartMs != 30000 {
 		t.Errorf("o start deveria encaixar na primeira frase (30000), foi para %dms", got2.StartMs)
 	}
@@ -183,7 +183,7 @@ func TestFimLiberadoParaFrente(t *testing.T) {
 	frases := frasesAjuste(t)
 
 	// Fronteiras de 6 em 6 s. O operador marcou 2 s depois de uma delas.
-	got := recalcularTrecho(frases, 0, 36000, 80000, LimitesPregacao{})
+	got := recalcularTrecho(frases, 0, 36000, 80000, ContextoAjuste{})
 	if got.EndMs != 80000 {
 		t.Errorf("o end foi movido para %dms — o operador marcou 80000 e a folga é segura", got.EndMs)
 	}
@@ -205,7 +205,7 @@ func TestFolgaDoFimTemTeto(t *testing.T) {
 	frases := frasesAjuste(t)
 
 	// Última fronteira é 174 s (frase 29 começa em 174). Marcar 200 s pede 26 s de folga.
-	got := recalcularTrecho(frases, 0, 150000, 200000, LimitesPregacao{})
+	got := recalcularTrecho(frases, 0, 150000, 200000, ContextoAjuste{})
 	limite := 174000 + harness.FolgaFimMaxMs
 	if got.EndMs > limite {
 		t.Errorf("end = %dms passou do teto de folga (%dms)", got.EndMs, limite)
@@ -217,7 +217,7 @@ func TestFolgaDoFimTemTeto(t *testing.T) {
 // gerando material que o próprio projeto marca como defeituoso.
 func TestAjusteSobreviveAoAuditor(t *testing.T) {
 	frases := frasesAjuste(t)
-	got := recalcularTrecho(frases, 0, 36000, 80000, LimitesPregacao{}) // 2 s de folga no fim
+	got := recalcularTrecho(frases, 0, 36000, 80000, ContextoAjuste{}) // 2 s de folga no fim
 	if !got.Aprovavel {
 		t.Fatalf("pré-condição: %s", got.Motivo)
 	}
@@ -244,7 +244,7 @@ func TestAjusteSobreviveAoAuditor(t *testing.T) {
 func TestGuardaDuracaoForaDaFaixa(t *testing.T) {
 	frases := frasesAjuste(t)
 
-	curto := recalcularTrecho(frases, 0, 36000, 54000, LimitesPregacao{}) // 18 s
+	curto := recalcularTrecho(frases, 0, 36000, 54000, ContextoAjuste{}) // 18 s
 	if curto.Aprovavel {
 		t.Error("18 s deveria ser recusado (mínimo 30 s)")
 	}
@@ -252,7 +252,7 @@ func TestGuardaDuracaoForaDaFaixa(t *testing.T) {
 		t.Errorf("motivo não diz o que falta: %q", curto.Motivo)
 	}
 
-	longo := recalcularTrecho(frases, 0, 0, 66000, LimitesPregacao{}) // 66 s
+	longo := recalcularTrecho(frases, 0, 0, 66000, ContextoAjuste{}) // 66 s
 	if longo.Aprovavel {
 		t.Error("66 s deveria ser recusado (máximo 58 s)")
 	}
@@ -282,7 +282,7 @@ func TestFaixaVemDaHarness(t *testing.T) {
 func TestGuardaFimAntesDoInicio(t *testing.T) {
 	frases := frasesAjuste(t)
 	for _, c := range []struct{ ini, fim int }{{60000, 60000}, {60000, 30000}, {60000, 59900}} {
-		got := recalcularTrecho(frases, 0, c.ini, c.fim, LimitesPregacao{})
+		got := recalcularTrecho(frases, 0, c.ini, c.fim, ContextoAjuste{})
 		if got.Aprovavel {
 			t.Errorf("start=%dms end=%dms deveria ser recusado", c.ini, c.fim)
 		}
@@ -298,7 +298,7 @@ func TestClampNosLimitesDaPregacao(t *testing.T) {
 	frases := frasesAjuste(t)
 	lim := LimitesPregacao{IniMs: 36000, FimMs: 120000} // 0:36 → 2:00
 
-	got := recalcularTrecho(frases, 0, 0, 300000, lim) // tentou 0:00 → 5:00
+	got := recalcularTrecho(frases, 0, 0, 300000, ContextoAjuste{Lim: lim}) // tentou 0:00 → 5:00
 	if got.StartMs < 36000 {
 		t.Errorf("start escapou do limite inferior: %dms", got.StartMs)
 	}
@@ -513,7 +513,7 @@ func TestTelaTrazControlesDeAjuste(t *testing.T) {
 // tem — a transcrição vem em segundos inteiros. Mesma falsa precisão já rejeitada na grade.
 func TestSemFalsaPrecisaoNaTela(t *testing.T) {
 	frases := frasesAjuste(t)
-	got := recalcularTrecho(frases, 0, 36000, 80000, LimitesPregacao{})
+	got := recalcularTrecho(frases, 0, 36000, 80000, ContextoAjuste{})
 
 	// Os rótulos da vizinhança são o que a tela mostra: sem milissegundos.
 	if len(got.Vizinhanca) == 0 {
@@ -525,7 +525,7 @@ func TestSemFalsaPrecisaoNaTela(t *testing.T) {
 		}
 	}
 	// As mensagens de guarda também: segundos inteiros.
-	curto := recalcularTrecho(frases, 0, 36000, 54000, LimitesPregacao{})
+	curto := recalcularTrecho(frases, 0, 36000, 54000, ContextoAjuste{})
 	if strings.Contains(curto.Motivo, ".") {
 		t.Errorf("mensagem com falsa precisão: %q", curto.Motivo)
 	}
@@ -535,7 +535,7 @@ func TestSemFalsaPrecisaoNaTela(t *testing.T) {
 // marcadas, e há contexto dos dois lados para o operador apontar onde a ideia começa/termina.
 func TestVizinhancaMarcaDentroEFora(t *testing.T) {
 	frases := frasesAjuste(t)
-	got := recalcularTrecho(frases, 0, 36000, 78000, LimitesPregacao{})
+	got := recalcularTrecho(frases, 0, 36000, 78000, ContextoAjuste{})
 
 	var dentro, antes, depois int
 	for _, f := range got.Vizinhanca {
@@ -574,7 +574,7 @@ func TestVizinhancaVemMesmoComAjusteInvalido(t *testing.T) {
 		{"duração longa", 0, 66000},
 		{"fim antes do início", 60000, 30000},
 	} {
-		got := recalcularTrecho(frases, 0, c.ini, c.fim, LimitesPregacao{})
+		got := recalcularTrecho(frases, 0, c.ini, c.fim, ContextoAjuste{})
 		if got.Aprovavel {
 			t.Fatalf("%s: deveria ser inválido", c.nome)
 		}
@@ -634,7 +634,7 @@ func TestTemposInternosEmMilissegundos(t *testing.T) {
 	frases := frasesAjuste(t)
 	ini, fim := 36000, 78000
 	for i := 0; i < 8; i++ {
-		got := recalcularTrecho(frases, 0, ini, fim+250, LimitesPregacao{})
+		got := recalcularTrecho(frases, 0, ini, fim+250, ContextoAjuste{})
 		ini, fim = got.StartMs, got.EndMs
 	}
 	if fim != 80000 {
@@ -651,7 +651,7 @@ func TestInicioLiberadoParaFrente(t *testing.T) {
 	frases := frasesAjuste(t)
 
 	// Fronteiras de 6 em 6 s. O operador empurrou o início 2 s adiante do carimbo.
-	got := recalcularTrecho(frases, 0, 38000, 80000, LimitesPregacao{})
+	got := recalcularTrecho(frases, 0, 38000, 80000, ContextoAjuste{})
 	if got.StartMs != 38000 {
 		t.Errorf("o início foi devolvido para %dms — o operador marcou 38000 e a folga é segura", got.StartMs)
 	}
@@ -667,7 +667,7 @@ func TestHookEhAFraseQueContemOStart(t *testing.T) {
 	frases := frasesAjuste(t)
 
 	// A frase 6 está carimbada em 36 s; a 7 em 42 s. Start em 38 s: dentro da 6.
-	got := recalcularTrecho(frases, 0, 38000, 80000, LimitesPregacao{})
+	got := recalcularTrecho(frases, 0, 38000, 80000, ContextoAjuste{})
 	if !strings.Contains(got.Hook, "frase numero 6") {
 		t.Errorf("o hook pulou para a frase seguinte: %q — deveria ser a que contém o start", got.Hook)
 	}
@@ -682,7 +682,7 @@ func TestHookEhAFraseQueContemOStart(t *testing.T) {
 // corte, a faixa mostraria o hook em cinza — contradizendo o que o operador vai gerar.
 func TestFraseDoStartFicaDestacadaNaFaixa(t *testing.T) {
 	frases := frasesAjuste(t)
-	got := recalcularTrecho(frases, 0, 38000, 80000, LimitesPregacao{})
+	got := recalcularTrecho(frases, 0, 38000, 80000, ContextoAjuste{})
 
 	achou := false
 	for _, f := range got.Vizinhanca {
@@ -707,14 +707,14 @@ func TestFolgaDoInicioTemTeto(t *testing.T) {
 	frases := frasesAjuste(t)
 
 	// Frase 6 carimbada em 36 s; pedir início em 41 s pede 5 s (no limite) e em 41,5 s passa.
-	noLimite := recalcularTrecho(frases, 0, 36000+harness.FolgaInicioMaxMs, 90000, LimitesPregacao{})
+	noLimite := recalcularTrecho(frases, 0, 36000+harness.FolgaInicioMaxMs, 90000, ContextoAjuste{})
 	if noLimite.StartMs != 36000+harness.FolgaInicioMaxMs {
 		t.Errorf("exatamente no teto deveria passar: %dms", noLimite.StartMs)
 	}
 
 	// Um caso onde a folga estoura precisa de um vão sem frases; a frase 29 (174 s) é a
 	// última, então qualquer ponto muito depois dela cai nesse vão.
-	longe := recalcularTrecho(frases, 0, 174000+20000, 174000+60000, LimitesPregacao{})
+	longe := recalcularTrecho(frases, 0, 174000+20000, 174000+60000, ContextoAjuste{})
 	if longe.StartMs > 174000+harness.FolgaInicioMaxMs {
 		t.Errorf("start = %dms passou do teto de folga do início", longe.StartMs)
 	}
@@ -724,7 +724,7 @@ func TestFolgaDoInicioTemTeto(t *testing.T) {
 // trecho com início empurrado não pode ser acusado pelo próprio projeto.
 func TestAjusteDeInicioSobreviveAoAuditor(t *testing.T) {
 	frases := frasesAjuste(t)
-	got := recalcularTrecho(frases, 0, 38000, 80000, LimitesPregacao{}) // 2 s de folga no início
+	got := recalcularTrecho(frases, 0, 38000, 80000, ContextoAjuste{}) // 2 s de folga no início
 	if !got.Aprovavel {
 		t.Fatalf("pré-condição: %s", got.Motivo)
 	}
@@ -862,7 +862,7 @@ func TestCSVCorrigeAMediaComOsNaoAjustados(t *testing.T) {
 	// 3 ajustados em +2s no fim; os outros 7 aprovados como estão.
 	ajustes := map[int]TrechoAjustado{}
 	for i := 0; i < 3; i++ {
-		t1 := recalcularTrecho(frases, i, iniOrig, fimOrig+2000, LimitesPregacao{})
+		t1 := recalcularTrecho(frases, i, iniOrig, fimOrig+2000, ContextoAjuste{})
 		if !t1.Aprovavel {
 			t.Fatalf("caso %d inválido: %s", i, t1.Motivo)
 		}
@@ -915,7 +915,7 @@ func TestCSVAnexaSemRepetirCabecalho(t *testing.T) {
 
 	reg := s.pedidos["teste-1"]
 	for i, par := range [][2]int{{38000, 80000}, {36000, 78000}, {42000, 84000}} {
-		t1 := recalcularTrecho(frases, 0, par[0], par[1], LimitesPregacao{})
+		t1 := recalcularTrecho(frases, 0, par[0], par[1], ContextoAjuste{})
 		if !t1.Aprovavel {
 			t.Fatalf("caso %d: %s", i, t1.Motivo)
 		}
@@ -1060,7 +1060,7 @@ func TestFrasesComMesmoCarimboSaoAgrupadas(t *testing.T) {
 		t.Skip("o Frasear não produziu carimbos repetidos nesta fixture; nada a agrupar")
 	}
 
-	got := recalcularTrecho(frases, 0, 0, 40000, LimitesPregacao{})
+	got := recalcularTrecho(frases, 0, 0, 40000, ContextoAjuste{})
 
 	// Nenhum carimbo pode aparecer duas vezes na faixa: é isso que produz o clique inócuo.
 	vistos := map[int]int{}

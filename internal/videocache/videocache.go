@@ -409,3 +409,88 @@ func (c *Cache) GerarTranscricaoIntegra(videoID string) error {
 	_, err = c.DerivarTranscricao(videoID, filepath.Join(dir, NomeTransc), 0, JanelaInteira)
 	return err
 }
+
+// ===== PAUSAS DE FALA (fronteiras vindas do áudio) =====
+//
+// Mora no cache porque é do CULTO, não do pedido: uma passada de silencedetect (6,5 s medidos
+// para 1h50) serve toda janela e todo pedido daquele vídeo, hoje e na semana que vem — a mesma
+// razão do vídeo, da legenda e da transcrição íntegra.
+//
+// O arquivo guarda os PARÂMETROS usados junto das pausas. Sem isso, mudar o limiar deixaria em
+// disco um resultado cuja origem ninguém sabe — e a régua desenhada com um limiar discordaria do
+// encaixe calculado com outro, que é a forma de o operador perder confiança nos dois.
+
+// NomePausas é o arquivo das pausas dentro de videos/<videoID>/.
+const NomePausas = "pausas.json"
+
+// Pausa é um intervalo de silêncio, em ms absolutos do vídeo.
+//
+// Sim, o internal/video tem uma struct igual — e é de propósito. Este pacote é ARMAZENAMENTO e
+// não pode importar o que roda ffmpeg: o internal/video importa videocache no teste de conteúdo
+// de frame, então a dependência inversa fecha um ciclo. Mais fundo que o ciclo: dar ao
+// internal/video acesso ao videocache devolveria a ele o caminho para descobrir a origem do
+// vídeo, que a spec-09 fechou tornando IMPOSSÍVEL, não proibido.
+//
+// O preço são duas structs de dois campos e uma conversão de três linhas, num lugar só
+// (servidor.garantirPausas). Barato, e não é "duas listas para o mesmo dado": uma é o resultado
+// do ffmpeg, a outra é o formato do arquivo — e quem grava converte na fronteira.
+type Pausa struct {
+	InicioMs int `json:"inicio_ms"` // instante em que a fala PAROU
+	FimMs    int `json:"fim_ms"`    // instante em que a fala VOLTOU
+}
+
+// DuracaoMs é o tamanho da pausa — pista de ordenação (pausa longa é mais provável fim de
+// sentença), nunca classificador: a distribuição medida é unimodal, e há pausa de 467 ms que é
+// fim de frase e de 934 ms que é meio de frase. Ver internal/video/pausas.go.
+func (p Pausa) DuracaoMs() int { return p.FimMs - p.InicioMs }
+
+// AnalisePausas é o pausas.json: as pausas e a receita que as produziu.
+type AnalisePausas struct {
+	NoiseDB  int       `json:"noise_db"`
+	MinMs    int       `json:"min_ms"`
+	GeradoEm time.Time `json:"gerado_em"`
+	Pausas   []Pausa   `json:"pausas"`
+}
+
+// Compativel diz se esta análise foi feita com os parâmetros pedidos. Parâmetro diferente =
+// análise a refazer: 6,5 s é barato demais para justificar usar dado de receita desconhecida.
+func (a AnalisePausas) Compativel(noiseDB, minMs int) bool {
+	return a.NoiseDB == noiseDB && a.MinMs == minMs
+}
+
+// GravarPausas escreve o pausas.json do culto.
+func (c *Cache) GravarPausas(videoID string, a AnalisePausas) error {
+	dir, err := c.DirVideo(videoID)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	if a.GeradoEm.IsZero() {
+		a.GeradoEm = c.agora()
+	}
+	b, err := json.Marshal(a)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, NomePausas), b, 0644)
+}
+
+// LerPausas devolve a análise gravada. Erro se não existir — quem chama decide o que fazer
+// (hoje: cair na fronteira da legenda, dizendo qual regra usou).
+func (c *Cache) LerPausas(videoID string) (AnalisePausas, error) {
+	var a AnalisePausas
+	dir, err := c.DirVideo(videoID)
+	if err != nil {
+		return a, err
+	}
+	b, err := os.ReadFile(filepath.Join(dir, NomePausas))
+	if err != nil {
+		return a, err
+	}
+	if err := json.Unmarshal(b, &a); err != nil {
+		return a, fmt.Errorf("pausas.json de %s ilegível: %w", videoID, err)
+	}
+	return a, nil
+}

@@ -32,6 +32,7 @@ import (
 	"srtclean/internal/retencao"
 	"srtclean/internal/transcricao"
 	"srtclean/internal/validacao"
+	"srtclean/internal/video"
 	"srtclean/internal/videocache"
 )
 
@@ -67,6 +68,15 @@ type Selecionador interface {
 // feita lá dentro se perderia sem deixar rastro.
 type BaixadorVideo interface {
 	BaixarVideoCompleto(ctx context.Context, ped *pipeline.Pedido, dirDestino string) (int, error)
+}
+
+// AnalisadorPausas detecta as PAUSAS de fala no áudio do vídeo — as fronteiras que o encaixe do
+// corte passa a usar em vez das fronteiras de bloco da legenda (ver ajuste.go e video/pausas.go).
+//
+// Injetado como as outras dependências de processo externo (baixador, selecionador, render): o
+// servidor não chama ffmpeg direto, e os testes exercitam o encaixe sem decodificar áudio.
+type AnalisadorPausas interface {
+	Pausas(ctx context.Context, videoPath string) ([]video.Pausa, error)
 }
 
 // RenderizadorVideo renderiza os candidatos aprovados a partir de uma FONTE explícita: o
@@ -114,6 +124,9 @@ type Servidor struct {
 	cortesPath       string
 	acoesPath        string
 	assetsDir        string
+	analisadorPausas AnalisadorPausas
+	pausasDB         int
+	pausasMinMs      int
 	reterPedidos     int
 	videoDias        int
 	videoTeto        int64
@@ -138,8 +151,15 @@ type Opcoes struct {
 	Selecionador  Selecionador
 	BaixadorVideo BaixadorVideo     // fase pesada (spec-05 parte 3); nil desabilita
 	Renderizador  RenderizadorVideo // fase pesada; nil desabilita
-	BaseDir       string
-	OutDir        string // raiz dos Shorts finais (padrão "finalizados")
+	// AnalisadorPausas gera videos/<id>/pausas.json. Nil = sem análise, e o encaixe do corte cai
+	// na fronteira da legenda (comportamento anterior, declarado na resposta como regra_fim).
+	AnalisadorPausas AnalisadorPausas
+	// PausasDB/PausasMinMs são os parâmetros medidos da detecção (-32 dB, 300 ms). Zero usa os
+	// padrões do internal/video, onde está a medição que os escolheu.
+	PausasDB    int
+	PausasMinMs int
+	BaseDir     string
+	OutDir      string // raiz dos Shorts finais (padrão "finalizados")
 	// VideosDir é a raiz do CACHE por vídeo (padrão videocache.DirPadrao = "videos"). Fica
 	// FORA de BaseDir de propósito: a limpeza por pedido (spec-06) enxerga só a raiz de
 	// trabalho, então um cache dentro dela seria apagado pela política errada.
@@ -192,6 +212,9 @@ func Novo(o Opcoes) *Servidor {
 		cortesPath:       o.CortesPath,
 		acoesPath:        o.AcoesPath,
 		assetsDir:        o.AssetsDir,
+		analisadorPausas: o.AnalisadorPausas,
+		pausasDB:         o.PausasDB,
+		pausasMinMs:      o.PausasMinMs,
 		reterPedidos:     o.ReterPedidos,
 		videoDias:        o.VideoDias,
 		videoTeto:        o.VideoTeto,
@@ -615,6 +638,9 @@ func (s *Servidor) faseHeavy(reg *registro) {
 		// escreveu; aqui ela vai para o video.json, AO LADO do vídeo. É de propósito que a
 		// declaração acompanhe o arquivo e não o pedido: o vídeo do cache é compartilhado, e um
 		// pedido não é dono do que outro também usa (spec-09).
+		// Vídeo novo em disco: analisa as pausas agora, para o PRÓXIMO pedido deste culto já
+		// encontrar as fronteiras de fala prontas (6,5 s medidos, uma vez por culto).
+		s.garantirPausas(ctx, pedCopia.VideoID, videoNoCache)
 		if err := s.cache.Registrar(pedCopia.VideoID, origemBaixada, pedCopia.Titulo); err != nil {
 			s.setErro(reg, comPrefixo("falha ao registrar o vídeo no cache: ", err))
 			return
@@ -742,6 +768,49 @@ func (s *Servidor) limparSobLock(extras ...string) {
 	} else if resCache.BytesLiberados > 0 || resCache.AcimaDoTeto {
 		s.logTempos(resCache.Resumo())
 	}
+}
+
+// opcoesPausas é a receita da detecção, num lugar só: o que o servidor manda detectar é o mesmo
+// que ele exige ao ler o pausas.json (Compativel). Sem isso, mudar o parâmetro deixaria em disco
+// um resultado que o encaixe usaria achando que é o configurado.
+func (s *Servidor) opcoesPausas() video.OpcoesPausas {
+	return video.OpcoesPausas{NoiseDB: s.pausasDB, MinMs: s.pausasMinMs}.ComPadroes()
+}
+
+// garantirPausas analisa o áudio do culto e guarda o resultado no cache, se ainda não houver
+// análise compatível. Chamada onde o vídeo JÁ está em mão.
+//
+// Falha NUNCA quebra o pedido: sem pausas o encaixe cai na fronteira da legenda, que é o que o
+// sistema fazia até hoje — pior, mas não parado.
+func (s *Servidor) garantirPausas(ctx context.Context, videoID, videoPath string) {
+	if s.analisadorPausas == nil || videoID == "" {
+		return
+	}
+	o := s.opcoesPausas()
+	if a, err := s.cache.LerPausas(videoID); err == nil && a.Compativel(o.NoiseDB, o.MinMs) {
+		return // já analisado com a receita atual
+	}
+	t0 := s.agora()
+	pausas, err := s.analisadorPausas.Pausas(ctx, videoPath)
+	if err != nil {
+		s.logTempos(fmt.Sprintf("aviso: não detectei as pausas de %s (%v); o encaixe do corte "+
+			"vai usar a fronteira da legenda", videoID, err))
+		return
+	}
+	// Conversão na fronteira: o ffmpeg devolve video.Pausa, o arquivo guarda videocache.Pausa.
+	// Ver o comentário do videocache.Pausa para por que são dois tipos.
+	guardar := make([]videocache.Pausa, 0, len(pausas))
+	for _, p := range pausas {
+		guardar = append(guardar, videocache.Pausa{InicioMs: p.InicioMs, FimMs: p.FimMs})
+	}
+	if err := s.cache.GravarPausas(videoID, videocache.AnalisePausas{
+		NoiseDB: o.NoiseDB, MinMs: o.MinMs, Pausas: guardar,
+	}); err != nil {
+		s.logTempos(fmt.Sprintf("aviso: não gravei as pausas de %s: %v", videoID, err))
+		return
+	}
+	s.logTempos(fmt.Sprintf("pausas do culto %s: %d fronteiras de fala em %.1fs (limiar %ddB, "+
+		"mínimo %dms)", videoID, len(pausas), s.agora().Sub(t0).Seconds(), o.NoiseDB, o.MinMs))
 }
 
 // estadoTerminal diz se o pedido acabou (para o bem ou para o mal). Só o que terminou
@@ -1076,6 +1145,20 @@ func (s *Servidor) faseLeve(reg *registro) {
 		m.BaixarLegendaMs = m.marcar(s.agora())
 		m.Titulo = copia.Titulo
 	})
+
+	// PAUSAS DE FALA, quando o vídeo do culto já está no cache. É o insumo do encaixe do corte
+	// (ajuste.go): a fronteira vem do ÁUDIO, não do bloco de legenda que quebra no meio da frase.
+	//
+	// Roda aqui porque a revisão precisa delas, e custa 6,5 s medidos — dentro de uma fase que já
+	// leva ~33 s. Se o culto ainda NÃO está em cache, não há áudio para analisar e o encaixe cai
+	// na fronteira da legenda, dizendo isso na resposta (regra_fim). Quando o download passar
+	// para antes da revisão (spec-05 v4, fatia 5), este "se" deixa de existir.
+	if s.cache.TemVideo(videoID) {
+		dirV, errV := s.cache.DirVideo(videoID)
+		if errV == nil {
+			s.garantirPausas(ctx, videoID, filepath.Join(dirV, videocache.NomeVideo))
+		}
+	}
 
 	// DERIVAÇÃO: a transcrição recortada à janela é artefato DERIVADO do pedido, gerada a
 	// partir da legenda do cache. O pedido declara de onde ela veio (DeclararRecorte), e um

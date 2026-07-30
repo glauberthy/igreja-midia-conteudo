@@ -40,6 +40,17 @@ func (s selecionadorHarness) Selecionar(ctx context.Context, transcricaoPath str
 	return harness.Selecionar(ctx, transcricaoPath, s.cfg)
 }
 
+// analisadorFFmpeg adapta video.DetectarPausas à interface do servidor, fixando o executor e o
+// binário — mesmo padrão do selecionadorHarness.
+type analisadorFFmpeg struct {
+	bin  string
+	opts video.OpcoesPausas
+}
+
+func (a analisadorFFmpeg) Pausas(ctx context.Context, videoPath string) ([]video.Pausa, error) {
+	return video.DetectarPausas(ctx, video.ExecutorReal{}, a.bin, videoPath, a.opts)
+}
+
 func main() {
 	porta := flag.Int("porta", 7799, "porta TCP local do servidor (padrão 7799; evite 80/8080/8000)")
 	base := flag.String("base", "trabalho", "pasta raiz de trabalho")
@@ -62,6 +73,11 @@ func main() {
 	declaracao := flag.String("declaracao", harness.DeclaracaoPadrao, "caminho da Declaração Doutrinária")
 	legenda := flag.Bool("legenda", video.LegendaQueimadaPadrao, "queimar a legenda na imagem do Short "+
 		"(spec-12 SUSPENSA: default desligado enquanto o timestamp for adiantado em ~3s)")
+	pausaDB := flag.Int("pausa-db", video.PausaNoiseDBPadrao, "limiar de silêncio em dB para detectar "+
+		"as PAUSAS de fala (fronteiras do corte; ver internal/video/pausas.go para a medição)")
+	pausaMinMs := flag.Int("pausa-min-ms", video.PausaMinMsPadrao, "duração mínima (ms) para contar "+
+		"como pausa: abaixo de ~200 ms o silencedetect pega micro-vão entre palavras e o corte "+
+		"encaixaria no meio da frase")
 	retomar := flag.String("retomar", "", "retoma um pedido já em disco, direto na revisão (pula legenda+seleção; "+
 		"reaproveita o video.mp4 se existir). Para iterar em render/tela sem refazer o ciclo inteiro.")
 	flag.Parse()
@@ -97,16 +113,20 @@ func main() {
 	}
 
 	s := servidor.Novo(servidor.Opcoes{
-		Baixador:         baixador,
-		Selecionador:     sel,
-		BaixadorVideo:    baixador,
-		Renderizador:     rend,
-		BaseDir:          *base,
-		VideosDir:        *videos,
-		OutDir:           *out,
-		LogRodadasPath:   *logRodadas,
-		TemposPath:       *tempos,
-		ReterPedidos:     *reter,
+		Baixador:      baixador,
+		Selecionador:  sel,
+		BaixadorVideo: baixador,
+		Renderizador:  rend,
+		AnalisadorPausas: analisadorFFmpeg{bin: *ffmpegBin,
+			opts: video.OpcoesPausas{NoiseDB: *pausaDB, MinMs: *pausaMinMs}},
+		PausasDB:       *pausaDB,
+		PausasMinMs:    *pausaMinMs,
+		BaseDir:        *base,
+		VideosDir:      *videos,
+		OutDir:         *out,
+		LogRodadasPath: *logRodadas,
+		TemposPath:     *tempos,
+		ReterPedidos:   *reter,
 		// Mínimo 1 nos dois: zero, no contrato do pacote, quer dizer "use o padrão" — então um
 		// `-video-teto 0` digitado para esvaziar o cache viraria 50 GB, o oposto do pedido.
 		VideoDias:        max(*videoDias, 1),
