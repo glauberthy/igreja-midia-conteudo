@@ -84,17 +84,27 @@ type dadosRevisao struct {
 	// É o que decide a fonte do player: o ARQUIVO (o mesmo que o corte usa) ou nada. Não há mais
 	// player do YouTube para cair: manter os dois seria manter duas fontes de tempo, que é
 	// exatamente a discrepância que esta fatia elimina por construção.
-	VideoLocal bool            `json:"videoLocal"`
-	Trechos    []trechoRevisao `json:"trechos"`
+	VideoLocal bool `json:"videoLocal"`
+	// JanelaIniMs/JanelaFimMs são a janela da PREGAÇÃO informada no pedido — o que a régua geral
+	// desenha. Não é o culto inteiro de propósito: fora da janela estão louvor e avisos, e mostrar
+	// 1h50 para uma pregação de 33 min desperdiçaria 70% da régua (decisão do dono).
+	// Fim 0 = não informado; aí o cliente usa a duração do vídeo.
+	JanelaIniMs int             `json:"janelaIniMs"`
+	JanelaFimMs int             `json:"janelaFimMs"`
+	Trechos     []trechoRevisao `json:"trechos"`
 }
 
 // revisaoJSON monta o JSON (seguro para <script>) com os dados de revisão do registro.
 // Chamar com o lock do servidor seguro (lê reg).
 func revisaoJSON(reg *registro, temVideoLocal bool) template.JS {
+	iniJanela, _ := transcricao.HmsToMs(reg.ped.Inicio)
+	fimJanela, _ := transcricao.HmsToMs(reg.ped.Fim)
 	d := dadosRevisao{
-		PedidoID:   reg.ped.ID,
-		VideoID:    download.VideoID(reg.ped.YouTubeURL),
-		VideoLocal: temVideoLocal,
+		PedidoID:    reg.ped.ID,
+		VideoID:     download.VideoID(reg.ped.YouTubeURL),
+		VideoLocal:  temVideoLocal,
+		JanelaIniMs: iniJanela,
+		JanelaFimMs: fimJanela,
 	}
 	// Índice do candidato de MAIOR score — para o selo discreto (destaca sem reordenar).
 	melhor := -1

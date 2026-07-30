@@ -295,3 +295,84 @@ func TestEncaixeQueEstouraAFaixaExplicaDeOndeVeio(t *testing.T) {
 		}
 	}
 }
+
+// --- ÍMÃ do arraste (fatia 3): regra SEPARADA da do clique em frase ---
+
+// TestImaArredondaOArrasteQuandoAPausaEstaPerto: 150 ms de distância, dentro do raio de 200 ms.
+// Na régua ampliada isso é ~1,5 px — o operador não tem como acertar por pixel, e o ímã existe
+// para ele não precisar.
+func TestImaArredondaOArrasteQuandoAPausaEstaPerto(t *testing.T) {
+	frases := frasesAjuste(t)
+	ctx := ContextoAjuste{Pausas: pausasDeTeste(), Gesto: "arraste-fim"}
+	got := recalcularTrecho(frases, 0, 20000, pausaRealDoAudio-150, ctx)
+
+	if got.EndMs != pausaRealDoAudio {
+		t.Errorf("o ímã não puxou: fim = %d, pausa em %d (distância 150 ms, raio %d)",
+			got.EndMs, pausaRealDoAudio, RaioImaMs)
+	}
+	if got.RegraFim != "ima" {
+		t.Errorf("regra_fim = %q, quero \"ima\" — o histórico precisa separar pulso de encaixe",
+			got.RegraFim)
+	}
+	if got.DeslocamentoFimMs != 150 {
+		t.Errorf("deslocamento = %d ms, quero 150", got.DeslocamentoFimMs)
+	}
+}
+
+// TestArrasteLongeDePausaValeOPulso é o outro lado, e é o que impede o ímã de virar encaixe:
+// arrastar para o meio de uma fala corrida é escolha legítima (às vezes o trecho tem de cortar
+// ali para caber na faixa de duração). Um ímã sem raio sequestraria o gesto.
+func TestArrasteLongeDePausaValeOPulso(t *testing.T) {
+	frases := frasesAjuste(t)
+	ctx := ContextoAjuste{Pausas: pausasDeTeste(), Gesto: "arraste-fim"}
+	const pedido = pausaRealDoAudio - 3000 // 3 s da pausa: muito além do raio
+
+	got := recalcularTrecho(frases, 0, 20000, pedido, ctx)
+	if got.EndMs != pedido {
+		t.Errorf("o arraste foi sequestrado: pediu %d, ficou %d (o ímã ignorou o raio de %d ms)",
+			pedido, got.EndMs, RaioImaMs)
+	}
+	if got.RegraFim != "pedido" {
+		t.Errorf("regra_fim = %q, quero \"pedido\"", got.RegraFim)
+	}
+}
+
+// TestImaTambemNoInicio: os dois marcadores são arrastáveis, então a regra vale para os dois.
+func TestImaTambemNoInicio(t *testing.T) {
+	frases := frasesAjuste(t)
+	// A pausa de teste em 38000 vira o alvo do ímã para um arraste que caiu em 37900.
+	ctx := ContextoAjuste{Pausas: pausasDeTeste(), Gesto: "arraste-inicio"}
+	got := recalcularTrecho(frases, 0, 37900, 60000, ctx)
+
+	if got.StartMs != 38000 {
+		t.Errorf("início = %d, quero 38000 (ímã sobre a pausa a 100 ms)", got.StartMs)
+	}
+	if got.RegraInicio != "ima" {
+		t.Errorf("regra_inicio = %q, quero \"ima\"", got.RegraInicio)
+	}
+}
+
+// TestCliqueEArrasteNaoUsamAMesmaRegra é o teste da SEPARAÇÃO, que o dono pediu explicitamente. O
+// mesmo tempo pedido produz resultados diferentes conforme o gesto — e tem de produzir: o clique
+// diz "termine onde esta fala termina" (3,5 s adiante, se for o caso), o arraste diz "termine
+// AQUI" (arredondado por 200 ms, no máximo).
+func TestCliqueEArrasteNaoUsamAMesmaRegra(t *testing.T) {
+	frases := frasesAjuste(t)
+	const pedido = fimDoBlocoDeLegenda // 3,5 s antes da pausa real
+
+	clique := recalcularTrecho(frases, 0, 20000, pedido,
+		ContextoAjuste{Pausas: pausasDeTeste(), Gesto: "frase-fim"})
+	arraste := recalcularTrecho(frases, 0, 20000, pedido,
+		ContextoAjuste{Pausas: pausasDeTeste(), Gesto: "arraste-fim"})
+
+	if clique.EndMs != pausaRealDoAudio {
+		t.Errorf("clique em frase: fim = %d, quero a pausa em %d", clique.EndMs, pausaRealDoAudio)
+	}
+	if arraste.EndMs != pedido {
+		t.Errorf("arraste: fim = %d, quero o pulso em %d — o arraste NÃO salta segundos",
+			arraste.EndMs, pedido)
+	}
+	if clique.EndMs == arraste.EndMs {
+		t.Error("clique e arraste produziram o mesmo fim: as regras foram unificadas")
+	}
+}

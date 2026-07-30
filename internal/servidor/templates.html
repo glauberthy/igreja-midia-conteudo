@@ -109,6 +109,39 @@
       border-radius: var(--raio); color: var(--tinta); background: var(--carta); }
     .carta-short .apagar { color: #8a1c1c; border-color: #e3b7b7; }
 
+    /* ===== RÉGUAS (tela 3, fatia 3) =====
+       Sem canvas: as pausas e os marcadores são divs posicionadas em %, e a régua geral é uma
+       barra. Na janela desenhada há ~34 pausas, não as 1835 do culto — DOM barato. */
+    .reguas { margin-top: var(--esp-4); }
+    .regua-geral { position: relative; height: 26px; background: #ececec;
+      border: 1px solid var(--linha); border-radius: var(--raio); cursor: pointer; overflow: hidden; }
+    .rg-trecho { position: absolute; top: 0; bottom: 0; background: var(--lima-clara);
+      border-left: 2px solid var(--lima-escura); border-right: 2px solid var(--lima-escura); }
+    .rg-cursor, .rz-cursor { position: absolute; top: 0; bottom: 0; width: 2px; background: #c0392b; }
+
+    .regua-zoom { position: relative; height: 92px; margin-top: 6px; background: #f7f7f5;
+      border: 1px solid var(--linha); border-radius: var(--raio); overflow: hidden;
+      touch-action: none; /* o arraste é nosso, não do navegador */ }
+    /* faixa de duração VÁLIDA: o operador vê o limite antes de esbarrar nele */
+    .rz-limite { position: absolute; top: 0; bottom: 0; background: rgba(120,160,60,.10);
+      border-left: 1px dashed #9bb36a; border-right: 1px dashed #c47f7f; }
+    .rz-faixa { position: absolute; top: 14px; bottom: 22px; background: rgba(154,205,50,.28);
+      border-top: 1px solid var(--lima-escura); border-bottom: 1px solid var(--lima-escura); }
+    /* PAUSAS: o resultado da fatia 1 virando utilidade. Altura pela duração da pausa — pista de
+       ordenação, nunca classificação (a distribuição é unimodal; ver docs/medicoes). */
+    .rz-pausa { position: absolute; bottom: 22px; min-width: 2px; background: #6b8ec9;
+      opacity: .85; border-radius: 1px; }
+    .rz-marcador { position: absolute; top: 6px; bottom: 16px; width: 12px; margin-left: -6px;
+      background: #fff; border: 2px solid var(--lima-escura); border-radius: 3px;
+      cursor: ew-resize; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+    .rz-marcador::after { content: ''; position: absolute; left: 4px; right: 4px; top: 6px;
+      bottom: 6px; border-left: 1px solid var(--lima-escura); border-right: 1px solid var(--lima-escura); }
+    .rz-marcador.arrastando { border-color: #c0392b; }
+    .rz-escala { display: flex; justify-content: space-between; font-size: 11px;
+      color: var(--tinta-tenue); font-variant-numeric: tabular-nums; margin: 2px 0 var(--esp-2); }
+    .leituras { display: flex; flex-wrap: wrap; gap: var(--esp-3); align-items: center; }
+    .leituras .linha-ctrl { margin-bottom: 0; }
+
     /* HISTÓRICO DE AÇÕES (tela 3) — compacto e monoespaçado: são números para comparar
        coluna a coluna, e fonte proporcional embaralha a leitura. */
     .historico { margin-top: var(--esp-3); font-size: 12px; }
@@ -354,24 +387,6 @@
               <button type="button" id="btn-meia">🐢 ½ velocidade</button>
             </div>
 
-            <div class="linha-ctrl">
-              <span class="campo">Início</span>
-              <button type="button" class="seta-t" id="aj-ini-mm" title="1 segundo mais cedo">&laquo;</button>
-              <button type="button" class="seta-t" id="aj-ini-m" title="0,25 segundo mais cedo">&lsaquo;</button>
-              <span class="valor" id="aj-v-ini">—</span>
-              <button type="button" class="seta-t" id="aj-ini-p" title="0,25 segundo mais tarde">&rsaquo;</button>
-              <button type="button" class="seta-t" id="aj-ini-pp" title="1 segundo mais tarde">&raquo;</button>
-            </div>
-
-            <div class="linha-ctrl">
-              <span class="campo">Fim</span>
-              <button type="button" class="seta-t" id="aj-fim-mm" title="1 segundo mais cedo">&laquo;</button>
-              <button type="button" class="seta-t" id="aj-fim-m" title="0,25 segundo mais cedo">&lsaquo;</button>
-              <span class="valor" id="aj-v-fim">—</span>
-              <button type="button" class="seta-t" id="aj-fim-p" title="0,25 segundo mais tarde">&rsaquo;</button>
-              <button type="button" class="seta-t" id="aj-fim-pp" title="1 segundo mais tarde">&raquo;</button>
-            </div>
-            <p class="dica-passos">&lsaquo; 0,25s · &laquo; 1s — toca a emenda sozinho</p>
 
             <p class="ajuste-encaixe" id="aj-encaixe" hidden></p>
             <div class="ajuste-invalido" id="aj-invalido" hidden></div>
@@ -400,6 +415,55 @@
           <div class="coluna-frases">
             <p class="instrucao" id="aj-instrucao">1. clique onde COMEÇA</p>
             <div class="frases" id="aj-frases"></div>
+          </div>
+        </div>
+
+        <!-- ===== RÉGUAS (spec-05 v4, fatia 3) =====
+             Aqui em baixo, na LARGURA INTEIRA, e não na coluna do vídeo: a coluna tem ~450 px, e
+             ±60 s ali dariam 0,27 s/px — um pixel por passo de 0,25 s, inutilizável. Com ~1120 px
+             os mesmos ±60 s dão ~0,11 s/px.
+
+             Duas réguas, como em editor de áudio: visão geral em cima (contexto e salto), detalhe
+             embaixo (onde os marcadores moram). A geral cobre a JANELA DA PREGAÇÃO — fora dela
+             estão louvor e avisos, e desenhar 1h50 para 33 min de pregação desperdiçaria 70% dela. -->
+        <div class="reguas">
+          <div class="regua-geral" id="regua-geral" title="a pregação inteira — clique para saltar">
+            <div class="rg-trecho" id="rg-trecho"></div>
+            <div class="rg-cursor" id="rg-cursor"></div>
+          </div>
+
+          <div class="regua-zoom" id="regua-zoom">
+            <div class="rz-limite" id="rz-limite" title="duração mínima e máxima do Short"></div>
+            <div class="rz-pausas" id="rz-pausas"></div>
+            <div class="rz-faixa" id="rz-faixa"></div>
+            <div class="rz-cursor" id="rz-cursor"></div>
+            <div class="rz-marcador rz-ini" id="rz-ini" title="arraste o início"></div>
+            <div class="rz-marcador rz-fim" id="rz-fim" title="arraste o fim"></div>
+          </div>
+          <div class="rz-escala" id="rz-escala"></div>
+
+          <!-- Os empurrões FICAM: arraste depende do pulso, e eles são o único jeito de garantir o
+               último quarto de segundo. Agora ao lado da leitura de cada marcador. -->
+          <div class="leituras">
+            <div class="linha-ctrl">
+              <span class="campo">Início</span>
+              <button type="button" class="seta-t" id="aj-ini-mm" title="1 segundo mais cedo">&laquo;</button>
+              <button type="button" class="seta-t" id="aj-ini-m" title="0,25 segundo mais cedo">&lsaquo;</button>
+              <span class="valor" id="aj-v-ini">—</span>
+              <button type="button" class="seta-t" id="aj-ini-p" title="0,25 segundo mais tarde">&rsaquo;</button>
+              <button type="button" class="seta-t" id="aj-ini-pp" title="1 segundo mais tarde">&raquo;</button>
+            </div>
+
+            <div class="linha-ctrl">
+              <span class="campo">Fim</span>
+              <button type="button" class="seta-t" id="aj-fim-mm" title="1 segundo mais cedo">&laquo;</button>
+              <button type="button" class="seta-t" id="aj-fim-m" title="0,25 segundo mais cedo">&lsaquo;</button>
+              <span class="valor" id="aj-v-fim">—</span>
+              <button type="button" class="seta-t" id="aj-fim-p" title="0,25 segundo mais tarde">&rsaquo;</button>
+              <button type="button" class="seta-t" id="aj-fim-pp" title="1 segundo mais tarde">&raquo;</button>
+            </div>
+            <p class="dica-passos">&lsaquo; 0,25s · &laquo; 1s (tocam a emenda) · arraste os
+              marcadores na régua · as marcas claras são pausas da fala</p>
           </div>
         </div>
 
@@ -568,7 +632,13 @@
               proximoClique: dados.trechos.map(function(){ return 'ini'; }),
               // hist[i] = sequência de ações daquele trecho (ver registrarAcao). Array chapado:
               // é log de diagnóstico, não modelo.
-              hist: dados.trechos.map(function(){ return []; }) };
+              hist: dados.trechos.map(function(){ return []; }),
+              // arrastando = gesto em curso na régua (fatia 3). Guarda a ponta e o valor de onde
+              // partiu, para o histórico registrar o pulso inteiro.
+              arrastando: null,
+              // pausasT[i] = fronteiras de fala em volta do trecho i, como o servidor devolveu no
+              // recálculo. São o alvo do arraste: sem desenhá-las, o operador mira às cegas.
+              pausasT: dados.trechos.map(function(){ return null; }) };
       ligarControles();
       desenhar();
       criarPlayer();
@@ -599,6 +669,10 @@
         REV.prontoPlayer = true;
         pIr(efetivoAtual().iniMs / MS); // deixa o player no começo do trecho atual
       });
+      // O cursor das réguas acompanha a reprodução. timeupdate (~4 Hz) basta para um traço; usar
+      // rAF aqui gastaria quadro para mover 2 px.
+      el.addEventListener('timeupdate', function () { if (REV) desenharReguas(); });
+      el.addEventListener('seeked', function () { if (REV) desenharReguas(); });
       el.addEventListener('error', function () {
         REV.prontoPlayer = false;
         if (aviso) {
@@ -730,6 +804,212 @@
     // (Nota histórica: aqui havia a regra do allowSeekAhead do YouTube — não durante
     // os empurrões (não dispara requisição de vídeo a cada clique) e true quando o debounce
     // assenta, aí sim buscando de fato o trecho.
+    // ===== RÉGUAS: geral (contexto) e ampliada (onde se ajusta) =====
+    //
+    // Por que duas: uma régua do vídeo inteiro em ~1120 px dá ~5,9 s/px, e o ajuste fino é de
+    // 0,25 s — 24 passos por pixel, inutilizável. A ampliada mostra o centro do trecho ±60 s, o
+    // que dá ~0,11 s/px: dois pixels por passo fino. É o padrão de editor de áudio, visão geral em
+    // cima e detalhe embaixo, e foi o arranjo que o dono marcou no print.
+    var JANELA_ZOOM_MS = 120000; // ±60 s em torno do centro do trecho
+    // Faixa de duração e raio do ímã vêm do SERVIDOR (harness.DuracaoMinMs/MaxMs, RaioImaMs).
+    // Uma fonte só: uma cópia destes números no JS divergiria na primeira mudança de um lado.
+    var DUR_MIN_MS = {{.DurMinMs}};
+    var DUR_MAX_MS = {{.DurMaxMs}};
+    var RAIO_IMA_MS = {{.RaioImaMs}};
+
+    // O par de conversões. Tudo na régua é isto mais uma div posicionada em %.
+    function pxParaMs(px, largura, deMs, ateMs) {
+      if (largura <= 0) return deMs;
+      var f = Math.min(1, Math.max(0, px / largura));
+      return Math.round(deMs + f * (ateMs - deMs));
+    }
+    function msParaPct(ms, deMs, ateMs) {
+      if (ateMs <= deMs) return 0;
+      return Math.min(100, Math.max(0, 100 * (ms - deMs) / (ateMs - deMs)));
+    }
+
+    // janelaZoom: o que a régua ampliada mostra. Centrada no trecho, para os dois marcadores
+    // ficarem visíveis mesmo quando o operador arrasta um deles para longe.
+    function janelaZoom() {
+      var e = efetivoAtual();
+      var centro = (e.iniMs + e.fimMs) / 2;
+      var de = Math.max(0, centro - JANELA_ZOOM_MS / 2);
+      return { de: de, ate: de + JANELA_ZOOM_MS };
+    }
+
+    // janelaGeral: a JANELA DA PREGAÇÃO. Sem fim informado, usa a duração do vídeo (quando o
+    // player já leu os metadados) ou o último trecho com folga — nunca o culto inteiro, que
+    // desperdiçaria a régua com louvor e avisos.
+    function janelaGeral() {
+      var ini = REV.dados.janelaIniMs || 0;
+      var fim = REV.dados.janelaFimMs || 0;
+      if (!fim && REV.player && REV.player.duration) fim = Math.round(REV.player.duration * MS);
+      if (!fim) {
+        REV.dados.trechos.forEach(function (t) { fim = Math.max(fim, t.endSeg * MS + 60000); });
+      }
+      if (fim <= ini) fim = ini + 60000;
+      return { de: ini, ate: fim };
+    }
+
+    function desenharReguas() {
+      var e = efetivoAtual();
+      var g = document.getElementById('regua-geral');
+      if (g) {
+        var jg = janelaGeral();
+        var bloco = document.getElementById('rg-trecho');
+        if (bloco) {
+          bloco.style.left = msParaPct(e.iniMs, jg.de, jg.ate) + '%';
+          // Mínimo de 0,8% (~9 px em 1120): um trecho de 30 s numa pregação de 1h50 vale 0,45%,
+          // e um traço de 5 px não se acha na régua. Aqui a régua serve para LOCALIZAR.
+          bloco.style.width = Math.max(0.8, msParaPct(e.fimMs, jg.de, jg.ate) -
+                                            msParaPct(e.iniMs, jg.de, jg.ate)) + '%';
+        }
+        posicionarCursor('rg-cursor', jg);
+      }
+
+      var jz = janelaZoom();
+      var faixa = document.getElementById('rz-faixa');
+      if (faixa) {
+        faixa.style.left = msParaPct(e.iniMs, jz.de, jz.ate) + '%';
+        faixa.style.width = Math.max(0.2, msParaPct(e.fimMs, jz.de, jz.ate) -
+                                          msParaPct(e.iniMs, jz.de, jz.ate)) + '%';
+      }
+      var mi = document.getElementById('rz-ini'), mf = document.getElementById('rz-fim');
+      if (mi) mi.style.left = msParaPct(e.iniMs, jz.de, jz.ate) + '%';
+      if (mf) mf.style.left = msParaPct(e.fimMs, jz.de, jz.ate) + '%';
+
+      // Faixa de duração VÁLIDA a partir do início atual: o operador vê onde o corte deixa de
+      // caber ANTES de esbarrar, em vez de descobrir ao tentar aprovar.
+      var lim = document.getElementById('rz-limite');
+      if (lim) {
+        lim.style.left = msParaPct(e.iniMs + DUR_MIN_MS, jz.de, jz.ate) + '%';
+        lim.style.width = Math.max(0, msParaPct(e.iniMs + DUR_MAX_MS, jz.de, jz.ate) -
+                                      msParaPct(e.iniMs + DUR_MIN_MS, jz.de, jz.ate)) + '%';
+      }
+      desenharPausas(jz);
+      posicionarCursor('rz-cursor', jz);
+      var esc = document.getElementById('rz-escala');
+      if (esc) esc.textContent = '';
+      if (esc) {
+        var a = document.createElement('span'); a.textContent = rotulo(jz.de);
+        var b = document.createElement('span');
+        b.textContent = 'trecho ' + (e.fimMs - e.iniMs > 0 ? ((e.fimMs - e.iniMs) / MS).toFixed(2) : '0') + 's';
+        var c = document.createElement('span'); c.textContent = rotulo(jz.ate);
+        esc.appendChild(a); esc.appendChild(b); esc.appendChild(c);
+      }
+    }
+
+    function posicionarCursor(id, janela) {
+      var cur = document.getElementById(id);
+      if (!cur) return;
+      var t = pTempo() * MS;
+      var dentro = t >= janela.de && t <= janela.ate;
+      cur.hidden = !dentro;
+      if (dentro) cur.style.left = msParaPct(t, janela.de, janela.ate) + '%';
+    }
+
+    // desenharPausas põe na régua o resultado da fatia 1. Sem elas o operador arrasta às cegas:
+    // a fronteira do corte é a pausa da fala, e ele precisa VER onde ela está para mirar.
+    // Altura pela duração — pista de ordenação, não classificação.
+    function desenharPausas(jz) {
+      var caixa = document.getElementById('rz-pausas');
+      if (!caixa) return;
+      caixa.textContent = '';
+      var ps = (REV.ajustes[REV.atual] && REV.ajustes[REV.atual].resposta &&
+                REV.ajustes[REV.atual].resposta.pausas) || REV.pausasT[REV.atual] || [];
+      ps.forEach(function (p) {
+        if (p.fim_ms < jz.de || p.inicio_ms > jz.ate) return;
+        var d = document.createElement('div');
+        d.className = 'rz-pausa';
+        d.style.left = msParaPct(p.inicio_ms, jz.de, jz.ate) + '%';
+        d.style.width = Math.max(0.18, msParaPct(p.fim_ms, jz.de, jz.ate) -
+                                       msParaPct(p.inicio_ms, jz.de, jz.ate)) + '%';
+        // 300 ms (mínimo detectado) = 10 px; 1,5 s ou mais = 34 px.
+        var dur = p.fim_ms - p.inicio_ms;
+        d.style.height = Math.min(34, 10 + Math.round((dur - 300) / 40)) + 'px';
+        d.title = 'pausa de ' + (dur / MS).toFixed(2) + 's em ' + rotulo(p.inicio_ms);
+        caixa.appendChild(d);
+      });
+    }
+
+    // ARRASTE dos marcadores. O gesto é: capturar o ponteiro, converter px em ms a cada
+    // movimento, travar (início < fim, duração na faixa), mover o currentTime — e SÓ ao soltar
+    // pedir o recálculo, com gesto "arraste-*", que é o que liga o ÍMÃ no servidor.
+    //
+    // O ímã mora no servidor de propósito: é a mesma família de regra do encaixe do clique, e
+    // duas cópias da mesma decisão divergem. Aqui só se posiciona.
+    function ligarArraste(idMarcador, ponta) {
+      var el = document.getElementById(idMarcador);
+      var regua = document.getElementById('regua-zoom');
+      if (!el || !regua) return;
+      el.addEventListener('pointerdown', function (ev) {
+        ev.preventDefault();
+        el.setPointerCapture(ev.pointerId);
+        el.classList.add('arrastando');
+        REV.arrastando = { ponta: ponta, deMs: efetivoAtual()[ponta === 'inicio' ? 'iniMs' : 'fimMs'] };
+      });
+      el.addEventListener('pointermove', function (ev) {
+        if (!REV || !REV.arrastando) return;
+        var jz = janelaZoom();
+        var r = regua.getBoundingClientRect();
+        var ms = pxParaMs(ev.clientX - r.left, r.width, jz.de, jz.ate);
+        aplicarArraste(ponta, ms);
+      });
+      var soltar = function (ev) {
+        if (!REV || !REV.arrastando) return;
+        el.classList.remove('arrastando');
+        if (el.hasPointerCapture && el.hasPointerCapture(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
+        var e = efetivoAtual();
+        var pulso = ponta === 'inicio' ? e.iniMs : e.fimMs;
+        var partiu = REV.arrastando.deMs;
+        REV.arrastando = null;
+        // UMA ação por gesto, com o valor em que o pulso parou. O que o ímã fizer depois vem na
+        // resposta do servidor (aplicado_ms + regra), e é assim que o histórico separa os dois.
+        registrarAcao(REV.atual, { tipo: 'arraste-' + ponta, passo: 'de ' + hhmmss(partiu) },
+                      ponta, e.iniMs, e.fimMs);
+        REV.ultimaPonta = ponta;
+        clearTimeout(REV.debounce);
+        pedirRecalculo(REV.atual, false);
+      };
+      el.addEventListener('pointerup', soltar);
+      el.addEventListener('pointercancel', soltar);
+    }
+
+    // aplicarArraste move a ponta com as TRAVAS: início antes do fim e duração dentro da faixa.
+    // Travar aqui (e não só no servidor) é o que dá a sensação de limite — o marcador para de
+    // andar em vez de andar e ser recusado depois.
+    function aplicarArraste(ponta, ms) {
+      var e = efetivoAtual();
+      var ini = e.iniMs, fim = e.fimMs;
+      if (ponta === 'inicio') {
+        ini = Math.min(Math.max(0, ms), fim - DUR_MIN_MS);
+        ini = Math.max(ini, fim - DUR_MAX_MS);
+      } else {
+        fim = Math.max(ms, ini + DUR_MIN_MS);
+        fim = Math.min(fim, ini + DUR_MAX_MS);
+      }
+      REV.ajustes[REV.atual] = { iniMs: ini, fimMs: fim, resposta: null,
+                                 vizinhanca: REV.ajustes[REV.atual] ? REV.ajustes[REV.atual].vizinhanca : null,
+                                 gesto: 'arraste-' + ponta };
+      pIr((ponta === 'inicio' ? ini : fim) / MS); // arrasta e OUVE onde está
+      desenharAjuste();
+      desenharReguas();
+    }
+
+    // Clique na régua = SALTO do player, nunca mudança de corte. São coisas diferentes: a régua
+    // geral serve para achar onde se está no sermão; mover o corte é o arraste do marcador.
+    function ligarSaltoNaRegua(id, obterJanela) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('click', function (ev) {
+        if (REV && REV.arrastando) return;
+        var j = obterJanela();
+        var r = el.getBoundingClientRect();
+        pIr(pxParaMs(ev.clientX - r.left, r.width, j.de, j.ate) / MS);
+        desenharReguas();
+      });
+    }
+
     // ===== HISTÓRICO DE AÇÕES (diagnóstico do corte) =====
     //
     // Por que existe: o dono relata que o áudio do Short não corresponde ao trecho selecionado —
@@ -777,9 +1057,11 @@
           h[k].inicio_ms = resp.start_ms;
           h[k].fim_ms = resp.end_ms;
           h[k].duracao_ms = resp.duracao_ms;
-          // regra_fim separa "o encaixe do áudio decidiu" de "a legenda decidiu" no log — é a
-          // distinção que o histórico existe para registrar.
-          h[k].regra = resp.regra_fim || '';
+          // A REGRA da ponta que se moveu: "pausa" (encaixe do clique), "ima" (arraste
+          // arredondado), "pedido" (pulso valeu) ou "legenda" (sem análise em disco). É o que
+          // separa, no log, o que foi PULSO do operador do que foi ENCAIXE do sistema — com
+          // pedido_ms e aplicado_ms ao lado dizendo de quanto foi.
+          h[k].regra = (h[k].ponta === 'inicio' ? resp.regra_inicio : resp.regra_fim) || '';
         }
       }
       desenharHistorico();
@@ -858,9 +1140,9 @@
       var t = REV.dados.trechos[REV.atual];
       var linhas = ['# pedido ' + REV.dados.pedidoId + ' · trecho ' + (REV.atual + 1) +
                     ' · original ' + hhmmss(t.iniMs) + ' -> ' + hhmmss(t.fimMs),
-                    'seq\ttipo\tpediu_ms\taplicou_ms\tdelta_ms\tinicio_ms\tfim_ms\tdur_s\tfrase\touvido'];
+                    'seq\ttipo\tregra\tpediu_ms\taplicou_ms\tdelta_ms\tinicio_ms\tfim_ms\tdur_s\tfrase\touvido'];
       h.forEach(function (a) {
-        linhas.push([a.seq, a.tipo, a.pedido_ms || '', a.aplicado_ok ? a.aplicado_ms : '',
+        linhas.push([a.seq, a.tipo, a.regra || '', a.pedido_ms || '', a.aplicado_ok ? a.aplicado_ms : '',
                      a.aplicado_ok && a.pedido_ms ? (a.aplicado_ms - a.pedido_ms) : '',
                      a.inicio_ms, a.fim_ms, (a.duracao_ms / MS).toFixed(2),
                      (a.frase || '').replace(/\t/g, ' '), (a.ouvido || '').replace(/\t/g, ' ')].join('\t'));
@@ -1156,7 +1438,14 @@
       }).then(function (r) { return r.ok ? r.json() : null; }).then(function (resp) {
         if (!resp || !REV) return;
         REV.viz[i] = resp.vizinhanca;
-        if (i === REV.atual && !REV.ajustes[i]) desenharFrases({ vizinhanca: resp.vizinhanca });
+        // As PAUSAS vêm nesta mesma resposta e são o que a régua ampliada desenha. Guardadas por
+        // trecho porque a janela desenhada muda com o trecho — e sem isto a régua abriria sem
+        // marca nenhuma no primeiro desenho, que é justamente quando o operador vai mirar.
+        REV.pausasT[i] = resp.pausas || [];
+        if (i === REV.atual && !REV.ajustes[i]) {
+          desenharFrases({ vizinhanca: resp.vizinhanca });
+          desenharReguas();
+        }
       }).catch(function () { REV.viz[i] = null; });
     }
 
@@ -1223,6 +1512,7 @@
 
       desenharAjuste();
       desenharTrilha();
+      desenharReguas();
       desenharHistorico();
       garantirVizinhanca();
       // Player posicionado no início do trecho atual ao trocar de trecho.
@@ -1273,7 +1563,7 @@
           acoes.push({ indice: i, seq: a.seq, tipo: a.tipo, pedido_ms: a.pedido_ms,
                        aplicado_ms: a.aplicado_ms, aplicado_ok: a.aplicado_ok,
                        inicio_ms: a.inicio_ms, fim_ms: a.fim_ms, duracao_ms: a.duracao_ms,
-                       frase: a.frase, ouvido: a.ouvido });
+                       frase: a.frase, ouvido: a.ouvido, regra: a.regra || '' });
         });
       });
       if (acoes.length) partes.push('acoes=' + encodeURIComponent(JSON.stringify(acoes)));
@@ -1324,6 +1614,10 @@
       ligar('aj-fim-p', function () { empurrar('fim', 250); });
       ligar('aj-fim-pp', function () { empurrar('fim', 1000); });
       ligar('aj-restaurar', restaurar);
+      ligarArraste('rz-ini', 'inicio');
+      ligarArraste('rz-fim', 'fim');
+      ligarSaltoNaRegua('regua-geral', janelaGeral);
+      ligarSaltoNaRegua('regua-zoom', janelaZoom);
       ligar('hist-anotar', anotarOuvido);
       ligar('hist-copiar', copiarHistorico);
       ligar('aprovar', function () { decidir('aprovado'); });

@@ -1255,22 +1255,97 @@ func TestFaixaTemRolagemPropria(t *testing.T) {
 	}
 }
 
-// TestControlesFicamNaColunaDoVideo é o item 4 do outro lado: a esquerda tinha espaço morto sob
-// o player e é onde os controles cabem sem quebrar em duas linhas.
-func TestControlesFicamNaColunaDoVideo(t *testing.T) {
+// AQUI VIVIA o TestControlesFicamNaColunaDoVideo, que exigia os controles de tempo DENTRO da
+// coluna do vídeo. Ele valia enquanto a coluna era o único lugar com espaço morto.
+//
+// A fatia 3 mudou o arranjo por ARITMÉTICA, não por gosto: a coluna tem ~450 px, e ±60 s ali dariam
+// 0,27 s/px — um pixel por passo de 0,25 s, inutilizável. A régua precisa da largura inteira, e as
+// leituras (com os empurrões) foram com ela.
+//
+// TestArranjoDaRevisao é o que passou a proteger o arranjo, agora incluindo a ordem vertical.
+func TestArranjoDaRevisao(t *testing.T) {
 	corpo := htmlDaRevisao(t)
-	iVideo := strings.Index(corpo, `class="coluna-video"`)
-	iFrases := strings.Index(corpo, `class="coluna-frases"`)
-	if iVideo < 0 || iFrases < 0 {
-		t.Fatal("as duas colunas deveriam existir")
+	pos := func(marca string) int {
+		i := strings.Index(corpo, marca)
+		if i < 0 {
+			t.Fatalf("a tela não tem %q", marca)
+		}
+		return i
 	}
+	iVideo := pos(`class="coluna-video"`)
+	iFrases := pos(`class="coluna-frases"`)
+	iReguas := pos(`class="reguas"`)
+	iDecisao := pos(`class="decisao"`)
+
+	// Em cima e lado a lado: vídeo à esquerda, frases à direita (o operador lê e ouve juntos).
 	if iVideo > iFrases {
 		t.Error("o vídeo deveria vir antes (esquerda) e as frases depois (direita)")
 	}
-	// Os controles de tempo ficam na coluna do vídeo, entre ela e a das frases.
-	iCtrl := strings.Index(corpo, `id="aj-v-ini"`)
-	if !(iVideo < iCtrl && iCtrl < iFrases) {
-		t.Error("os controles de tempo deveriam estar na coluna do vídeo, sob o player")
+	// Réguas DEPOIS das duas colunas (largura inteira) e ANTES da decisão.
+	if !(iFrases < iReguas && iReguas < iDecisao) {
+		t.Error("as réguas deveriam ficar entre as duas colunas e a linha de decisão")
+	}
+	// E os empurrões NÃO saíram: ficaram junto da leitura de cada marcador, dentro das réguas.
+	iEmpurrao := pos(`id="aj-fim-p"`)
+	if !(iReguas < iEmpurrao && iEmpurrao < iDecisao) {
+		t.Error("os empurrões de 0,25s/1s deveriam estar com as leituras, no bloco das réguas")
+	}
+}
+
+// TestReguasTrazemOQueODonoExigiu: os três pontos que decidem se a fatia 3 funciona — pausas
+// visíveis, marcadores arrastáveis, e o que não sai.
+func TestReguasTrazemOQueODonoExigiu(t *testing.T) {
+	corpo := htmlDaRevisao(t)
+	for _, quer := range []string{
+		`id="regua-geral"`, `id="rg-trecho"`, // visão geral com o trecho marcado
+		`id="regua-zoom"`, `id="rz-faixa"`, // ampliada com o intervalo destacado
+		`id="rz-ini"`, `id="rz-fim"`, // os dois marcadores arrastáveis
+		`id="rz-pausas"`,                   // as pausas da fatia 1 viram utilidade aqui
+		`id="rz-limite"`,                   // a faixa 30–58s visível ANTES de esbarrar
+		`id="rz-cursor"`, `id="rg-cursor"`, // onde a reprodução está
+	} {
+		if !strings.Contains(corpo, quer) {
+			t.Errorf("a régua não tem %q", quer)
+		}
+	}
+	// O que NÃO sai (a régua acrescenta, não substitui).
+	for _, quer := range []string{
+		`id="aj-frases"`,    // faixa de frases
+		`id="aj-ini-m"`,     // empurrão de 0,25s
+		`id="aj-ini-mm"`,    // empurrão de 1s
+		`id="historico"`,    // histórico de ações
+		`id="hist-ouvido"`,  // "o que você ouviu"
+		`id="aj-restaurar"`, // restaurar
+	} {
+		if !strings.Contains(corpo, quer) {
+			t.Errorf("a fatia 3 removeu %q, que tinha de ficar", quer)
+		}
+	}
+	js := jsDaPagina(t)
+	for _, quer := range []string{"setPointerCapture", "pxParaMs", "msParaPct", "desenharPausas",
+		"arraste-'", "DUR_MIN_MS", "DUR_MAX_MS"} {
+		if !strings.Contains(js, quer) {
+			t.Errorf("o cliente das réguas não usa %q", quer)
+		}
+	}
+}
+
+// TestFaixaDeDuracaoVemDoServidor: a régua desenha o limite 30–58 s, e esses números são regra do
+// harness. Uma cópia no JS divergiria na primeira mudança de um lado — é a lição do tempos.csv
+// aplicada à tela.
+func TestFaixaDeDuracaoVemDoServidor(t *testing.T) {
+	// O html/template escapa o contexto de JS e insere o número com espaços em volta
+	// ("= 30000 ;"), então a comparação normaliza os espaços em vez de exigir o literal exato —
+	// senão o teste falharia por formatação do próprio template, e não por regra errada.
+	js := strings.Join(strings.Fields(jsDaPagina(t)), " ")
+	for _, par := range [][2]string{
+		{"DUR_MIN_MS", fmt.Sprint(harness.DuracaoMinMs)},
+		{"DUR_MAX_MS", fmt.Sprint(harness.DuracaoMaxMs)},
+		{"RAIO_IMA_MS", fmt.Sprint(RaioImaMs)},
+	} {
+		if !strings.Contains(js, "var "+par[0]+" = "+par[1]) {
+			t.Errorf("%s da tela não veio da constante do servidor (esperava %s)", par[0], par[1])
+		}
 	}
 }
 

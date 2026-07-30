@@ -236,3 +236,36 @@ func TestTelaTrazOHistorico(t *testing.T) {
 		t.Error("o campo do ouvido não sugere o formato da anotação")
 	}
 }
+
+// TestHistoricoRegistraAImaSeparadoDoPulso é o que o dono pediu na fatia 3: o log tem de dizer o
+// valor ANTES e DEPOIS do ímã, para separar o que foi pulso do operador do que foi encaixe do
+// sistema. Com pedido_ms, aplicado_ms e regra na mesma linha, a pergunta se responde sozinha.
+func TestHistoricoRegistraAImaSeparadoDoPulso(t *testing.T) {
+	s := prontoParaAprovar(t, tresCandidatos())
+	acoes := `[
+	  {"indice":0,"seq":1,"tipo":"arraste-fim","pedido_ms":47350,"aplicado_ms":47500,
+	   "aplicado_ok":true,"regra":"ima","inicio_ms":20000,"fim_ms":47500,"duracao_ms":27500},
+	  {"indice":0,"seq":2,"tipo":"arraste-fim","pedido_ms":44500,"aplicado_ms":44500,
+	   "aplicado_ok":true,"regra":"pedido","inicio_ms":20000,"fim_ms":44500,"duracao_ms":24500}
+	]`
+	if rec := aprovarComAcoes(t, s, "teste-1", acoes, "0"); rec.Code != 200 {
+		t.Fatalf("aprovar devolveu %d: %s", rec.Code, rec.Body.String())
+	}
+	reg := lerAcoesCSV(t, s.acoesPath)
+
+	// Ação 1: o ímã atuou — pulso em 47350, aplicado 47500, delta +150 e regra "ima".
+	if got := campoAcao(t, reg, 1, "regra"); got != "ima" {
+		t.Errorf("regra = %q, quero \"ima\"", got)
+	}
+	if got := campoAcao(t, reg, 1, "delta_ms"); got != "150" {
+		t.Errorf("delta_ms = %q, quero 150 (o quanto o ímã puxou)", got)
+	}
+	// Ação 2: o pulso valeu — delta 0 e regra "pedido". Sem a coluna regra, as duas linhas seriam
+	// indistinguíveis de um encaixe que por acaso não moveu.
+	if got := campoAcao(t, reg, 2, "regra"); got != "pedido" {
+		t.Errorf("regra = %q, quero \"pedido\"", got)
+	}
+	if got := campoAcao(t, reg, 2, "delta_ms"); got != "0" {
+		t.Errorf("delta_ms = %q, quero 0", got)
+	}
+}

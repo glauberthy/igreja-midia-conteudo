@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"srtclean/internal/download"
+	"srtclean/internal/harness"
 	"srtclean/internal/pipeline"
 	"srtclean/internal/retencao"
 	"srtclean/internal/transcricao"
@@ -300,6 +301,20 @@ func (s *Servidor) idPadrao() string {
 	return fmt.Sprintf("web-%s-%d", s.agora().Format("20060102-150405"), s.seq)
 }
 
+// paginaVars são os valores que a PÁGINA precisa e que já existem em Go. Injetados no template
+// em vez de repetidos no JS: a faixa de duração é regra do harness, e uma segunda cópia dela no
+// cliente divergiria na primeira vez que alguém mexesse numa só (é a lição do tempos.csv).
+type paginaVars struct {
+	DurMinMs  int
+	DurMaxMs  int
+	RaioImaMs int
+}
+
+func dadosPagina() paginaVars {
+	return paginaVars{DurMinMs: harness.DuracaoMinMs, DurMaxMs: harness.DuracaoMaxMs,
+		RaioImaMs: RaioImaMs}
+}
+
 func (s *Servidor) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// GET / só responde a "/", não a qualquer prefixo (evita casar rotas removidas).
 	if r.URL.Path != "/" {
@@ -307,7 +322,7 @@ func (s *Servidor) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, "pagina", nil); err != nil {
+	if err := tmpl.ExecuteTemplate(w, "pagina", dadosPagina()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

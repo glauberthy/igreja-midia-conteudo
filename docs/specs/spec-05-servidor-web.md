@@ -888,6 +888,64 @@ rolaria a pagina inteira e desfaria o ganho de caber numa tela.
 Um selo `tocando a emenda…` avisa quando o som veio do sistema — a emenda toca sozinha, e sem
 aviso o operador nao sabe se foi ele que clicou em algo por acidente.
 
+### v4, fatia 3 (2026-07-30): duas réguas, e os marcadores arrastáveis
+
+**Arranjo (marcação do dono).** Vídeo e faixa de frases lado a lado em cima; as duas réguas na
+**largura inteira** embaixo; a linha de decisão por último.
+
+A régua não cabe na coluna do vídeo, e é aritmética: a coluna tem ~450 px, e ±60 s ali dariam
+**0,27 s/px** — um pixel por passo de 0,25 s, inutilizável. Com ~1120 px os mesmos ±60 s dão
+**~0,11 s/px**, dois pixels por passo fino.
+
+| régua | o que mostra | para quê |
+|---|---|---|
+| **geral** | a JANELA DA PREGAÇÃO, com o trecho marcado | contexto e salto (clique posiciona o player) |
+| **ampliada** | centro do trecho ±60 s | é onde os marcadores moram e onde se ajusta |
+
+A geral cobre a pregação, não o culto: fora dela estão louvor e avisos, e desenhar 1h50 para 33 min
+de pregação desperdiçaria 70% da régua. Sem `fim` informado, cai para a duração do vídeo.
+
+**As pausas são desenhadas** na régua ampliada, com altura pela duração (300 ms → 10 px; ≥1,5 s →
+34 px). É onde o resultado da fatia 1 vira utilidade: a fronteira do corte é a pausa da fala, e sem
+VER onde ela está o operador arrasta às cegas. Altura como pista de ordenação, nunca classificação —
+a distribuição medida é unimodal (ver `docs/medicoes/pausas-de-fala.md`).
+
+**Ímã no arraste, e ele mora no SERVIDOR** (`RaioImaMs = 200`). O cliente só posiciona; ao soltar,
+pede o recálculo com `gesto: "arraste-inicio"|"arraste-fim"` e o servidor arredonda para a pausa se
+houver uma a menos de 200 ms — na régua isso é menos de 2 px, imperceptível como salto e o bastante
+para dispensar precisão de pixel. Longe de pausa **o pulso manda**: arrastar para o meio de uma fala
+é escolha legítima (às vezes o trecho tem de cortar ali para caber na faixa).
+
+Regra no servidor porque é a mesma família do encaixe do clique, e duas cópias da mesma decisão
+divergem. Consequência boa: dá para verificar por mutação, o que uma regra no JS não daria.
+
+**As três regras, agora completas e separadas:**
+
+| gesto | regra | distância |
+|---|---|---|
+| clique em frase | próxima **pausa** | sem limite (pode ser +4,5 s) |
+| arraste na régua | **ímã** para a pausa | ≤ 200 ms, senão vale o pulso |
+| empurrão ±0,25/±1 s | vale o **pedido** | não encaixa nunca |
+
+**Travas visíveis.** A faixa de duração válida (30–58 s a partir do início atual) é desenhada na
+régua, e o arraste para de andar ao encostar nela — em vez de andar e ser recusado na aprovação. Os
+números vêm do servidor (`harness.DuracaoMinMs/MaxMs` injetados no template): uma cópia deles no JS
+divergiria na primeira mudança de um lado.
+
+**O histórico separa pulso de encaixe.** Cada ação registra a `regra` da ponta que se moveu
+(`pausa` | `ima` | `pedido` | `legenda`) ao lado de `pedido_ms` e `aplicado_ms`. Com as três colunas
+na mesma linha, "o operador arrastou até ali ou o sistema arredondou?" se responde sozinha — era o
+que o log não distinguia.
+
+**O que NÃO saiu:** faixa de frases (navega por conteúdo; a régua navega por tempo), empurrões de
+±0,25 s e ±1 s (agora ao lado da leitura de cada marcador), histórico de ações, campo "o que você
+ouviu", restaurar. **A régua acrescenta, não substitui.**
+
+**Simplicidade:** sem canvas — as pausas e os marcadores são `div`s posicionadas em %, e na janela
+desenhada há ~34 pausas, não as 1835 do culto. Duas conversões (`pxParaMs`, `msParaPct`) e um
+`setPointerCapture`. A régua geral não tem arraste: clique salta, e todo o gesto fino mora na
+ampliada.
+
 ### v4, fatia 2 (2026-07-30): o preview usa o MESMO arquivo que o corte
 
 **O que muda.** A tela de revisão troca o iframe do YouTube por um `<video>` apontando para

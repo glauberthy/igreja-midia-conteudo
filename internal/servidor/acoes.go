@@ -63,6 +63,14 @@ type Acao struct {
 	DuracaoMs int    `json:"duracao_ms"`
 	Frase     string `json:"frase"`  // texto da frase clicada (só nas ações de clique)
 	Ouvido    string `json:"ouvido"` // o que o operador percebeu (só na ação `ouvido`)
+	// Regra é QUEM decidiu a ponta que a ação moveu: "pausa" (encaixe do clique em frase), "ima"
+	// (arraste arredondado para a pausa a menos de 200 ms), "pedido" (o pulso valeu) ou "legenda"
+	// (sem análise de pausas em disco).
+	//
+	// É o que separa PULSO de ENCAIXE na evidência: com pedido_ms, aplicado_ms e regra na mesma
+	// linha, dá para responder "o operador arrastou até ali ou o sistema arredondou?" — pergunta
+	// que o log não respondia e que decide se o desvio é nosso ou da legenda.
+	Regra string `json:"regra"`
 }
 
 // colunasAcoes é a FONTE ÚNICA das colunas: nome e valor na mesma entrada. Mesmo motivo do
@@ -91,6 +99,7 @@ var colunasAcoes = []struct {
 	{"inicio", func(l linhaAcao) string { return rotulo(l.a.InicioMs) }},
 	{"fim", func(l linhaAcao) string { return rotulo(l.a.FimMs) }},
 	{"duracao_s", func(l linhaAcao) string { return fmt.Sprintf("%.2f", float64(l.a.DuracaoMs)/1000) }},
+	{"regra", func(l linhaAcao) string { return csvCampo(l.a.Regra) }},
 	{"frase", func(l linhaAcao) string { return csvCampo(l.a.Frase) }},
 	{"ouvido", func(l linhaAcao) string { return csvCampo(l.a.Ouvido) }},
 }

@@ -65,17 +65,33 @@ type TrechoAjustado struct {
 	AjustadoStart bool   `json:"ajustado_start"` // o encaixe moveu o que o operador marcou?
 	AjustadoEnd   bool   `json:"ajustado_end"`
 
-	// RegraFim diz QUEM decidiu o fim: "pausa" (fronteira do áudio) ou "legenda" (fronteira de
-	// bloco, quando não há análise de pausas em disco). Vai para a tela e para o histórico —
-	// sem isso, o operador não sabe qual das duas regras produziu o corte que ele está julgando.
-	RegraFim string `json:"regra_fim,omitempty"`
-	// DeslocamentoFimMs é quanto o encaixe MOVEU o fim pedido. A tela mostra quando é grande:
-	// no caso medido seriam +3,5 s, e descobrir isso ao ouvir é pior que ler antes.
-	DeslocamentoFimMs int `json:"deslocamento_fim_ms,omitempty"`
+	// RegraFim/RegraInicio dizem QUEM decidiu cada ponta:
+	//
+	//	"pausa"    encaixe do clique em frase, na fronteira do ÁUDIO (sem limite de distância)
+	//	"ima"      arraste que caiu a menos de RaioImaMs de uma pausa e foi arredondado para ela
+	//	"pedido"   valeu exatamente o que o operador pediu (empurrão fino, arraste longe de pausa)
+	//	"legenda"  fronteira de bloco da legenda, quando não há análise de pausas em disco
+	//
+	// Vai para a tela e para o histórico. É o que separa, na evidência, o que foi PULSO do
+	// operador do que foi ENCAIXE do sistema — sem isso o log não distingue os dois.
+	RegraFim    string `json:"regra_fim,omitempty"`
+	RegraInicio string `json:"regra_inicio,omitempty"`
+	// Deslocamento* é quanto o encaixe MOVEU o ponto pedido. A tela mostra quando é grande: no
+	// caso medido do fim seriam +4,5 s, e descobrir isso ao ouvir é pior que ler antes.
+	DeslocamentoFimMs    int `json:"deslocamento_fim_ms,omitempty"`
+	DeslocamentoInicioMs int `json:"deslocamento_inicio_ms,omitempty"`
 
 	// Vizinhanca são as frases dentro do corte mais algumas de cada lado, para a faixa
 	// clicável. O cliente não precisa (nem deve) refrasear nada: uma fonte só.
 	Vizinhanca []FraseVizinha `json:"vizinhanca"`
+
+	// Pausas são as fronteiras de fala em volta do corte, para a RÉGUA AMPLIADA desenhar.
+	//
+	// Vêm na mesma resposta do recálculo, e não numa rota própria, porque são o mesmo dado que o
+	// encaixe acabou de usar: se viessem de outro lugar, a régua poderia desenhar marcas de uma
+	// análise enquanto o corte foi decidido por outra — e o operador miraria numa marca que não
+	// vale. Recortadas à janela desenhada (~34 pausas), não as 1835 do culto.
+	Pausas []videocache.Pausa `json:"pausas,omitempty"`
 
 	// Aprovavel diz se este trecho pode ir ao render. Falso => Motivo explica o que falta,
 	// em palavras e com números ("ficaria 64s, o máximo é 58s").
@@ -100,7 +116,8 @@ type LimitesPregacao struct {
 //	                    a fronteira do bloco de legenda cai no meio da fala)
 //	empurrão fino/1s -> NÃO encaixa. Se encaixasse, cada empurrão de 0,25 s voltaria para a
 //	                    mesma pausa e o ajuste fino deixaria de existir
-//	arraste (futuro) -> ímã só se houver pausa dentro de ~200 ms
+//	arraste na régua -> ÍMÃ: arredonda para a pausa se houver uma a menos de RaioImaMs. Longe de
+//	                    pausa, o pulso do operador manda — ele arrastou até ali de propósito
 //
 // Struct em vez de mais três parâmetros porque as três informações andam juntas em todas as
 // chamadas; o campo zerado é o comportamento de antes (sem pausas, sem gesto).
@@ -138,13 +155,16 @@ func recalcularTrecho(frases []harness.Frase, indice, startMs, endMs int, ctx Co
 		return falhar(brutoIni, brutoFim, "o fim precisa vir depois do início")
 	}
 
-	iniIdx, iniMs, okI := encaixarInicio(frases, brutoIni)
+	iniMs, okI, regraIni := encaixarInicioComPausas(frases, ctx, brutoIni)
+	iniIdx, _, _ := encaixarInicio(frases, iniMs) // índice da frase que contém o início efetivo
 	fimMs, okF, regra := encaixarFimComPausas(frases, ctx, brutoFim)
 	if !okI || !okF {
 		return falhar(brutoIni, brutoFim, "não há fala transcrita nessa faixa para ancorar o corte")
 	}
 	t.RegraFim = regra
+	t.RegraInicio = regraIni
 	t.DeslocamentoFimMs = fimMs - brutoFim
+	t.DeslocamentoInicioMs = iniMs - brutoIni
 
 	t.AjustadoStart = iniMs != brutoIni
 	t.AjustadoEnd = fimMs != brutoFim
@@ -167,6 +187,7 @@ func recalcularTrecho(frases []harness.Frase, indice, startMs, endMs int, ctx Co
 	t.TextoFalado = textoDoTrechoMs(frases, iniFrase, fimMs)
 	t.Vizinhanca = vizinhanca(frases, iniFrase, fimMs)
 
+	t.Pausas = pausasNaJanela(ctx.Pausas, iniMs-margemReguaMs, fimMs+margemReguaMs)
 	t.Aprovavel, t.Motivo = duracaoAceitavel(t.DuracaoMs)
 	// Se foi o ENCAIXE que estourou a faixa, o motivo tem de dizer isso. Sem essa frase o
 	// operador lê "ficaria 64s, o máximo é 58s" e não sabe de onde vieram os segundos — ele pediu
@@ -385,6 +406,15 @@ func encaixarFimComPausas(frases []harness.Frase, ctx ContextoAjuste, ms int) (i
 			return p, true, "pausa"
 		}
 	}
+	// ARRASTE: ímã curto, não encaixe. A diferença é o ponto: o clique em frase DIZ "termine onde
+	// esta fala termina"; o arraste diz "termine AQUI", e aqui só é arredondado se a fronteira
+	// estiver a um par de pixels.
+	if ehGestoDeArraste(ctx.Gesto) {
+		if p, ok := pausaProxima(ctx.Pausas, ms, RaioImaMs); ok && p != ms {
+			return p, true, "ima"
+		}
+		return ms, true, "pedido"
+	}
 	// Sem pausas em disco (culto ainda não analisado), ou gesto que NÃO encaixa (empurrão fino,
 	// que precisa valer exatamente o que o operador pediu).
 	fim, ok := encaixarFim(frases, ms)
@@ -393,6 +423,69 @@ func encaixarFimComPausas(frases []harness.Frase, ctx ContextoAjuste, ms int) (i
 		regra = "pedido" // o empurrão manda; a fronteira da legenda só limita o exagero
 	}
 	return fim, ok, regra
+}
+
+// margemReguaMs é quanto de contexto a régua ampliada mostra de cada lado do corte. A régua desenha
+// o centro do trecho ±60 s; 70 s de folga garante que o cliente tenha pausa para desenhar em toda a
+// faixa visível, inclusive quando ele arrasta um marcador para fora do corte atual.
+const margemReguaMs = 70000
+
+// pausasNaJanela recorta as pausas à faixa desenhada. O culto tem ~1835; a régua mostra ~34.
+func pausasNaJanela(pausas []videocache.Pausa, de, ate int) []videocache.Pausa {
+	var out []videocache.Pausa
+	for _, p := range pausas {
+		if p.FimMs >= de && p.InicioMs <= ate {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// RaioImaMs é a distância dentro da qual o ARRASTE é arredondado para uma pausa.
+//
+// 200 ms: na régua ampliada (~0,11 s/px) isso é menos de 2 px — imperceptível como salto, e o
+// bastante para o operador não precisar de precisão de pixel para cair na fronteira da fala. Fora
+// desse raio o pulso dele manda: arrastar para o meio de uma fala corrida é uma escolha legítima
+// (às vezes o trecho tem de cortar ali para caber na faixa de duração).
+const RaioImaMs = 200
+
+// encaixarInicioComPausas aplica o ÍMÃ no início quando o gesto é arraste, e depois a regra
+// antiga (folga em relação à frase que contém o ponto).
+//
+// O início continua sem encaixe em pausa no clique de frase: ali o carimbo da legenda ADIANTA a
+// fala, então o corte começa um pouco antes do som — e isso é bom (abertura com respiro). Mexer
+// nisso também mexeria na invariante do auditor "hook começa no start" (spec-16), que não tem
+// nada a ver com o bug do fim.
+func encaixarInicioComPausas(frases []harness.Frase, ctx ContextoAjuste, ms int) (int, bool, string) {
+	regra := "pedido"
+	if ehGestoDeArraste(ctx.Gesto) {
+		if p, ok := pausaProxima(ctx.Pausas, ms, RaioImaMs); ok && p != ms {
+			ms, regra = p, "ima"
+		}
+	}
+	_, ini, ok := encaixarInicio(frases, ms)
+	return ini, ok, regra
+}
+
+// pausaProxima devolve o INÍCIO da pausa mais próxima de ms dentro do raio. É o ímã: fronteira do
+// áudio arredondando o pulso, nunca sequestrando-o.
+func pausaProxima(pausas []videocache.Pausa, ms, raio int) (int, bool) {
+	melhor, dist, achou := 0, raio+1, false
+	for _, p := range pausas {
+		d := p.InicioMs - ms
+		if d < 0 {
+			d = -d
+		}
+		if d <= raio && d < dist {
+			melhor, dist, achou = p.InicioMs, d, true
+		}
+	}
+	return melhor, achou
+}
+
+// ehGestoDeArraste: o arraste vem da régua (spec-05 v4, fatia 3).
+func ehGestoDeArraste(gesto string) bool {
+	return gesto == "arraste-inicio" || gesto == "arraste-fim"
 }
 
 // ehGestoDeFrase: só o clique na faixa de frases encaixa em pausa. Os empurrões finos existem
