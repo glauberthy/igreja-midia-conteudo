@@ -355,7 +355,25 @@ func encaixarFim(frases []harness.Frase, ms int) (int, bool) {
 // hms formata no MESMO formato da Fase 3 ("HH:MM:SS.000") — é o contrato do Candidato, que o
 // render consome. Não há perda: a transcrição limpa tem timestamps em segundos inteiros
 // ([HH:MM:SS]), então toda fronteira de fala é múltiplo de 1000 ms.
-func hms(ms int) string { return validacao.MsParaHms(ms) + ".000" }
+// hms formata o tempo do CANDIDATO — "HH:MM:SS.mmm" — com o milissegundo REAL.
+//
+// Aqui morava um bug caro, e a forma dele merece registro: a função fazia
+// MsParaHms(ms) + ".000". O MsParaHms trunca (ms/1000), e o ".000" colado à mão AFIRMAVA que
+// a fração era zero. O ajuste do operador chega em milissegundos (o player manda float, os
+// botões finos andam de 0,25 s), então cada empurrão que não atravessava a fronteira do
+// segundo era jogado fora — e o render, lendo a string de volta, cortava ATÉ 999 ms antes do
+// pedido, no meio da palavra.
+//
+// Medido em dois trechos reais do dono (2026-07-30): pediu 01:07:08.250, o arquivo saiu com
+// 31,000 s; pediu 01:30:15.250, saiu com 54,000 s. Nos dois a última palavra foi cortada.
+//
+// É a classe da regra inviolável 2 — palavra apagada em silêncio —, só que na saída de vídeo.
+// E doía justamente no recurso que existe para corrigir corte: o ajuste fino era o ÚNICO
+// lugar do sistema com intenção sub-segundo (a transcrição é "[HH:MM:SS]", então os candidatos
+// do modelo já são segundos inteiros).
+func hms(ms int) string {
+	return fmt.Sprintf("%s.%03d", validacao.MsParaHms(ms), ms%1000)
+}
 
 // rotulo é o tempo COMO SE MOSTRA a uma pessoa: "00:39:18", sem os milissegundos. O ".000" do
 // contrato interno anuncia uma precisão que o sistema não tem, e na tela isso só polui.

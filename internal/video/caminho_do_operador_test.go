@@ -67,6 +67,48 @@ func argsDoOperador(t *testing.T) []string {
 	return esp.chamadas[len(esp.chamadas)-1]
 }
 
+// TestMilissegundoDoAjusteChegaAoFFmpeg é a outra metade da correção da truncagem de 250 ms
+// (2026-07-30). O lado do servidor garante que o ajuste fino sobrevive até o Candidato; este
+// garante que a fração sobrevive até o COMANDO — se o -ss ou o -t saíssem em segundos
+// inteiros, consertar o servidor não teria mudado nada no arquivo entregue.
+//
+// Os tempos aqui têm fração de propósito: um corte de 00:00:10.400 a 00:00:50.650 (40,250 s).
+func TestMilissegundoDoAjusteChegaAoFFmpeg(t *testing.T) {
+	base, out := t.TempDir(), t.TempDir()
+	dir := filepath.Join(base, "p1")
+	os.MkdirAll(dir, 0755)
+	os.WriteFile(filepath.Join(dir, "video.mp4"), make([]byte, 1024), 0644)
+	os.WriteFile(filepath.Join(dir, "transcricao.txt"), []byte("[00:00:00] a graca basta.\n"), 0644)
+
+	esp := &execEspiao{}
+	r := comoOCmdServidorMonta(base, out, esp)
+	ped := &pipeline.Pedido{ID: "p1", YouTubeURL: "https://x", Inicio: "00:00:00"}
+	cands := []validacao.Candidato{{
+		Start: "00:00:10.400", End: "00:00:50.650", DurationSeconds: 40.25, Hook: "a graca basta.",
+	}}
+	if _, err := r.Renderizar(context.Background(), ped, cands, filepath.Join(dir, "video.mp4"), 0); err != nil {
+		t.Fatalf("render falhou: %v", err)
+	}
+	args := esp.chamadas[len(esp.chamadas)-1]
+	linha := strings.Join(args, " ")
+
+	valorDe := func(flag string) string {
+		for i := 0; i < len(args)-1; i++ {
+			if args[i] == flag {
+				return args[i+1]
+			}
+		}
+		return ""
+	}
+	if got := valorDe("-ss"); got != "10.400" {
+		t.Errorf("-ss = %q, quero \"10.400\": a fração do início não chegou ao ffmpeg\n%s", got, linha)
+	}
+	if got := valorDe("-t"); got != "40.250" {
+		t.Errorf("-t = %q, quero \"40.250\": a fração do fim não chegou ao ffmpeg — é o fim da "+
+			"última palavra\n%s", got, linha)
+	}
+}
+
 // TestEncodeNoCaminhoDoOperador prova que preset/crf medidos chegam ao ffmpeg pelo caminho do
 // servidor. Falharia se o cmd/servidor voltasse a fixar valores, ou se o padrão do pacote
 // mudasse sem intenção.
