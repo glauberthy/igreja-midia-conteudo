@@ -120,8 +120,40 @@ const (
 	// O ganho total é modesto (+3,8% no quadro) e NÃO resolve a percepção de "imagem mole" —
 	// essa vem da ampliação de 720p, não do encode. Mudou porque custa pouco: +2,2 s por Short,
 	// ~9 s num pedido de quatro, contra ~86 s de download.
+	//
+	// # 2026-07-29: crf18 -> crf20, medido nos Shorts REAIS
+	//
+	// A escolha do crf18 saiu de +1,5% de laplaciano (1.921 -> 1.931) num trecho de referência —
+	// dentro do ruído, e a olho não se distinguiu. Faltava o OUTRO lado da conta: quanto custa em
+	// disco. Medido nos 4 Shorts do culto xZNTJcehAV0, renderizados pelo cmd/render nos dois CRF:
+	//
+	//   short     crf18        crf20     diferença
+	//   01      41,7 MB      33,2 MB       -20,4%
+	//   02      46,1 MB      36,9 MB       -20,0%
+	//   03      48,9 MB      38,8 MB       -20,6%
+	//   04      31,0 MB      24,8 MB       -20,0%
+	//   total  167,7 MB     133,7 MB       -20,3%
+	//
+	// E, no mesmo material, a diferença de IMAGEM entre as duas saídas:
+	//
+	//   laplaciano no quadro de 5 s:  94,23/94,23 - 102,77/102,91 - 118,14/118,05 - 107,20/107,68
+	//                                 (em DOIS dos quatro o crf20 mediu MAIS ALTO: é ruído, não
+	//                                  uma ordem de qualidade)
+	//   SSIM(Y) crf18 vs crf20:       0,9898 - 0,9909 - 0,9900 - 0,9904
+	//   PSNR(Y) crf18 vs crf20:       44,8 - 45,6 - 44,9 - 45,2 dB
+	//
+	// PSNR de ~45 dB é diferença abaixo do limiar de percepção. O crf18 comprava 20% de arquivo
+	// por ganho invisível — e em conteúdo que já é AMPLIAÇÃO de 720p macio, bit extra preserva a
+	// maciez da fonte, não detalhe que não existe.
+	//
+	// Tempo de render: 26,1 s (crf18) contra 28,0 s (crf20) nos 4 Shorts — inverso do esperado e
+	// dentro da variação da máquina; não é critério.
+	//
+	// NÃO é decisão de tamanho para envio: o "limite de 16 MB do WhatsApp" que a primeira versão
+	// da tela 4 alegava é FALSO (o dono enviou 41,7 MB sem problema). Aqui é qualidade contra
+	// disco, e a qualidade empatou.
 	presetPadrao = "medium"
-	crfPadrao    = "18"
+	crfPadrao    = "20"
 )
 
 // RodapeAlphaPadrao é a opacidade máxima do gradiente do rodapé, EXPORTADA de propósito.

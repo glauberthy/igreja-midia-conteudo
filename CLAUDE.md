@@ -192,7 +192,12 @@ Todas foram tomadas com medição. O registro completo, com os números, está e
   propósito — ordenar a revisão por score empurraria os trechos marcados para o fim da fila.
 - **Saída em 1080x1920.** Emitir 720 transferiria a ampliação para o player, com um segundo
   reamostramento pior (rosto perde 26-37%, logo 64%).
-- **Escalador lanczos, encode `medium/crf18`.**
+- **Escalador lanczos, encode `medium/crf20`.** O preset domina o CRF (veryfast→medium rende
+  +3,3% de laplaciano; crf20→18, +1,5%, dentro do ruído). O `crf18` vigorou até 2026-07-29,
+  quando chegou o outro lado da conta: nos 4 Shorts reais ele custava **+20,3% de disco**
+  (167,7 MB contra 133,7 MB) para uma diferença de imagem de **~45 dB de PSNR** — abaixo do
+  limiar de percepção. Em conteúdo que já é ampliação de 720p macio, bit extra preserva maciez,
+  não detalhe.
 - **Gradiente de rodapé: altura 520, opacidade 0,60.**
 - **Margem de recuo do corte = 0.** A causa do corte curto é o timestamp da legenda, não
   vazamento; a margem só agravava.

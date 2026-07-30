@@ -75,7 +75,9 @@ func TestEncodeNoCaminhoDoOperador(t *testing.T) {
 	linha := strings.Join(args, " ")
 	t.Logf("comando que o ffmpeg recebe:\n%s", linha)
 
-	for _, par := range [][2]string{{"-preset", "medium"}, {"-crf", "18"}} {
+	// Valores LITERAIS de propósito (não as constantes): montado a partir delas, o teste
+	// passaria com qualquer valor desde que consistente, e o que se quer travar é ESTE.
+	for _, par := range [][2]string{{"-preset", "medium"}, {"-crf", "20"}} {
 		achou := false
 		for i := 0; i < len(args)-1; i++ {
 			if args[i] == par[0] && args[i+1] == par[1] {

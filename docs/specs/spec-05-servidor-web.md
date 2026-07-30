@@ -929,8 +929,8 @@ filtros de producao:
 |---|---|---|---|
 | veryfast crf20 (era o default) | 1.860 | 4.960 | 3,08 s |
 | veryfast crf18 | 1.887 | 4.980 | 3,25 s |
-| medium crf20 | 1.921 | 5.031 | 5,29 s |
-| **medium crf18 (escolhido)** | **1.931** | **5.038** | **5,25 s** |
+| **medium crf20 (escolhido em 2026-07-29; ver abaixo)** | **1.921** | **5.031** | **5,29 s** |
+| medium crf18 (escolhido em 2026-07-28) | 1.931 | 5.038 | 5,25 s |
 | slow crf18 | 1.924 | 5.035 | 15,90 s |
 | *source 720p, antes de ampliar* | *1.991* | — | — |
 
@@ -944,6 +944,41 @@ Honestidade sobre o ganho: +3,8% no quadro, e a olho nu nao distingui os frames 
 antigo e o melhor esforco: 0,9927; PSNR 47 dB). Mudou porque custa pouco — +2,2 s por Short,
 ~9 s num pedido de quatro contra ~86 s de download. **Isso NAO resolve a percepcao de "imagem
 mole"**, que vem da ampliacao de 720p, nao do encode.
+
+#### Revisao de 2026-07-29: o CRF voltou para 20 (o preset ficou em medium)
+
+A tabela acima decidiu com METADE da conta: ela mede o que se GANHA em nitidez e o que se paga em
+TEMPO — e nao mede o que se paga em DISCO. Medido agora nos 4 Shorts reais do culto xZNTJcehAV0,
+renderizados pelo `cmd/render` nos dois CRF:
+
+| short | crf18 | crf20 | diferenca |
+|---|---|---|---|
+| 01 | 41,7 MB | 33,2 MB | -20,4% |
+| 02 | 46,1 MB | 36,9 MB | -20,0% |
+| 03 | 48,9 MB | 38,8 MB | -20,6% |
+| 04 | 31,0 MB | 24,8 MB | -20,0% |
+| **total** | **167,7 MB** | **133,7 MB** | **-20,3%** |
+
+E a diferenca de IMAGEM entre as duas saidas, no mesmo material:
+
+| medida | resultado (short 01 · 02 · 03 · 04) |
+|---|---|
+| laplaciano no quadro de 5 s | 94,23/94,23 · 102,77/102,91 · 118,14/118,05 · 107,20/107,68 |
+| SSIM (Y) crf18 vs crf20 | 0,9898 · 0,9909 · 0,9900 · 0,9904 |
+| PSNR (Y) crf18 vs crf20 | 44,8 · 45,6 · 44,9 · 45,2 dB |
+
+Em **dois dos quatro** o crf20 mediu laplaciano MAIS ALTO que o crf18 — o que confirma que os
++1,5% da tabela original eram ruido, e nao uma ordem de qualidade. PSNR de ~45 dB e diferenca
+abaixo do limiar de percepcao.
+
+Conclusao: **o crf18 comprava 20% de arquivo por um ganho invisivel.** E em conteudo que ja e
+ampliacao de 720p macio, bit extra preserva a MACIEZ da fonte, nao detalhe que nao existe.
+
+Nao e decisao de tamanho para envio (aquele limite era falso, ver a Parte 4): e qualidade contra
+disco, e a qualidade empatou. O preset fica em `medium`, onde o ganho e real.
+
+Tempo de render: 26,1 s (crf18) contra 28,0 s (crf20) para os 4 Shorts — inverso do esperado e
+dentro da variacao da maquina; nao entrou na decisao.
 
 ### Degrade do rodape: mais gradual
 
