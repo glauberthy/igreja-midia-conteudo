@@ -174,9 +174,9 @@ func TestFuncoesEssenciaisDaTelaExistem(t *testing.T) {
 // null.addEventListener — mesma classe de falha, outro lado. Confere contra a página inteira
 // (que traz o fragmento de revisão nos templates).
 func TestGetElementByIdSoApontaParaIdsQueExistem(t *testing.T) {
-	pagina := htmlDaPagina(t)
-	revisao := htmlDaRevisao(t)
-	tudo := pagina + revisao
+	// A marcação está na PÁGINA (as quatro telas ficam no DOM) e os ids do FRAGMENTO de estado
+	// (estado-json, dados-trechos) vêm do servidor — os dois lugares onde o JS busca id.
+	tudo := htmlDaPagina(t) + htmlDoEstado(t)
 
 	reGet := regexp.MustCompile(`getElementById\('([^']+)'\)`)
 	js := jsDaPagina(t)

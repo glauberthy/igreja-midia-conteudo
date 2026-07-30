@@ -339,10 +339,16 @@ func TestStatusConcluidoListaCandidatosEmHTML(t *testing.T) {
 	if strings.Contains(corpo, `hx-trigger="every 2s"`) {
 		t.Error("estado final não deveria continuar o polling")
 	}
-	// A tela de revisão embute os dados num <script> JSON e a estrutura da UI (trilha,
-	// rodapé, botões). Os hooks e o motivo de revisão vão no payload JSON.
+	// O fragmento traz DADO, não tela (spec-05 v3): o payload de estado, o payload dos trechos,
+	// e nada de marcação. A ESTRUTURA da revisão (trilha, rodapé, botões) está na página desde
+	// o carregamento — é o que permite navegar entre telas sem requisição, e quem verifica isso
+	// é TestTelaTrazControlesDeAjuste sobre GET /.
+	if strings.Contains(corpo, `id="trilha"`) || strings.Contains(corpo, "Confirmar e gerar") {
+		t.Error("o fragmento voltou a trazer MARCAÇÃO da tela; ele deve trazer só dado, senão " +
+			"cada troca de tela vira requisição de novo")
+	}
 	for _, quer := range []string{
-		`id="dados-trechos"`, `id="trilha"`, "Confirmar e gerar", // estrutura da tela
+		`id="estado-json"`, `id="dados-trechos"`, // os dois payloads
 		"O amor de Cristo", "Jesus é Deus", // hooks no payload
 		"possível problema de fidelidade", // motivo de revisão no payload
 	} {

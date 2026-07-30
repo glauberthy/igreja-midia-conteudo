@@ -457,7 +457,20 @@ func TestAprovarIgnoraAjusteDeTrechoNaoAprovado(t *testing.T) {
 // controles existem, a granularidade é a combinada e o JS aponta para o endpoint certo. É o
 // que pega uma regressão de renomeação ou de rota, que quebraria o ajuste em silêncio.
 
+// htmlDaRevisao devolve a MARCAÇÃO da tela de revisão.
+//
+// Desde a spec-05 v3 ela vive na PÁGINA (GET /), não no fragmento: as quatro telas ficam no
+// DOM desde o carregamento, e o fragmento do servidor passou a trazer só dado. Este helper
+// mudou de rota junto — e a mudança é o próprio ponto da parte 1, então os testes de contrato
+// da tela continuam válidos: eles verificam que os controles existem onde o JS vai buscá-los.
 func htmlDaRevisao(t *testing.T) string {
+	t.Helper()
+	return htmlDaPagina(t)
+}
+
+// htmlDoEstado devolve o FRAGMENTO que o servidor troca (GET /pedidos/{id}): desde a
+// spec-05 v3 ele traz dado (estado-json, dados-trechos), não marcação de tela.
+func htmlDoEstado(t *testing.T) string {
 	t.Helper()
 	s := servidorPesada(t, candsJanela(), &baixadorVideoFake{}, &renderFake{})
 	criarPedidoOK(t, s)

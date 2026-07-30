@@ -123,6 +123,9 @@ type statusJSON struct {
 	Erro       string          `json:"erro,omitempty"`
 	Candidatos []candidatoJSON `json:"candidatos,omitempty"`
 	Aprovados  []int           `json:"aprovados,omitempty"`
+	// Shorts: o cliente monta a tela de resultado com estes nomes. Antes o servidor mandava a
+	// lista já em HTML; com as quatro telas no DOM, ele manda o DADO (spec-05 v3).
+	Shorts []string `json:"shorts,omitempty"`
 }
 
 type candidatoJSON struct {
@@ -136,8 +139,22 @@ type candidatoJSON struct {
 	MotivoRevisao          string  `json:"motivo_revisao,omitempty"`
 }
 
+// EstadoJSON é o mesmo contrato JSON, embutido no fragmento HTML que o HTMX troca. O cliente
+// lê daqui e distribui pelas quatro telas (spec-05 v3) — antes o servidor mandava a tela de
+// revisão montada, e era isso que amarrava navegação a requisição.
+//
+// Uma fonte só para os dois consumidores (a API JSON e o fragmento), pelo mesmo motivo de
+// sempre: dois formatos derivados do mesmo montador não divergem.
+func (v visaoStatus) EstadoJSON() template.JS {
+	b, err := json.Marshal(v.json())
+	if err != nil {
+		return template.JS(`{"status":"erro","erro":"falha ao serializar o estado"}`)
+	}
+	return template.JS(b)
+}
+
 func (v visaoStatus) json() statusJSON {
-	out := statusJSON{ID: v.ID, Status: string(v.Status), Erro: v.Erro}
+	out := statusJSON{ID: v.ID, Status: string(v.Status), Erro: v.Erro, Shorts: v.Shorts}
 	for _, c := range v.Aprovados {
 		out.Aprovados = append(out.Aprovados, c.Indice)
 	}

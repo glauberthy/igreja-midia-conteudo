@@ -223,6 +223,7 @@ func Novo(o Opcoes) *Servidor {
 		s.gerarID = s.idPadrao
 	}
 	s.mux.HandleFunc("GET /", s.handleIndex)
+	s.mux.HandleFunc("GET /pedido-atual", s.handlePedidoAtual)
 	s.mux.HandleFunc("POST /pedidos", s.handleCriar)
 	s.mux.HandleFunc("GET /pedidos/{id}", s.handleStatus)
 	s.mux.HandleFunc("POST /pedidos/{id}/aprovar", s.handleAprovar)
@@ -309,7 +310,13 @@ func (s *Servidor) handleCriar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tmpl.ExecuteTemplate(w, "resultado", struct{ ID string }{ID: id})
+	// Fragmento de ESTADO do pedido novo: o cliente lê o id e o status, libera a etapa
+	// "processando" e passa a fazer o polling. Um formato só para as três rotas (ver o
+	// template "estado").
+	s.mu.Lock()
+	vis := montarVisao(reg)
+	s.mu.Unlock()
+	tmpl.ExecuteTemplate(w, "estado", vis)
 }
 
 // responderErroCriacao devolve o erro de validação: 400 + JSON para clientes de API,
@@ -323,6 +330,42 @@ func (s *Servidor) responderErroCriacao(w http.ResponseWriter, r *http.Request, 
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<p class="erro">%s</p>`, template.HTMLEscapeString(msg))
+}
+
+// handlePedidoAtual é a REIDRATAÇÃO: devolve o estado do pedido que o servidor tem em
+// memória, ou 204 se não há nenhum. A página o chama UMA vez, no `load`.
+//
+// Existe porque o estado de navegação vive no cliente e um F5 o perderia: sem isto, recarregar
+// no meio de uma seleção de 30 s jogaria o operador de volta ao formulário, com o pedido
+// rodando invisível no servidor. Carregar não é navegar — a navegação segue sem requisição.
+//
+// 204 em vez de 404 de propósito: "não há pedido" é resposta normal (primeira visita), não
+// erro. Com 204 o HTMX não troca nada e a página fica na tela de dados, que é o certo.
+//
+// O servidor atende um pedido por vez (fila simples, spec-05), então "o pedido atual" é bem
+// definido. Se um dia houver fila, isto vira uma lista e a tela escolhe.
+func (s *Servidor) handlePedidoAtual(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	var vis visaoStatus
+	achou := false
+	for _, reg := range s.pedidos {
+		vis = montarVisao(reg)
+		achou = true
+		break
+	}
+	s.mu.Unlock()
+
+	if !achou {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if querJSON(r) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(vis.json())
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	tmpl.ExecuteTemplate(w, "estado", vis)
 }
 
 func (s *Servidor) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -345,7 +388,7 @@ func (s *Servidor) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tmpl.ExecuteTemplate(w, "status", vis)
+	tmpl.ExecuteTemplate(w, "estado", vis)
 }
 
 // handleAprovar recebe os índices aprovados pelo operador (spec-05 parte 2), valida-os
@@ -427,7 +470,7 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tmpl.ExecuteTemplate(w, "status", vis)
+	tmpl.ExecuteTemplate(w, "estado", vis)
 }
 
 // faseHeavy é a máquina de estados da fase pesada (spec-05 parte 3): baixando-video →
