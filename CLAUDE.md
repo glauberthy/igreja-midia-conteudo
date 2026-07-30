@@ -263,6 +263,14 @@ medir o sintoma conveniente em vez da propriedade real. Por isso:
   nenhum falhar: o teste de ponta a ponta continuava verde porque o outro caminho limpava o mesmo
   arquivo. Quem achou o furo foi a **mutação**, não a leitura do teste. Política com mais de um
   ponto de entrada precisa de um teste que isole cada um.
+- **Ao demonstrar operação destrutiva, use dado SINTÉTICO — nunca produção "com proteção".**
+  Caso real: para mostrar a expiração do cache eu copiei `videos/` com `cp -rl` (hard link),
+  achando que o link protegia o original. Protege contra **apagar** (remover um link não remove os
+  dados) e não protege contra **escrever**: o `write` atravessa o inode compartilhado. E o arquivo
+  que eu reescrevi foi justamente o pequeno que **governa a exclusão** (`video.json`, o
+  `usado_em`), então o cache real ficou marcado como velho e a próxima limpeza apagaria 821 MB de
+  verdade. **Defesa com cobertura assimétrica é pior que nenhuma**, porque dá confiança onde não
+  há. Cache de teste com `truncate -s 25M` custa um segundo e não tem esse risco.
 - **Duas listas para o mesmo dado divergem.** O `tempos.csv` quebrou duas vezes com cabeçalho
   numa lista e valores em outra. A correção não foi mais uma migração: foi **uma fonte só**
   (`colunasTempos`, nome e valor na mesma entrada). Migração conserta o sintoma; fonte única
