@@ -888,6 +888,46 @@ rolaria a pagina inteira e desfaria o ganho de caber numa tela.
 Um selo `tocando a emenda…` avisa quando o som veio do sistema — a emenda toca sozinha, e sem
 aviso o operador nao sabe se foi ele que clicou em algo por acidente.
 
+### v4, fatia 2 (2026-07-30): o preview usa o MESMO arquivo que o corte
+
+**O que muda.** A tela de revisão troca o iframe do YouTube por um `<video>` apontando para
+`GET /video/{videoID}`, servindo `videos/<id>/video.mp4` com `http.ServeFile`. A IFrame API sai
+inteira — `YT.Player`, `seekTo`, `playVideo`, `getCurrentTime`, `setPlaybackRate` e o script
+remoto.
+
+**Por que, com número.** O operador escolhia o ponto ouvindo o YouTube e o corte acontecia no
+arquivo baixado: duas fontes, dois relógios. A documentação da IFrame API declara que o `seekTo`
+vai para o keyframe mais próximo "a menos que a porção já esteja bufferizada" — não-determinismo
+por projeto. E a parada por polling ultrapassava o ponto: **+89 ms** de mediana (10 tentativas,
+medido em headless), sempre positivo, o que fazia o operador ouvir mais do que o Short teria.
+Servindo o mesmo arquivo, a discrepância **desaparece por construção**, não por compensação.
+
+**Range requests vêm de graça.** Verificado no arquivo real de 902 MB: `Accept-Ranges: bytes`,
+`206 Partial Content`, e um pedido de 100 bytes transferiu 100 bytes. É o que permite dar seek em
+01:30:00 sem baixar o culto.
+
+**A parada da escuta** passou de poll de 40 ms para `requestAnimationFrame` (~16 ms) sobre um
+`currentTime` exato, sem folga de compensação: não há mais buffer nem API remota no meio. O
+overshoot desse mecanismo **não pôde ser medido em headless** (o rAF é conduzido pelo compositor e
+não tica sem display — verificado); a página de medição está em
+`docs/medicoes/overshoot-parada/`, para rodar no navegador do dono.
+
+**O download do vídeo passou para a fase leve, em PARALELO com a seleção.** É a consequência
+inevitável: player local exige arquivo local. Rede e GPU não competem — download de 63 s de média
+fica escondido atrás de 29 s de seleção, e em 31 de 46 pedidos medidos o vídeo já está no cache.
+A justificativa do fluxo invertido está registrada como superada para o vídeo (seção acima).
+
+**Degradação honesta:** sem o arquivo (download falhou, sem espaço, sem baixador), a revisão
+continua — texto, faixa de frases e ajuste por número — e a tela DIZ que não há escuta, em vez de
+mostrar um player quebrado. `dadosRevisao.videoLocal` carrega esse fato.
+
+**Um furo latente fechado no caminho:** o download escreve direto em `videos/<id>/`, e um yt-dlp
+morto por prazo deixava um `video.mp4` parcial ali. Passando de 20 MB, `TemVideo` diria "tenho
+vídeo" e o cache serviria um arquivo truncado — com `video.json` de uma tentativa anterior, o corte
+sairia do arquivo errado. Agora a falha de download limpa o resíduo do cache, e só quando **não**
+há registro (com registro, o vídeo é de um download que funcionou e não pode ser apagado por uma
+falha posterior).
+
 ### v4, fatia 1 (2026-07-30): a fronteira do corte vem do ÁUDIO, não da legenda
 
 **O bug, com número.** O clique em frase terminava o corte no início do bloco de legenda seguinte

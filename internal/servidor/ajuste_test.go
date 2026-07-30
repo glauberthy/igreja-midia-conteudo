@@ -604,16 +604,38 @@ func TestEndpointAjustarAceitaFimComFolga(t *testing.T) {
 	}
 }
 
-// TestSeekToSegueARecomendacaoDoYouTube: allowSeekAhead=false durante os empurrões (não
-// dispara requisição de vídeo a cada clique) e true quando o debounce assenta. É recomendação
-// da documentação do player, e aqui é o que evita uma rajada de requisições.
-func TestSeekToSegueARecomendacaoDoYouTube(t *testing.T) {
-	js := htmlDaPagina(t)
-	if !strings.Contains(js, "seekTo(iniMs / MS, false)") {
-		t.Error("o empurrão deveria usar allowSeekAhead=false (barato, só reposiciona)")
+// AQUI VIVIA o TestSeekToSegueARecomendacaoDoYouTube, que exigia allowSeekAhead=false nos
+// empurrões e true quando o debounce assentava — recomendação da documentação da IFrame API para
+// não disparar uma requisição por clique.
+//
+// Ele SAIU com a API (spec-05 v4, fatia 2), e a lição fica: aquela regra existia porque o seek era
+// REMOTO e caro. Num <video> local o currentTime é atribuição direta e exata, então não há
+// "barato" contra "de verdade" — a distinção deixou de existir junto com o não-determinismo que a
+// motivava (o seekTo do YouTube pousa no keyframe mais próximo "a menos que a porção já esteja
+// bufferizada"; medido: +89 ms de overshoot na parada).
+//
+// O que passou a proteger este trecho é o TestPlayerLocalSemAPIDoYouTube, abaixo: nenhuma chamada
+// da API remota pode voltar à tela.
+
+// TestPlayerLocalSemAPIDoYouTube trava a fatia 2: o preview usa o MESMO arquivo que o corte, e a
+// IFrame API não volta por descuido. Duas fontes de tempo é a discrepância que esta fatia
+// eliminou por construção — reintroduzir uma chamada da API a traria de volta em silêncio.
+func TestPlayerLocalSemAPIDoYouTube(t *testing.T) {
+	pagina := htmlDaPagina(t)
+	for _, proibido := range []string{
+		"iframe_api", "YT.Player", "YT.PlayerState", "getPlayerState()",
+		".seekTo(", ".playVideo()", ".pauseVideo()", ".getCurrentTime()", ".setPlaybackRate(",
+	} {
+		if strings.Contains(pagina, proibido) {
+			t.Errorf("a tela voltou a usar %q: o preview tem de vir do arquivo local, não do "+
+				"player do YouTube", proibido)
+		}
 	}
-	if !strings.Contains(js, "seekTo(resp.start_ms / MS, true)") {
-		t.Error("ao assentar o debounce deveria usar allowSeekAhead=true (busca de fato)")
+	// E o player local tem de estar lá, apontando para a rota do nosso servidor.
+	for _, quer := range []string{`<video id="palco"`, "'/video/' + encodeURIComponent"} {
+		if !strings.Contains(pagina, quer) {
+			t.Errorf("a tela não tem %q — sem isso não há escuta do arquivo que será cortado", quer)
+		}
 	}
 }
 

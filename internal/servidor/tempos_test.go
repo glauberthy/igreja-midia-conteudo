@@ -111,11 +111,21 @@ func TestCicloRegistraTempos(t *testing.T) {
 	esperarArquivo(t, s.temposPath) // idem: persistência vem depois do status
 
 	// Resumo no log do servidor.
+	// FILTRA o resumo: o logTempos também recebe avisos de cache, de download e das pausas.
+	// A versão anterior contava toda mensagem e passou a falhar quando a fase leve ganhou o
+	// preparo do vídeo — o teste media o canal, não o resumo.
 	mu.Lock()
 	defer mu.Unlock()
-	if len(resumos) != 1 {
-		t.Fatalf("esperava 1 resumo de tempos no log, veio %d", len(resumos))
+	var resumo []string
+	for _, r := range resumos {
+		if strings.Contains(r, "TOTAL DE MÁQUINA") || strings.Contains(r, "FALHOU") {
+			resumo = append(resumo, r)
+		}
 	}
+	if len(resumo) != 1 {
+		t.Fatalf("esperava 1 resumo de tempos no log, veio %d (de %d mensagens)", len(resumo), len(resumos))
+	}
+	resumos = resumo
 	for _, q := range []string{"TOTAL DE MÁQUINA", "legenda", "selecionar", "renderizar", "espera humana"} {
 		if !strings.Contains(resumos[0], q) {
 			t.Errorf("resumo não menciona %q: %s", q, resumos[0])

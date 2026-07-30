@@ -7,8 +7,6 @@
   <!-- HTMX cuida das requisições (criar pedido, confirmar aprovados); JS vanilla cuida
        do player e da navegação local. Sem framework, sem build (spec-05). -->
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <!-- IFrame Player API do YouTube: UM player, reaproveitado por seekTo. -->
-  <script src="https://www.youtube.com/iframe_api"></script>
   <style>
     @font-face {
       font-family: "Google Sans Flex";
@@ -175,9 +173,12 @@
     .faixa-aviso { background: var(--aviso-bg); border-left: 3px solid var(--aviso-linha); padding: 12px 14px; margin: 0 0 16px; }
     .faixa-aviso p { margin: 0; font-size: 14px; color: var(--aviso-tinta); }
     .faixa-aviso p + p { margin-top: 4px; font-size: 13px; }
-    .palco { background: #000; border-radius: var(--raio); aspect-ratio: 16/9; overflow: hidden;
+    .palco { position: relative; background: #000; border-radius: var(--raio); aspect-ratio: 16/9; overflow: hidden;
       display: flex; align-items: center; justify-content: center; color: #8a8a82; font-size: 14px; margin-bottom: 12px; }
-    .palco iframe { width: 100%; height: 100%; border: 0; }
+    .palco video { width: 100%; height: 100%; display: block; background: #000; }
+    .palco-ausente { position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: center; padding: var(--esp-4); margin: 0; text-align: center;
+      color: #eee; font-size: 13px; line-height: 1.4; }
     .controles { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
     .decisao { display: flex; align-items: center; gap: 10px; }
     .seta { padding: 8px 12px; font-size: 16px; }
@@ -339,7 +340,13 @@
 
         <div class="duas-colunas">
           <div class="coluna-video">
-            <div class="palco"><div id="palco">player</div></div>
+            <!-- PLAYER LOCAL: o MESMO arquivo que o ffmpeg vai cortar (spec-05 v4, fatia 2).
+                 Antes era o iframe do YouTube — duas fontes, dois relógios, e o operador
+                 calibrando o corte numa que não era a do produto. -->
+            <div class="palco">
+              <video id="palco" preload="metadata" playsinline></video>
+              <p class="palco-ausente" id="palco-ausente" hidden></p>
+            </div>
 
             <div class="grupo-play">
               <button type="button" id="btn-play">▶ / ⏸ tocar</button>
@@ -503,11 +510,28 @@
       }
     }
 
-    // ===== Player YouTube (UM só, reaproveitado por seekTo) + controlador da revisão =====
-    var ytPronto = false;
-    var REV = null; // estado da revisão: {dados, atual, estado, player, prontoPlayer, timer}
+    // ===== Player LOCAL (<video> do arquivo do cache) + controlador da revisão =====
+    //
+    // Antes aqui vivia a IFrame API do YouTube. Ela saiu inteira, e o motivo é medido: o operador
+    // escolhia o corte ouvindo o player do YouTube e o corte acontecia no ARQUIVO baixado — duas
+    // fontes e dois relógios. A documentação da API diz que o seekTo vai para o keyframe mais
+    // próximo "a menos que a porção já esteja bufferizada" (não-determinismo declarado), e a
+    // parada por polling ultrapassava o ponto em +89 ms (medido, 10 tentativas).
+    //
+    // Agora o preview usa o MESMO arquivo que o ffmpeg corta, servido por GET /video/{videoID}
+    // com range requests. O currentTime de um <video> local é exato, e a discrepância entre fontes
+    // deixa de existir por construção — não por compensação.
+    var REV = null; // estado da revisão: {dados, atual, estado, player, prontoPlayer, raf}
 
-    function onYouTubeIframeAPIReady() { ytPronto = true; if (REV && !REV.player) criarPlayer(); }
+    // As cinco operações do player, cada uma num lugar. Não é abstração: é o que sobrou depois de
+    // trocar a API do YouTube por um elemento nativo, e é onde a fatia 3 (réguas) vai encostar.
+    function pTempo() { return REV && REV.player ? REV.player.currentTime : 0; }
+    function pIr(seg) { if (REV && REV.player) REV.player.currentTime = Math.max(0, seg); }
+    function pTocar() { if (REV && REV.player) REV.player.play(); }
+    function pParar() { if (REV && REV.player) { REV.player.pause(); } cancelarParada(); }
+    function pVelocidade(v) { if (REV && REV.player) REV.player.playbackRate = v; }
+    function pTocando() { return !!(REV && REV.player && !REV.player.paused && !REV.player.ended); }
+    function cancelarParada() { if (REV && REV.raf) { cancelAnimationFrame(REV.raf); REV.raf = 0; } }
 
     // Inicia a tela de revisão a partir do JSON que o servidor embute em #dados-trechos.
     //
@@ -525,7 +549,7 @@
       if (!dados.trechos || !dados.trechos.length) return;
       if (REV && REV.dados && REV.dados.pedidoId === dados.pedidoId) return;
       REV = { dados: dados, atual: 0, estado: dados.trechos.map(function(){ return 'pendente'; }),
-              player: null, prontoPlayer: false, timer: null,
+              player: null, prontoPlayer: false, raf: 0,
               // ajustes[i] = {iniMs, fimMs, resposta, vizinhanca} — resposta é o que o
               // servidor recalculou (hook, texto, duração, aprovável, frases em volta).
               // null = usa o original. Tempos em ms INTEIROS (ver moverPara).
@@ -551,50 +575,62 @@
     }
 
     function criarPlayer() {
-      if (!REV || REV.player || !ytPronto || !window.YT || !YT.Player) return;
-      var palco = document.getElementById('palco'); if (!palco) return;
-      REV.player = new YT.Player(palco, {
-        host: 'https://www.youtube-nocookie.com',
-        videoId: REV.dados.videoId,
-        playerVars: { rel: 0, modestbranding: 1, origin: window.location.origin,
-                      start: REV.dados.trechos[0].startSeg },
-        events: { onReady: function () { REV.prontoPlayer = true; } }
+      if (!REV) return;
+      var el = document.getElementById('palco');
+      var aviso = document.getElementById('palco-ausente');
+      if (!el) return;
+      REV.player = el;
+      // Sem vídeo em disco a revisão CONTINUA: texto, faixa de frases e ajuste por número. O que
+      // não há é escuta — e a tela diz isso, em vez de o operador achar que o player quebrou.
+      if (!REV.dados.videoLocal) {
+        REV.prontoPlayer = false;
+        if (aviso) {
+          aviso.hidden = false;
+          aviso.textContent = 'O vídeo deste culto ainda não está em disco, então não há escuta ' +
+            'aqui. A revisão pelo texto funciona; o corte usa a fronteira da legenda até o vídeo ' +
+            'chegar.';
+        }
+        return;
+      }
+      if (aviso) aviso.hidden = true;
+      el.controls = true;
+      el.src = '/video/' + encodeURIComponent(REV.dados.videoId);
+      el.addEventListener('loadedmetadata', function () {
+        REV.prontoPlayer = true;
+        pIr(efetivoAtual().iniMs / MS); // deixa o player no começo do trecho atual
+      });
+      el.addEventListener('error', function () {
+        REV.prontoPlayer = false;
+        if (aviso) {
+          aviso.hidden = false;
+          aviso.textContent = 'não consegui abrir o vídeo local (/video/' + REV.dados.videoId + ')';
+        }
       });
     }
 
     // A ESCUTA NUNCA PODE PROMETER ÁUDIO QUE O ARQUIVO NÃO TERÁ.
     //
-    // O tique era de 200 ms e a parada acontecia no primeiro tique >= o fim: o operador ouvia
-    // até 200 ms A MAIS do que o Short conteria (mais a latência do pauseVideo). Ele então
-    // escolhia um fim que "soava certo" e o arquivo chegava curto.
+    // História curta, e cada etapa foi medida: a parada era um poll de 200 ms e ultrapassava o fim
+    // em +89 ms (mediana de 10 tentativas no player do YouTube) — o operador ouvia mais do que o
+    // Short teria, calibrava num ponto já curto, e o arquivo saía antes. Passou a 40 ms com folga
+    // para dentro (-22 ms medidos). Agora, com o <video> LOCAL, a parada é por
+    // requestAnimationFrame (~16 ms) sobre um currentTime exato, e o pause() é imediato — não há
+    // buffer nem API remota no meio, então não há folga a compensar.
     //
-    // Medido em trecho real do dono (2026-07-30, culto fZGyLBofmmo): ele marcou o fim em
-    // 01:30:15.250 e a fala só termina em 01:30:15.357 — 107 ms depois. Ou seja: o ponto dele
-    // estava adiantado, e ainda assim soou completo, porque a escuta passava do ponto.
-    //
-    // Agora o tique é de 40 ms e a parada acontece 40 ms ANTES do limite. A assimetria é de
-    // propósito, no mesmo espírito do encaixarFim: errar para DENTRO faz a escuta ser
-    // conservadora — se a palavra soa inteira aqui, ela está inteira no arquivo. Errar para
-    // fora fazia o operador confiar em áudio que o corte descartava.
-    var PARADA_MS = 40;      // tique: 5x mais fino que os 200 ms de antes
-    var FOLGA_PARADA = 0.04; // segundos, para dentro; também absorve a latência do pauseVideo
-
-    // tocarIntervalo reproduz [from, to] em segundos. O limite é reavaliado a cada tick por
-    // uma função, e não capturado no clique: se o operador ajustar durante a reprodução, o
-    // ponto de parada acompanha em vez de ficar no valor antigo.
+    // O limite é reavaliado a cada QUADRO por uma função, e não capturado no clique: se o operador
+    // ajustar durante a reprodução, o ponto de parada acompanha em vez de ficar no valor antigo.
     function tocarIntervalo(from, limite) {
       if (!REV.prontoPlayer) return;
       var ate = (typeof limite === 'function') ? limite : function () { return limite; };
-      clearInterval(REV.timer);
-      REV.player.seekTo(Math.max(0, from), true);
-      REV.player.playVideo();
-      REV.timer = setInterval(function () {
-        if (!REV || !REV.prontoPlayer) { clearInterval(REV.timer); return; }
-        // FOLGA_PARADA para DENTRO, e o tique curto: ver o comentário acima.
-        if (REV.player.getCurrentTime() >= ate() - FOLGA_PARADA) {
-          REV.player.pauseVideo(); clearInterval(REV.timer);
-        }
-      }, PARADA_MS);
+      cancelarParada();
+      pIr(from);
+      pTocar();
+      var vigiar = function () {
+        if (!REV || !REV.prontoPlayer) return;
+        if (pTempo() >= ate()) { pParar(); return; }
+        REV.raf = requestAnimationFrame(vigiar);
+      };
+      REV.raf = requestAnimationFrame(vigiar);
     }
 
     function trechoAtual() { return REV.dados.trechos[REV.atual]; }
@@ -613,7 +649,7 @@
 
     function playPause() {
       if (!REV.prontoPlayer) return;
-      if (REV.player.getPlayerState() === YT.PlayerState.PLAYING) { REV.player.pauseVideo(); clearInterval(REV.timer); }
+      if (pTocando()) { pParar(); }
       else { tocarIntervalo(efetivoAtual().iniMs / MS, limiteFim); }
     }
     function doInicio() { tocarIntervalo(efetivoAtual().iniMs / MS, limiteFim); }
@@ -644,7 +680,7 @@
 
     // ===== Ajuste manual do corte (spec-05 v2, redesenhado) =====
     //
-    // Contrato de tempo: getCurrentTime() do player JÁ É o tempo que o corte usa. O vídeo
+    // Contrato de tempo: o currentTime do <video> local JÁ É o tempo que o corte usa. O vídeo
     // baixado é o inteiro, com origem 0, e o player também conta do início do vídeo — os
     // dois relógios são o mesmo, sem conversão.
     //
@@ -691,7 +727,7 @@
 
     // moverPara grava os tempos e pede o recálculo com DEBOUNCE.
     //
-    // O seekTo segue a recomendação da documentação do YouTube: allowSeekAhead=false durante
+    // (Nota histórica: aqui havia a regra do allowSeekAhead do YouTube — não durante
     // os empurrões (não dispara requisição de vídeo a cada clique) e true quando o debounce
     // assenta, aí sim buscando de fato o trecho.
     // ===== HISTÓRICO DE AÇÕES (diagnóstico do corte) =====
@@ -871,7 +907,7 @@
       // de 1 s e restaurar todos passam por moverPara. Registrar em cada botão seria quatro
       // lugares para esquecer um.
       if (acao) registrarAcao(i, acao, ponta, iniMs, fimMs);
-      if (REV.prontoPlayer) REV.player.seekTo(iniMs / MS, false); // barato: só reposiciona
+      if (REV.prontoPlayer) pIr(iniMs / MS); // reposiciona sem tocar
       desenhar();
       // A ponta mexida define o que se ouve quando o debounce assentar (ver pedirRecalculo).
       REV.ultimaPonta = ponta || 'fim';
@@ -964,13 +1000,12 @@
         if (i === REV.atual) {
           desenhar();
           if (ouvir && resp.aprovavel) {
-            // O seekTo(true) acontece dentro do tocarIntervalo, que é onde a busca de verdade
-            // é necessária.
+            // O reposicionamento acontece dentro do tocarIntervalo.
             avisarToque(REV.ultimaPonta);
             if (REV.ultimaPonta === 'inicio') ouvirInicio(); else ouvirFim();
           } else if (REV.prontoPlayer) {
             // Debounce assentou sem tocar: ainda vale buscar de verdade (allowSeekAhead=true).
-            REV.player.seekTo(resp.start_ms / MS, true);
+            pIr(resp.start_ms / MS);
           }
         }
       }).catch(function () { /* rede: mantém o que está na tela */ });
@@ -979,7 +1014,7 @@
     function meiaVelocidade() {
       if (!REV.prontoPlayer) return;
       REV.meia = !REV.meia;
-      REV.player.setPlaybackRate(REV.meia ? 0.5 : 1);
+      pVelocidade(REV.meia ? 0.5 : 1);
       var b = document.getElementById('btn-meia');
       if (b) b.textContent = REV.meia ? '🐇 Velocidade normal' : '🐢 Meia velocidade';
     }
@@ -1190,8 +1225,8 @@
       desenharTrilha();
       desenharHistorico();
       garantirVizinhanca();
-      // Player cueado no início do trecho atual (spec: seekTo(start) ao trocar).
-      if (REV.prontoPlayer) { clearInterval(REV.timer); REV.player.seekTo(e.iniMs / 1000, true); REV.player.pauseVideo(); }
+      // Player posicionado no início do trecho atual ao trocar de trecho.
+      if (REV.prontoPlayer) { pParar(); pIr(e.iniMs / MS); }
     }
 
     function irPara(i) {

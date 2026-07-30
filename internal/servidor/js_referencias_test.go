@@ -43,6 +43,10 @@ var globaisPermitidos = map[string]bool{
 	"fetch": true, "parseInt": true, "parseFloat": true, "isNaN": true, "encodeURIComponent": true,
 	"JSON": true, "Math": true, "String": true, "Number": true, "Array": true, "Object": true,
 	"alert": true, "confirm": true, "console": true,
+	// requestAnimationFrame/cancelAnimationFrame: a parada da escuta passou a ser por quadro
+	// (~16 ms) em vez de poll de 40 ms, porque com o <video> local o currentTime é exato e o
+	// pause() é imediato. Decisão consciente, que é o valor desta lista.
+	"requestAnimationFrame": true, "cancelAnimationFrame": true,
 	// Error: `throw new Error(...)` no fetch que apaga um Short (tela 4) — a mensagem do erro
 	// vai para o alert com o nome do arquivo.
 	"Error": true,

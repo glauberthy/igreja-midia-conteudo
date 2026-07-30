@@ -42,8 +42,10 @@ decidida e registrada com o motivo.
 - **yt-dlp** para download (requer um runtime JS — **deno** — instalado; sem ele a extração
   é degradada e o yt-dlp avisa)
 - **ffmpeg** para corte, reenquadramento, gradiente e logo
-- **HTMX + JavaScript vanilla** no front (sem framework, sem build, sem npm). O JS vanilla
-  cuida do player do YouTube (IFrame API) e da navegação local. **CSS na mão, sem Tailwind.**
+- **HTMX + JavaScript vanilla** no front (sem framework, sem build, sem npm). O JS vanilla cuida
+  do player LOCAL (`<video>` do arquivo do cache, servido por `GET /video/{id}` com range) e da
+  navegação. A IFrame API do YouTube SAIU na spec-05 v4: preview e corte usam o mesmo arquivo.
+  **CSS na mão, sem Tailwind.**
 
 ## Estrutura
 

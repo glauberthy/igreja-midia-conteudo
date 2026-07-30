@@ -77,17 +77,24 @@ type trechoRevisao struct {
 
 // dadosRevisao é o payload JSON embutido na página de revisão.
 type dadosRevisao struct {
-	PedidoID string          `json:"pedidoId"`
-	VideoID  string          `json:"videoId"`
-	Trechos  []trechoRevisao `json:"trechos"`
+	PedidoID string `json:"pedidoId"`
+	VideoID  string `json:"videoId"`
+	// VideoLocal diz se videos/<videoID>/video.mp4 está em disco e servível por GET /video/{id}.
+	//
+	// É o que decide a fonte do player: o ARQUIVO (o mesmo que o corte usa) ou nada. Não há mais
+	// player do YouTube para cair: manter os dois seria manter duas fontes de tempo, que é
+	// exatamente a discrepância que esta fatia elimina por construção.
+	VideoLocal bool            `json:"videoLocal"`
+	Trechos    []trechoRevisao `json:"trechos"`
 }
 
 // revisaoJSON monta o JSON (seguro para <script>) com os dados de revisão do registro.
 // Chamar com o lock do servidor seguro (lê reg).
-func revisaoJSON(reg *registro) template.JS {
+func revisaoJSON(reg *registro, temVideoLocal bool) template.JS {
 	d := dadosRevisao{
-		PedidoID: reg.ped.ID,
-		VideoID:  download.VideoID(reg.ped.YouTubeURL),
+		PedidoID:   reg.ped.ID,
+		VideoID:    download.VideoID(reg.ped.YouTubeURL),
+		VideoLocal: temVideoLocal,
 	}
 	// Índice do candidato de MAIOR score — para o selo discreto (destaca sem reordenar).
 	melhor := -1

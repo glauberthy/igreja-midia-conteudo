@@ -283,6 +283,7 @@ func Novo(o Opcoes) *Servidor {
 	s.mux.HandleFunc("GET /pedidos/{id}", s.handleStatus)
 	s.mux.HandleFunc("POST /pedidos/{id}/aprovar", s.handleAprovar)
 	s.mux.HandleFunc("POST /pedidos/{id}/ajustar", s.handleAjustar)
+	s.mux.HandleFunc("GET /video/{videoID}", s.handleVideoLocal)
 	s.mux.HandleFunc("GET /finalizados/{id}/{arquivo}", s.handleBaixarFinal)
 	s.mux.HandleFunc("DELETE /finalizados/{id}/{arquivo}", s.handleApagarFinal)
 	// Assets estáticos (fonte da identidade, logo) — servidos do disco.
@@ -370,7 +371,7 @@ func (s *Servidor) handleCriar(w http.ResponseWriter, r *http.Request) {
 	// "processando" e passa a fazer o polling. Um formato só para as três rotas (ver o
 	// template "estado").
 	s.mu.Lock()
-	vis := montarVisao(reg, s.outDir)
+	vis := montarVisao(reg, s.outDir, s.temVideoLocal(reg))
 	s.mu.Unlock()
 	tmpl.ExecuteTemplate(w, "estado", vis)
 }
@@ -413,7 +414,7 @@ func (s *Servidor) handlePedidoAtual(w http.ResponseWriter, r *http.Request) {
 	}
 	achou := maisRecente != nil
 	if achou {
-		vis = montarVisao(maisRecente, s.outDir)
+		vis = montarVisao(maisRecente, s.outDir, s.temVideoLocal(maisRecente))
 	}
 	s.mu.Unlock()
 
@@ -436,7 +437,7 @@ func (s *Servidor) handleStatus(w http.ResponseWriter, r *http.Request) {
 	reg, ok := s.pedidos[id]
 	var vis visaoStatus
 	if ok {
-		vis = montarVisao(reg, s.outDir)
+		vis = montarVisao(reg, s.outDir, s.temVideoLocal(reg))
 	}
 	s.mu.Unlock()
 	if !ok {
@@ -517,7 +518,7 @@ func (s *Servidor) handleAprovar(w http.ResponseWriter, r *http.Request) {
 	}
 	reg.metricas.NumAprovados = len(limpos)
 	reg.ped.Status = pipeline.EstadoAguardandoProcessamento
-	vis := montarVisao(reg, s.outDir)
+	vis := montarVisao(reg, s.outDir, s.temVideoLocal(reg))
 	s.mu.Unlock()
 
 	// Dispara a fase pesada (baixar vídeo dos aprovados + render) em background, se houver
@@ -596,16 +597,23 @@ func (s *Servidor) faseHeavy(reg *registro) {
 
 	case s.cache.TemVideo(pedCopia.VideoID):
 		// ACERTO DE CACHE: é o ganho da spec-05 v3 — ~35 s de download e ~570 MB de banda que
-		// não acontecem porque este culto já está em disco.
+		// não acontecem porque este culto já está em disco. Desde a v4 este é o caminho NORMAL,
+		// porque a fase leve já preparou o vídeo para a revisão.
 		s.logTempos(fmt.Sprintf("vídeo do culto %s já no cache (%s): pulando o download",
 			pedCopia.VideoID, retencao.FormatarBytes(tamanhoArquivo(videoNoCache))))
 		if err := s.cache.Tocar(pedCopia.VideoID); err != nil {
 			s.logTempos(fmt.Sprintf("aviso: não atualizei usado_em de %s: %v", pedCopia.VideoID, err))
 		}
 		s.metrica(reg, func(m *Metricas) {
-			m.BaixarVideoMs = m.marcar(s.agora())
+			// NÃO sobrescreve um tempo de download já medido: desde a v4 quem baixa é a fase leve,
+			// e marcar aqui zeraria a coluna baixar_video_s do tempos.csv — o instrumento passaria
+			// a dizer que o download foi instantâneo em TODO pedido de culto novo.
+			gasto := m.marcar(s.agora())
+			if m.BaixarVideoMs == 0 {
+				m.BaixarVideoMs = gasto
+				m.VideoReusado = true
+			}
 			m.BytesVideo = tamanhoArquivo(videoNoCache)
-			m.VideoReusado = true
 		})
 
 	default:
@@ -631,6 +639,7 @@ func (s *Servidor) faseHeavy(reg *registro) {
 				return e
 			})
 		if err != nil {
+			s.limparVideoParcial(pedCopia.VideoID, dirVideo)
 			s.setErro(reg, mensagemErroDownload(err))
 			return
 		}
@@ -777,6 +786,78 @@ func (s *Servidor) opcoesPausas() video.OpcoesPausas {
 	return video.OpcoesPausas{NoiseDB: s.pausasDB, MinMs: s.pausasMinMs}.ComPadroes()
 }
 
+// prepararVideoParaRevisao garante o vídeo do culto em disco e as pausas de fala.
+//
+// Falha aqui NÃO derruba o pedido: a revisão acontece do mesmo jeito, sem player local e com o
+// encaixe caindo na fronteira da legenda (que é o que o sistema fazia até hoje). Melhor revisar
+// com a ferramenta antiga que não revisar — e a tela DIZ que o vídeo não está disponível, em vez
+// de o operador achar que o player quebrou.
+func (s *Servidor) prepararVideoParaRevisao(ctx context.Context, reg *registro, videoID, dirVideo string) {
+	alvo := filepath.Join(dirVideo, videocache.NomeVideo)
+	if !s.cache.TemVideo(videoID) {
+		if s.baixadorVideo == nil {
+			return
+		}
+		if err := s.garantirEspaco(reg.ped.ID); err != nil {
+			s.logTempos(fmt.Sprintf("aviso: sem espaço para o vídeo do culto (%v); a revisão vai "+
+				"sem player local", err))
+			return
+		}
+		t0 := s.agora()
+		var origem int
+		err := etapaComProgresso(ctx, "o download do vídeo", dirVideo,
+			s.prazos.VideoSemProgresso, s.prazos.VideoTeto,
+			func(ctx context.Context) error {
+				var e error
+				origem, e = s.baixadorVideo.BaixarVideoCompleto(ctx, s.copiaPedido(reg), dirVideo)
+				return e
+			})
+		if err != nil {
+			s.logTempos(fmt.Sprintf("aviso: o vídeo do culto não baixou (%v); a revisão vai sem "+
+				"player local e o encaixe usa a fronteira da legenda", mensagemErroDownload(err)))
+			s.limparVideoParcial(videoID, dirVideo)
+			return
+		}
+		if err := s.cache.Registrar(videoID, origem, s.copiaPedido(reg).Titulo); err != nil {
+			s.logTempos(fmt.Sprintf("aviso: não registrei o vídeo %s no cache: %v", videoID, err))
+			return
+		}
+		s.metrica(reg, func(m *Metricas) {
+			m.BaixarVideoMs = m.marcar(t0)
+			m.BytesVideo = tamanhoArquivo(alvo)
+		})
+		s.logTempos(fmt.Sprintf("vídeo do culto %s em disco (%s) antes da revisão",
+			videoID, retencao.FormatarBytes(tamanhoArquivo(alvo))))
+	}
+	s.garantirPausas(ctx, videoID, alvo)
+}
+
+// limparVideoParcial remove o arquivo que um download interrompido deixou NO CACHE.
+//
+// Por que é necessário: o download escreve direto em videos/<id>/, e um yt-dlp morto por prazo
+// deixa um video.mp4 parcial. Se esse parcial passar dos 20 MB, TemVideo diz "tem vídeo" e o
+// cache passa a servir um arquivo truncado — sem video.json, o Localizar falha com uma mensagem
+// sobre origem; com video.json de uma tentativa anterior, seria PIOR: o corte sairia do arquivo
+// errado. É a família de bug que o cache foi construído para não ter.
+//
+// Só apaga se NÃO houver registro (video.json): com registro, o vídeo é de um download que deu
+// certo antes e a falha de agora não o invalida.
+func (s *Servidor) limparVideoParcial(videoID, dirVideo string) {
+	if _, err := s.cache.LerIndice(videoID); err == nil {
+		return // vídeo registrado por um download anterior que funcionou: não é resíduo
+	}
+	for _, nome := range []string{videocache.NomeVideo, videocache.NomeVideo + ".part",
+		videocache.NomeVideo + ".ytdl"} {
+		alvo := filepath.Join(dirVideo, nome)
+		if fi, err := os.Stat(alvo); err == nil {
+			if err := os.Remove(alvo); err == nil {
+				s.logTempos(fmt.Sprintf("resíduo de download removido do cache: %s (%s)",
+					nome, retencao.FormatarBytes(fi.Size())))
+			}
+		}
+	}
+}
+
 // garantirPausas analisa o áudio do culto e guarda o resultado no cache, se ainda não houver
 // análise compatível. Chamada onde o vídeo JÁ está em mão.
 //
@@ -914,6 +995,44 @@ func (s *Servidor) caminhoDoShort(id, arquivo string) (string, bool) {
 	return "", false
 }
 
+// temVideoLocal diz se o vídeo do culto está em disco e servível. Exige o lock (lê reg.ped).
+func (s *Servidor) temVideoLocal(reg *registro) bool {
+	if reg == nil || reg.ped.VideoID == "" {
+		return false
+	}
+	return s.cache.TemVideo(reg.ped.VideoID)
+}
+
+// handleVideoLocal serve o vídeo do CULTO para o player da revisão.
+//
+// # Por que existe
+//
+// O operador escolhia o corte ouvindo o player do YouTube, e o corte acontecia no arquivo baixado
+// — duas fontes, dois relógios. A API do YouTube declara que o seekTo vai para o keyframe mais
+// próximo "a menos que a porção já esteja bufferizada", e a parada por polling ultrapassava o
+// ponto (medido: +89 ms). Servindo o MESMO arquivo que o ffmpeg corta, a discrepância desaparece
+// por construção, não por compensação.
+//
+// # Range requests vêm de graça
+//
+// http.ServeFile responde Accept-Ranges e 206 Partial Content — verificado no arquivo real de
+// 902 MB: um pedido de 100 bytes no meio transferiu 100 bytes. É o que permite ao <video> dar
+// seek em 01:30:00 sem baixar o culto inteiro.
+//
+// # Guarda
+//
+// O id vem da URL, então vira nome de diretório: DirVideo o valida (idSeguro) e TemVideo confirma
+// que existe e tem tamanho de vídeo. Mesma disciplina do handleBaixarFinal.
+func (s *Servidor) handleVideoLocal(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("videoID")
+	dir, err := s.cache.DirVideo(id)
+	if err != nil || !s.cache.TemVideo(id) {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFile(w, r, filepath.Join(dir, videocache.NomeVideo))
+}
+
 // handleBaixarFinal serve um Short gerado (finalizados/<id>/<arquivo>) para download.
 func (s *Servidor) handleBaixarFinal(w http.ResponseWriter, r *http.Request) {
 	caminho, ok := s.caminhoDoShort(r.PathValue("id"), r.PathValue("arquivo"))
@@ -957,7 +1076,7 @@ func (s *Servidor) handleApagarFinal(w http.ResponseWriter, r *http.Request) {
 	}
 	var vis visaoStatus
 	if existe {
-		vis = montarVisao(reg, s.outDir)
+		vis = montarVisao(reg, s.outDir, s.temVideoLocal(reg))
 	}
 	s.mu.Unlock()
 	s.logTempos(fmt.Sprintf("short apagado a pedido do operador: %s/%s", id, arquivo))
@@ -1146,19 +1265,26 @@ func (s *Servidor) faseLeve(reg *registro) {
 		m.Titulo = copia.Titulo
 	})
 
-	// PAUSAS DE FALA, quando o vídeo do culto já está no cache. É o insumo do encaixe do corte
-	// (ajuste.go): a fronteira vem do ÁUDIO, não do bloco de legenda que quebra no meio da frase.
+	// O VÍDEO PASSA A SER INSUMO DA REVISÃO — e por isso é preparado ANTES dela, em PARALELO com
+	// a seleção (spec-05 v4).
 	//
-	// Roda aqui porque a revisão precisa delas, e custa 6,5 s medidos — dentro de uma fase que já
-	// leva ~33 s. Se o culto ainda NÃO está em cache, não há áudio para analisar e o encaixe cai
-	// na fronteira da legenda, dizendo isso na resposta (regra_fim). Quando o download passar
-	// para antes da revisão (spec-05 v4, fatia 5), este "se" deixa de existir.
-	if s.cache.TemVideo(videoID) {
-		dirV, errV := s.cache.DirVideo(videoID)
-		if errV == nil {
-			s.garantirPausas(ctx, videoID, filepath.Join(dirV, videocache.NomeVideo))
-		}
-	}
+	// Duas coisas dependem do arquivo estar em disco na hora de revisar:
+	//   1. as PAUSAS de fala, que são a fronteira do corte (ajuste.go) — sem elas o encaixe cai
+	//      no bloco de legenda, que quebra no meio da frase;
+	//   2. o PLAYER LOCAL, que é o que faz o operador ouvir exatamente o que o ffmpeg vai cortar.
+	//
+	// Paralelo porque as duas etapas não competem: o download usa REDE, a seleção usa GPU. Medido:
+	// download 63 s de média (7,4 min, 202 max) contra 29 s de seleção — o menor fica escondido
+	// atrás do maior em vez de somar. E em 31 dos 46 pedidos medidos o vídeo já está no cache,
+	// então não há nada a baixar.
+	//
+	// A justificativa do fluxo invertido (não baixar antes de o operador aprovar) está registrada
+	// na spec-05 como SUPERADA para o vídeo: ela valia quando o vídeo só servia ao render.
+	prontoVideo := make(chan struct{})
+	go func() {
+		defer close(prontoVideo)
+		s.prepararVideoParaRevisao(ctx, reg, videoID, dirVideo)
+	}()
 
 	// DERIVAÇÃO: a transcrição recortada à janela é artefato DERIVADO do pedido, gerada a
 	// partir da legenda do cache. O pedido declara de onde ela veio (DeclararRecorte), e um
@@ -1190,6 +1316,15 @@ func (s *Servidor) faseLeve(reg *registro) {
 		m.SelecionarMs = m.marcar(s.agora())
 		m.NumCandidatos = len(cands)
 	})
+
+	// A seleção acabou; o vídeo pode ainda estar baixando. Espera aqui, porque a revisão sem o
+	// arquivo é a revisão antiga — fronteira de legenda e player de outra fonte.
+	select {
+	case <-prontoVideo:
+	default:
+		s.setStatus(reg, pipeline.EstadoBaixandoVideo)
+		<-prontoVideo
+	}
 
 	s.setStatus(reg, pipeline.EstadoValidando)
 	if err := salvarCandidatos(s.baseDir, reg.ped.ID, cands); err != nil {

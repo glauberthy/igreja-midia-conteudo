@@ -42,7 +42,7 @@ func TestRevisaoJSONShape(t *testing.T) {
 		textos: []string{"Texto falado A completo.", "Texto falado B completo."},
 	}
 	var d dadosRevisao
-	if err := json.Unmarshal([]byte(revisaoJSON(reg)), &d); err != nil {
+	if err := json.Unmarshal([]byte(revisaoJSON(reg, false)), &d); err != nil {
 		t.Fatalf("payload de revisão não é JSON válido: %v", err)
 	}
 	if d.PedidoID != "ped-1" || d.VideoID != "cultoTeste1" {
@@ -75,7 +75,7 @@ func TestRevisaoOrdemCronologicaPreservaIndice(t *testing.T) {
 		textos: []string{"", "", ""},
 	}
 	var d dadosRevisao
-	if err := json.Unmarshal([]byte(revisaoJSON(reg)), &d); err != nil {
+	if err := json.Unmarshal([]byte(revisaoJSON(reg, false)), &d); err != nil {
 		t.Fatal(err)
 	}
 	// Ordem de exibição = cronológica: cedo, meio, tardio.

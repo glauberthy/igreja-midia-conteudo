@@ -86,7 +86,7 @@ func emProgresso(e pipeline.Estado) bool {
 //
 // outDir é a raiz dos finalizados, para medir o tamanho de cada Short. Vem por parâmetro (e não
 // de um global) para os testes montarem visão com a pasta deles.
-func montarVisao(reg *registro, outDir string) visaoStatus {
+func montarVisao(reg *registro, outDir string, temVideoLocal bool) visaoStatus {
 	v := visaoStatus{
 		ID:          reg.ped.ID,
 		Status:      reg.ped.Status,
@@ -110,7 +110,7 @@ func montarVisao(reg *registro, outDir string) visaoStatus {
 	}
 	// Dados da tela de revisão (só quando há candidatos para revisar).
 	if reg.ped.Status == pipeline.EstadoAguardandoAprovacao && len(reg.cands) > 0 {
-		v.RevisaoDados = revisaoJSON(reg)
+		v.RevisaoDados = revisaoJSON(reg, temVideoLocal)
 	}
 	for _, idx := range reg.aprovados {
 		if idx >= 0 && idx < len(reg.cands) {

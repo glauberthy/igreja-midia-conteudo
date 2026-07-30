@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8"><title>overshoot da parada da escuta</title>
+<style>body{font:14px system-ui;margin:24px;max-width:60em}pre{background:#f4f4f4;padding:12px;
+overflow:auto}video{width:320px;background:#000}</style>
+<h1>Overshoot da parada da escuta</h1>
+<p>Mede quanto a reprodução <b>passa</b> do ponto pedido, com o mesmo mecanismo do
+<code>tocarIntervalo</code> da tela de revisão: <code>requestAnimationFrame</code> sobre o
+<code>currentTime</code> de um <code>&lt;video&gt;</code> local.</p>
+<p><b>Por que precisa do seu navegador:</b> o <code>requestAnimationFrame</code> é conduzido pelo
+compositor, e em Chrome headless (sem display) ele não tica — a medição não roda ali. Verificado.</p>
+<p>Histórico medido no player do YouTube, para comparar:
+poll de 200 ms = <b>+89 ms</b> (mediana); poll de 40 ms com folga para dentro = <b>−22 ms</b>.</p>
+<p><label>arquivo: <input id="src" size="60" value="v.mp4"></label>
+<button id="ir">medir 10 pontos</button></p>
+<video id="v" controls preload="metadata"></video>
+<pre id="o">pronto</pre>
+<script>
+var v = document.getElementById('v'), out = document.getElementById('o');
+var res = [], i = 0, pontos = [];
+document.getElementById('ir').addEventListener('click', function () {
+  res = []; i = 0;
+  v.src = document.getElementById('src').value;
+  v.addEventListener('loadedmetadata', function () {
+    var d = v.duration;
+    pontos = [];
+    // dez pontos espalhados, todos com fração de segundo (é onde o erro aparece)
+    for (var k = 1; k <= 10; k++) pontos.push(+(d * k / 12 + 0.25).toFixed(3));
+    out.textContent = 'duração ' + d.toFixed(3) + 's; medindo ' + pontos.length + ' pontos…';
+    proximo();
+  }, { once: true });
+});
+function proximo() {
+  if (i >= pontos.length) return resumir();
+  var t = pontos[i++];
+  v.currentTime = Math.max(0, t - 3);
+  v.play();
+  var vigiar = function () {
+    if (v.currentTime >= t) {
+      v.pause();
+      requestAnimationFrame(function () {           // um quadro depois: pega a latência do pause
+        res.push({ pediu: t, parou: +v.currentTime.toFixed(3),
+                   overshoot_ms: Math.round((v.currentTime - t) * 1000) });
+        out.textContent = JSON.stringify(res, null, 1);
+        setTimeout(proximo, 120);
+      });
+      return;
+    }
+    requestAnimationFrame(vigiar);
+  };
+  requestAnimationFrame(vigiar);
+}
+function resumir() {
+  var ov = res.map(function (r) { return r.overshoot_ms; }).sort(function (a, b) { return a - b; });
+  var med = ov[Math.floor(ov.length / 2)];
+  var soma = ov.reduce(function (a, b) { return a + b; }, 0);
+  out.textContent = 'overshoot (ms): ' + ov.join(' ') +
+    '\n  mediana ' + med + '   média ' + (soma / ov.length).toFixed(1) +
+    '   min ' + ov[0] + '   max ' + ov[ov.length - 1] +
+    '\n\nreferência: YouTube com poll de 200 ms = +89 ms; com poll de 40 ms = -22 ms' +
+    '\n\n' + JSON.stringify(res);
+}
+</script>
