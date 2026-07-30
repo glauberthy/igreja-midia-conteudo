@@ -110,7 +110,6 @@
     .carta-short .acoes a { text-decoration: none; border: 1px solid var(--linha-forte);
       border-radius: var(--raio); color: var(--tinta); background: var(--carta); }
     .carta-short .apagar { color: #8a1c1c; border-color: #e3b7b7; }
-    .aviso-peso { color: #8a1c1c; }
 
     /* formulário de entrada */
     form.entrada { display: grid; gap: var(--esp-2); margin: 0 0 var(--esp-1); padding: var(--esp-5);
@@ -391,8 +390,7 @@
       <ul class="lista-shorts" id="lista-shorts"></ul>
       <p class="progresso">Para enviar: baixe o arquivo e mande pelo WhatsApp Web. Não há
         integração automática — um botão que abrisse o WhatsApp sem anexar o vídeo seria pior
-        que não ter. O WhatsApp recusa vídeo acima de ~16&nbsp;MB; o peso de cada arquivo está
-        no cartão.</p>
+        que não ter.</p>
       <p class="progresso" id="resultado-nota-apagar">Apagar remove o arquivo do disco. O registro
         do corte no <code>cortes.csv</code> permanece: é medição, não inventário.</p>
     </section>
@@ -1127,10 +1125,6 @@
       }
     }
 
-    // LIMITE_WHATSAPP: acima disto o WhatsApp recusa o vídeo. Não é regra do sistema, é do
-    // canal por onde o Short vai ser enviado à mão — então é aviso, nunca bloqueio.
-    var LIMITE_WHATSAPP = 16 * 1024 * 1024;
-
     function formatarBytes(b) {
       if (!b) return '';
       if (b >= 1024 * 1024) return (b / (1024 * 1024)).toFixed(1) + ' MB';
@@ -1191,13 +1185,16 @@
       nome.textContent = sh.nome;
       li.appendChild(nome);
 
+      // O peso é INFORMAÇÃO, não alerta: o operador vai baixar e enviar este arquivo, e saber
+      // quanto ele tem é contexto útil. Não há limiar nem cor.
+      //
+      // Havia aqui um aviso vermelho de "acima do limite do WhatsApp (~16 MB)". Ele estava
+      // ERRADO — o dono enviou um Short de 41,7 MB pelo WhatsApp sem problema — e desaconselhava
+      // um fluxo que funciona. Aviso errado é pior que aviso nenhum: ensina o operador a ignorar
+      // avisos, inclusive os certos.
       var peso = document.createElement('div');
       peso.className = 'peso';
       peso.textContent = formatarBytes(sh.bytes);
-      if (sh.bytes > LIMITE_WHATSAPP) {
-        peso.classList.add('aviso-peso');
-        peso.textContent += ' — acima do limite do WhatsApp (~16 MB)';
-      }
       li.appendChild(peso);
 
       var acoes = document.createElement('div');

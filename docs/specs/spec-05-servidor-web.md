@@ -1142,19 +1142,35 @@ src="/finalizados/<pedido>/<short>.mp4">`.
 - **Duração:** quem sabe dizê-la é o arquivo, e o player a mostra sozinho (`0:00 / 0:37`).
   Calculá-la a partir do candidato aprovado seria repetir uma conta que o vídeo já responde — e
   mentiria se o render tivesse ajustado qualquer coisa.
-- **Tamanho:** o cliente não tem como saber sem baixar, então vem no estado (`shorts[].bytes`).
-  Não é enfeite: **o WhatsApp recusa vídeo acima de ~16 MB**, e é por lá que o Short vai ser
-  enviado à mão. O cartão avisa em vermelho quando passa.
+- **Tamanho:** vem no estado (`shorts[].bytes`) porque o cliente não tem como saber sem baixar. É
+  **informação de contexto**, sem limiar e sem cor.
 
 `shorts` virou **uma** lista de objetos (`{nome, bytes}`), não uma lista de nomes mais uma de
 tamanhos — duas listas para o mesmo dado divergem (foi o que quebrou o cabeçalho do `tempos.csv`
 duas vezes).
 
-> **Achado da medição real:** os Shorts do culto medido têm **39,8 MB (37 s)** e **29,6 MB
-> (30 s)** — os DOIS acima do limite do WhatsApp. Em 1080x1920 com `crf18 medium` dá ~1,1 MB/s
-> de vídeo. Ou seja: hoje o envio pelo WhatsApp **não funciona** para o Short típico. Decisão do
-> dono, não implementada: subir o CRF (ou fazer uma segunda saída "leve" só para envio), ou
-> mandar por link. Fica registrado, com número, em vez de o operador descobrir na hora do envio.
+### O limite de 16 MB do WhatsApp não existe na prática — aviso REMOVIDO
+
+A primeira versão do cartão pintava o peso de vermelho acima de 16 MB, dizendo que o WhatsApp
+recusaria o arquivo. **É falso, e o dono mediu:** um Short de **41,7 MB enviado pelo WhatsApp sem
+problema**.
+
+O aviso saiu. Duas razões, e a segunda é a que importa mais:
+
+1. desaconselhava um fluxo que **funciona**;
+2. **aviso errado é pior que aviso nenhum** — ensina o operador a ignorar avisos, inclusive os
+   certos. Um alerta só se paga se quem o lê puder confiar nele.
+
+**Consequência direta: nenhuma das três "saídas" que o relatório anterior propôs é necessária** —
+não há por que subir o CRF *por causa de tamanho*, nem criar uma segunda saída "leve", nem mandar
+por link. **Não se degrada a saída para resolver um problema que não existe.**
+
+Os números medidos ficam registrados como **fato de tamanho**, sem juízo: os Shorts do culto medido
+têm 39,8 MB (37 s) e 29,6 MB (30 s), ~1,1 MB/s de vídeo em 1080x1920.
+
+**Quem envia é o operador, sempre.** A regra inviolável 7 do CLAUDE.md fechou isso do lado do
+agente: ele não opera canal de comunicação da igreja, nem para testar — o que sai por ali sai em
+nome da igreja, para pessoas reais, e não tem desfazer.
 
 ### Apagar: uma whitelist, dois verbos
 

@@ -153,6 +153,15 @@ Não se negociam. Se uma tarefa parecer exigir quebrá-las, **pare e pergunte**.
    publicados automaticamente. O modelo não tem poder de veto sobre fidelidade — ele
    levanta suspeita; o humano decide. (spec-11)
 
+7. **O agente NÃO opera canais de comunicação da igreja.** Não envia por WhatsApp, não manda
+   e-mail, não publica no canal do YouTube, não posta em rede social — **nem para testar**.
+   Vale para qualquer canal externo, presente ou futuro, e independe de haver credencial à
+   mão. O que sai por esses canais sai **em nome da igreja, para pessoas reais, e não tem
+   desfazer**: um Short errado publicado é dano pastoral, não bug. Isso reforça a decisão de
+   produto que já está no BRD e na spec-05 — **o envio é manual**, feito pelo operador.
+   Teste que envolva canal externo é **do dono**: o agente prepara o arquivo, diz exatamente o
+   que conferir, e **aguarda**. E nunca afirma como verificado o que só o dono pode verificar.
+
 ## Decisões fechadas — não reabrir sem motivo novo
 
 Todas foram tomadas com medição. O registro completo, com os números, está em

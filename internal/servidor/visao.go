@@ -32,9 +32,10 @@ type visaoStatus struct {
 
 // shortVis é um Short entregue, como a tela 4 precisa dele: nome e TAMANHO.
 //
-// O tamanho não é enfeite: o WhatsApp recusa vídeo acima de ~16 MB, e é por lá que o Short vai
-// ser enviado à mão (não há integração — ver a nota da tela). Saber o peso antes de tentar
-// enviar é a diferença entre um envio e uma descoberta no meio do envio.
+// O tamanho é informação de contexto — o operador vai baixar e enviar o arquivo —, e vem do
+// servidor porque o cliente não tem como sabê-lo sem baixar. Não é limiar: a versão anterior
+// pintava de vermelho acima de 16 MB "porque o WhatsApp recusaria", e isso era FALSO (medido pelo
+// dono: 41,7 MB enviados sem problema). O aviso saiu; o número ficou.
 //
 // A DURAÇÃO não vem daqui de propósito: quem sabe dizê-la é o próprio arquivo, e o player da
 // tela a mostra sozinho (preload="metadata"). Calcular a partir do candidato aprovado seria
